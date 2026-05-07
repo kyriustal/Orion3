@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import { upload } from '../middleware/upload';
+// @ts-ignore
 import pdfParse from 'pdf-parse';
 import mammoth from 'mammoth';
 import fs from 'fs';
