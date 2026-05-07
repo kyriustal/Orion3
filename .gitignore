@@ -1,8 +1,10 @@
 node_modules/
-
+dist/
+dist-server/
 coverage/
 .DS_Store
 *.log
 uploads/
 .env*
 !.env.example
+*.local

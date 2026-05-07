@@ -1,5 +1,0 @@
-{
-  "name": "Remix: SaaS AI Agent WhatsApp",
-  "description": "Backend multi-tenant para Agentes de IA no WhatsApp usando Gemini, Supabase e Express.",
-  "requestFramePermissions": []
-}
