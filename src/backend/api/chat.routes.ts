@@ -1,43 +1,26 @@
 import { Router } from 'express';
-import { requireAuth } from '../middleware/auth';
-import { ai } from '../config/gemini';
+import { requireAuth, AuthRequest } from '../middleware/auth';
+import { AIService } from '../services/ai.service';
 
 const router = Router();
 
 // /api/orion-web/chat
 router.post('/chat', async (req, res) => {
   try {
-    const { message, history, context } = req.body;
+    const { message, history, context, orgId } = req.body;
 
     if (!message) {
       return res.status(400).json({ error: 'Message is required' });
     }
 
-    if (!process.env.VITE_GEMINI_API_KEY && !process.env.GEMINI_API_KEY) {
-        return res.status(500).json({ error: 'AI not configured' });
-    }
-
-    // Call Gemini
-    let prompt = `Você é o Orion, um assistente virtual inteligente e prestativo.\n`;
-    if (context) {
-        prompt += `Contexto Adicional: ${context}\n`;
-    }
-    prompt += `Mensagem do usuário: ${message}`;
-
-    const response = await ai.models.generateContent({
-        model: 'gemini-1.5-flash',
-        contents: prompt
+    // Usamos o AIService para gerar a resposta "perfeita"
+    const result = await AIService.generateResponse({
+        message,
+        orgId: orgId || 'default', // Se não houver orgId, usamos um default ou buscamos no banco
+        history: history || []
     });
 
-    // Extract text correctly from the new SDK structure
-    const replyText = response.candidates?.[0]?.content?.parts?.[0]?.text || "Desculpe, não consegui gerar uma resposta.";
-
-    console.log('Gemini Reply:', replyText);
-
-    res.json({
-      reply: replyText,
-      status: 'success'
-    });
+    res.json(result);
   } catch (error: any) {
     console.error('Chat error:', error);
     res.status(500).json({ error: 'Failed to generate response', details: error.message });

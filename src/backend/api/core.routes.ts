@@ -1,6 +1,8 @@
 import { Router, Request, Response } from 'express';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import { supabase } from '../config/supabase';
+import { ai } from '../config/gemini';
+import { AIService } from '../services/ai.service';
 
 const router = Router();
 
@@ -68,7 +70,22 @@ router.post('/settings/org', requireAuth, postHandler('organizations'));
 
 // Agent Simulate
 router.post('/agent/simulate', requireAuth, async (req: AuthRequest, res: Response) => {
-    res.json({ result: "Simulação de agente (RAG + Prompt) concluída com sucesso. Sem erros de CORS ou de compilação!" });
+    try {
+        const { message, botName, history } = req.body;
+        const orgId = req.user?.id || 'default';
+        
+        const result = await AIService.generateResponse({
+            message,
+            botName,
+            orgId,
+            history: history || []
+        });
+
+        res.json(result);
+    } catch (error: any) {
+        console.error('Simulate error:', error);
+        res.status(500).json({ error: 'Erro na simulação', details: error.message });
+    }
 });
 
 export default router;

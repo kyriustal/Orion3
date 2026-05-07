@@ -95,7 +95,7 @@ export default function Simulation() {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${localStorage.getItem("token")}`
         },
-        body: JSON.stringify({ message: userMsg, history: messages })
+        body: JSON.stringify({ message: userMsg, history: messages, botName: botName })
       });
 
       const data = await response.json();
