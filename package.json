@@ -32,7 +32,6 @@
     "lucide-react": "^0.546.0",
     "mammoth": "^1.12.0",
     "multer": "^2.1.1",
-    "openai": "^4.72.0",
     "pdf-parse": "^2.4.5",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

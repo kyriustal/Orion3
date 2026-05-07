@@ -1,13 +1,9 @@
-import OpenAI from 'openai';
+import { ai } from '../config/gemini';
 import { supabase } from '../config/supabase';
-
-const openai = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY || ''
-});
 
 export class AIService {
     /**
-     * Gera uma resposta inteligente usando OpenAI GPT
+     * Gera uma resposta inteligente baseada no contexto da empresa e documentos
      */
     static async generateResponse(params: {
         message: string;
@@ -31,51 +27,30 @@ export class AIService {
                 files.map(f => f.content_summary).join("\n---\n");
         }
 
-        // 2. Construir o Prompt do Sistema
+        // 2. Construir o Prompt
         const systemPrompt = `Você é o ${name}, o assistente virtual oficial.
 Diretrizes:
 - Seja prestativo, profissional e amigável.
 - Use as informações da "Base de Conhecimento" abaixo para responder se possível.
-- Se não souber algo, admita e peça para falar com um humano.
 ${knowledgeContext}`;
 
-        // 3. Formatar Mensagens para OpenAI
-        const messages: any[] = [
-            { role: 'system', content: systemPrompt }
-        ];
-
-        // Adicionar histórico
-        history.slice(-10).forEach(h => {
-            messages.push({
-                role: h.sender === 'user' ? 'user' : 'assistant',
-                content: h.text
-            });
-        });
-
-        // Adicionar a mensagem atual
-        messages.push({
-            role: 'user',
-            content: message
-        });
-
-        // 4. Chamar o GPT-4o-mini
+        // 3. Chamar o Gemini 1.5 Flash
         try {
-            const response = await openai.chat.completions.create({
-                model: 'gpt-4o-mini',
-                messages: messages,
-                temperature: 0.7,
-                max_tokens: 500
-            });
+            const fullMessage = `${systemPrompt}\n\nUsuário: ${message}`;
 
-            const reply = response.choices[0].message.content || "Desculpe, não consegui gerar uma resposta agora.";
+            // Usando v1beta conforme sugerido para a região
+            const model = ai.getGenerativeModel({ model: "gemini-1.5-flash-latest" }, { apiVersion: 'v1beta' });
+            const result = await model.generateContent(fullMessage);
+            const response = await result.response;
+            const reply = response.text();
             
             return {
                 reply,
                 status: 'success'
             };
         } catch (error: any) {
-            console.error('OpenAI Error:', error);
-            throw new Error(`Erro na IA (OpenAI): ${error.message}`);
+            console.error('Gemini Error:', error);
+            throw new Error(`Erro na IA: ${error.message}`);
         }
     }
 }
