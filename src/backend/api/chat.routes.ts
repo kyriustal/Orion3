@@ -29,8 +29,13 @@ router.post('/chat', async (req, res) => {
         contents: prompt
     });
 
+    // Extract text correctly from the new SDK structure
+    const replyText = response.candidates?.[0]?.content?.parts?.[0]?.text || "Desculpe, não consegui gerar uma resposta.";
+
+    console.log('Gemini Reply:', replyText);
+
     res.json({
-      reply: response.text,
+      reply: replyText,
       status: 'success'
     });
   } catch (error: any) {

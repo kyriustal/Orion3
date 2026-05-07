@@ -23,6 +23,7 @@ router.post('/login', async (req, res) => {
     });
 
     if (authError) {
+      console.error('Falha no login Supabase:', authError.message);
       return res.status(401).json({ error: authError.message });
     }
 
