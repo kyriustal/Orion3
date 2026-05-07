@@ -56,7 +56,7 @@ ${knowledgeContext}`;
             const fullMessage = `${systemPrompt}\n\nUsuário: ${message}`;
 
             const result = await ai.models.generateContent({
-                model: 'gemini-1.5-flash-latest',
+                model: 'gemini-pro',
                 contents: [{ role: 'user', parts: [{ text: fullMessage }] }]
             });
 
