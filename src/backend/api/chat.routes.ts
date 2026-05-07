@@ -3,16 +3,11 @@ import { AIService } from '../services/ai.service';
 
 const router = Router();
 
-// /api/orion-web/chat
 router.post('/chat', async (req: Request, res: Response) => {
     try {
         const { message, history, botName, orgId } = req.body;
+        if (!message) return res.status(400).json({ error: "Mensagem é obrigatória." });
 
-        if (!message) {
-            return res.status(400).json({ error: "Mensagem é obrigatória." });
-        }
-
-        // Agora usa o AIService que está configurado com Gemini
         const result = await AIService.generateResponse({
             message,
             botName,

@@ -1,13 +1,7 @@
 import axios from 'axios';
 import { supabase } from '../config/supabase';
 
-/**
- * Serviço central de IA do Orion 2
- * Responsável por gerenciar RAG (Base de Conhecimento), Histórico e Memória.
- */
 export class AIService {
-    private static readonly OPENAI_URL = 'https://api.openai.com/v1/chat/completions';
-
     static async generateResponse(params: {
         message: string;
         botName?: string;
@@ -15,13 +9,12 @@ export class AIService {
         history?: any[];
     }) {
         const { message, botName, orgId, history = [] } = params;
-        const apiKey = process.env.OPENAI_API_KEY;
+        const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
 
-        if (!apiKey || apiKey.length < 10) {
-            throw new Error("API Key da OpenAI não encontrada ou inválida no servidor. Verifique o arquivo .env na Hostinger.");
+        if (!apiKey) {
+            throw new Error("Configuração ausente: GEMINI_API_KEY não encontrada no servidor.");
         }
 
-        // 1. RAG - Busca de conhecimento no Supabase
         let knowledgeBase = "";
         try {
             const { data: files } = await supabase
@@ -35,49 +28,38 @@ export class AIService {
                     files.map(f => f.content_summary).join("\n---\n");
             }
         } catch (err) {
-            console.warn("Aviso: Falha ao carregar base de conhecimento.", err);
+            console.warn("Aviso: Falha ao carregar base de conhecimento.");
         }
 
-        // 2. Montagem do Prompt de Sistema
-        const systemPrompt = `Você é o ${botName || 'Orion Bot'}, assistente virtual da plataforma Orion.
-Responda de forma curta, profissional e amigável.
+        const systemPrompt = `Você é o ${botName || 'Orion Bot'}, assistente virtual oficial.
+Responda de forma profissional e amigável.
 ${knowledgeBase}`;
 
-        // 3. Preparação das mensagens
-        const messages = [
-            { role: 'system', content: systemPrompt },
-            ...history.slice(-6).map(h => ({
-                role: h.sender === 'user' ? 'user' : 'assistant',
-                content: h.text
-            })),
-            { role: 'user', content: message }
-        ];
+        const fullPrompt = `${systemPrompt}\n\nUsuário: ${message}`;
 
-        // 4. Execução da Chamada (Axios para evitar dependências pesadas)
         try {
-            const response = await axios.post(
-                this.OPENAI_URL,
-                {
-                    model: 'gpt-4o-mini',
-                    messages,
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+            
+            const response = await axios.post(url, {
+                contents: [{
+                    parts: [{ text: fullPrompt }]
+                }],
+                generationConfig: {
                     temperature: 0.7,
-                    max_tokens: 600
-                },
-                {
-                    headers: {
-                        'Authorization': `Bearer ${apiKey}`,
-                        'Content-Type': 'application/json'
-                    }
+                    maxOutputTokens: 800
                 }
-            );
+            });
 
+            const reply = response.data.candidates?.[0]?.content?.parts?.[0]?.text || "Desculpe, não consegui gerar uma resposta.";
+            
             return {
-                reply: response.data.choices[0].message.content,
+                reply,
                 status: 'success'
             };
         } catch (error: any) {
-            console.error('Erro na API da OpenAI:', error.response?.data || error.message);
-            throw new Error(`Falha na IA: ${error.response?.data?.error?.message || error.message}`);
+            console.error('Erro na API do Gemini:', error.response?.data || error.message);
+            const detail = error.response?.data?.[0]?.error?.message || error.message;
+            throw new Error(`Falha na IA (Gemini): ${detail}`);
         }
     }
 }
