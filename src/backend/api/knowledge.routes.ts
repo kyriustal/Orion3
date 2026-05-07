@@ -9,7 +9,7 @@ import { supabase } from '../config/supabase';
 const router = Router();
 
 // /api/knowledge/upload
-router.post('/upload', requireAuth, upload.single('file'), async (req: AuthRequest, res) => {
+router.post('/upload', requireAuth, upload.single('file'), async (req: any, res) => {
   try {
     const file = req.file;
     const orgId = req.body.orgId || req.user?.id;
