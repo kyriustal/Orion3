@@ -12,7 +12,7 @@ export class AIService {
         const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
 
         if (!apiKey) {
-            throw new Error("Configuração ausente: GEMINI_API_KEY não encontrada no servidor.");
+            throw new Error("GEMINI_API_KEY não encontrada no servidor.");
         }
 
         let knowledgeBase = "";
@@ -24,43 +24,35 @@ export class AIService {
                 .limit(3);
 
             if (files && files.length > 0) {
-                knowledgeBase = "\nCONHECIMENTO ADICIONAL:\n" + 
-                    files.map(f => f.content_summary).join("\n---\n");
+                knowledgeBase = "\nConhecimento:\n" + files.map(f => f.content_summary).join("\n");
             }
-        } catch (err) {
-            console.warn("Aviso: Falha ao carregar base de conhecimento.");
-        }
+        } catch (err) {}
 
-        const systemPrompt = `Você é o ${botName || 'Orion Bot'}, assistente virtual oficial.
-Responda de forma profissional e amigável.
-${knowledgeBase}`;
-
-        const fullPrompt = `${systemPrompt}\n\nUsuário: ${message}`;
+        const systemPrompt = `Você é o ${botName || 'Orion'}. Seja profissional.\n${knowledgeBase}`;
 
         try {
-            // Usando gemini-pro (v1beta) para compatibilidade universal
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${apiKey}`;
+            // Usando v1beta com o nome de modelo mais estável
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
             
             const response = await axios.post(url, {
-                contents: [{
-                    parts: [{ text: fullPrompt }]
-                }],
+                contents: [
+                    {
+                        role: 'user',
+                        parts: [{ text: `${systemPrompt}\n\nUsuário: ${message}` }]
+                    }
+                ],
                 generationConfig: {
                     temperature: 0.7,
-                    maxOutputTokens: 1000
+                    maxOutputTokens: 800
                 }
             });
 
-            const reply = response.data.candidates?.[0]?.content?.parts?.[0]?.text || "Desculpe, não consegui gerar uma resposta.";
+            const reply = response.data.candidates?.[0]?.content?.parts?.[0]?.text || "Erro na resposta.";
             
-            return {
-                reply,
-                status: 'success'
-            };
+            return { reply, status: 'success' };
         } catch (error: any) {
-            console.error('Erro na API do Gemini:', error.response?.data || error.message);
-            const detail = error.response?.data?.[0]?.error?.message || error.message;
-            throw new Error(`Falha na IA (Gemini): ${detail}`);
+            console.error('Gemini Error:', error.response?.data || error.message);
+            throw new Error(`Falha na IA: ${error.response?.data?.[0]?.error?.message || error.message}`);
         }
     }
 }
