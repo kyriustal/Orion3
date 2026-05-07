@@ -55,8 +55,8 @@ ${knowledgeContext}`;
             // Unificamos o prompt de sistema com a mensagem
             const fullMessage = `${systemPrompt}\n\nUsuário: ${message}`;
 
-            // Forçamos o uso da v1 (estável) em vez da v1beta para evitar o erro 404
-            const model = ai.getGenerativeModel({ model: "gemini-1.5-flash" }, { apiVersion: 'v1' });
+            // Conforme recomendado para Angola e Hostinger: Usando v1beta e o nome completo do modelo
+            const model = ai.getGenerativeModel({ model: "gemini-1.5-flash-latest" }, { apiVersion: 'v1beta' });
             const result = await model.generateContent(fullMessage);
             const response = await result.response;
             const reply = response.text();
