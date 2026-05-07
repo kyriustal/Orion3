@@ -1,4 +1,4 @@
-import axios from 'axios';
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import { supabase } from '../config/supabase';
 
 export class AIService {
@@ -16,7 +16,7 @@ export class AIService {
             throw new Error("GEMINI_API_KEY não encontrada.");
         }
 
-        // Contexto RAG (opcional)
+        // Contexto RAG
         let knowledgeBase = "";
         try {
             const { data: files } = await supabase
@@ -25,39 +25,38 @@ export class AIService {
                 .eq('org_id', orgId)
                 .limit(3);
             if (files && files.length > 0) {
-                knowledgeBase = "\nContexto:\n" + files.map(f => f.content_summary).join("\n");
+                knowledgeBase = "\nConhecimento Prévio:\n" + files.map(f => f.content_summary).join("\n");
             }
         } catch (err) {}
 
-        const systemPrompt = `Você é o ${botName || 'Orion'}. Responda de forma curta.\n${knowledgeBase}`;
-
         try {
-            // FORÇANDO o 1.5-flash que tem a maior cota gratuita
-            const model = "gemini-1.5-flash";
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+            // Inicializando o SDK oficial
+            const genAI = new GoogleGenerativeAI(apiKey);
             
-            const response = await axios.post(url, {
-                contents: [{
-                    parts: [{ text: `${systemPrompt}\n\nPergunta: ${message}` }]
-                }],
+            // Usando o modelo 1.5 Flash (o mais estável para plano gratuito)
+            const model = genAI.getGenerativeModel({ 
+                model: "gemini-1.5-flash",
                 generationConfig: {
-                    temperature: 1,
-                    maxOutputTokens: 800
+                    temperature: 0.7,
+                    maxOutputTokens: 1000,
                 }
             });
 
-            if (response.data.candidates && response.data.candidates[0].content) {
-                return {
-                    reply: response.data.candidates[0].content.parts[0].text,
-                    status: 'success'
-                };
-            }
-            throw new Error("Resposta vazia.");
+            const prompt = `Você é o ${botName || 'Orion'}. Seja prestativo.\n${knowledgeBase}\n\nUsuário: ${message}`;
+
+            const result = await model.generateContent(prompt);
+            const response = await result.response;
+            const text = response.text();
+
+            return {
+                reply: text || "Desculpe, não consegui processar a resposta.",
+                status: 'success'
+            };
 
         } catch (error: any) {
-            console.error('Erro na IA:', error.response?.data || error.message);
-            const detail = error.response?.data?.error?.message || error.message;
-            throw new Error(`Limite de Cota ou Erro na Google. Detalhe: ${detail}`);
+            console.error('Erro no SDK Gemini:', error);
+            const detail = error.message || "Erro desconhecido na IA";
+            throw new Error(`Falha na IA (SDK): ${detail}`);
         }
     }
 }
