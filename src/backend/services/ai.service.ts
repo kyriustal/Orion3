@@ -16,40 +16,48 @@ export class AIService {
             throw new Error("GEMINI_API_KEY não encontrada.");
         }
 
+        // Contexto RAG (opcional)
+        let knowledgeBase = "";
         try {
-            // TESTE DE DIAGNÓSTICO: Listar modelos disponíveis
-            console.log("[IA] Solicitando lista de modelos disponíveis...");
-            const listUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`;
-            const listResponse = await axios.get(listUrl);
-            const availableModels = listResponse.data.models?.map((m: any) => m.name.replace('models/', '')) || [];
+            const { data: files } = await supabase
+                .from('knowledge_files')
+                .select('content_summary')
+                .eq('org_id', orgId)
+                .limit(3);
+            if (files && files.length > 0) {
+                knowledgeBase = "\nContexto:\n" + files.map(f => f.content_summary).join("\n");
+            }
+        } catch (err) {}
+
+        const systemPrompt = `Você é o ${botName || 'Orion'}. Responda de forma curta.\n${knowledgeBase}`;
+
+        try {
+            // FORÇANDO o 1.5-flash que tem a maior cota gratuita
+            const model = "gemini-1.5-flash";
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
             
-            console.log("[IA] Modelos disponíveis para esta chave:", availableModels.join(', '));
-
-            // Tentar o primeiro da lista que seja "flash" ou "pro"
-            const modelToUse = availableModels.find((m: string) => m.includes('1.5-flash')) || 
-                               availableModels.find((m: string) => m.includes('pro')) || 
-                               availableModels[0];
-
-            if (!modelToUse) throw new Error("Nenhum modelo disponível para esta chave.");
-
-            console.log(`[IA] Tentando o melhor modelo disponível: ${modelToUse}`);
-
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelToUse}:generateContent?key=${apiKey}`;
             const response = await axios.post(url, {
                 contents: [{
-                    parts: [{ text: `Você é o ${botName || 'Orion'}.\nUsuário: ${message}` }]
-                }]
+                    parts: [{ text: `${systemPrompt}\n\nPergunta: ${message}` }]
+                }],
+                generationConfig: {
+                    temperature: 1,
+                    maxOutputTokens: 800
+                }
             });
 
-            return {
-                reply: response.data.candidates[0].content.parts[0].text,
-                status: 'success'
-            };
+            if (response.data.candidates && response.data.candidates[0].content) {
+                return {
+                    reply: response.data.candidates[0].content.parts[0].text,
+                    status: 'success'
+                };
+            }
+            throw new Error("Resposta vazia.");
 
         } catch (error: any) {
-            console.error('Erro de Diagnóstico:', error.response?.data || error.message);
+            console.error('Erro na IA:', error.response?.data || error.message);
             const detail = error.response?.data?.error?.message || error.message;
-            throw new Error(`Erro de Conexão com Google AI Studio. Detalhe: ${detail}`);
+            throw new Error(`Limite de Cota ou Erro na Google. Detalhe: ${detail}`);
         }
     }
 }
