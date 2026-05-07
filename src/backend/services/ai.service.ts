@@ -17,8 +17,8 @@ export class AIService {
         const { message, botName, orgId, history = [] } = params;
         const apiKey = process.env.OPENAI_API_KEY;
 
-        if (!apiKey) {
-            throw new Error("Configuração ausente: OPENAI_API_KEY não encontrada.");
+        if (!apiKey || apiKey.length < 10) {
+            throw new Error("API Key da OpenAI não encontrada ou inválida no servidor. Verifique o arquivo .env na Hostinger.");
         }
 
         // 1. RAG - Busca de conhecimento no Supabase

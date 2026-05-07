@@ -60,7 +60,7 @@ router.post('/agent/simulate', requireAuth, async (req: AuthRequest, res: Respon
         res.json(result);
     } catch (error: any) {
         console.error('Erro na Simulação:', error.message);
-        res.status(500).json({ error: "Erro interno na simulação." });
+        res.status(500).json({ error: "Erro na simulação", details: error.message });
     }
 });
 
