@@ -38,7 +38,8 @@ ${knowledgeBase}`;
         const fullPrompt = `${systemPrompt}\n\nUsuário: ${message}`;
 
         try {
-            const url = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+            // Usando gemini-pro (v1beta) para compatibilidade universal
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${apiKey}`;
             
             const response = await axios.post(url, {
                 contents: [{
