@@ -52,15 +52,14 @@ ${knowledgeContext}`;
 
         // 3. Chamar o Gemini 1.5 Flash
         try {
-            // Unificamos o prompt de sistema com a mensagem para compatibilidade total
+            // Unificamos o prompt de sistema com a mensagem
             const fullMessage = `${systemPrompt}\n\nUsuário: ${message}`;
 
-            const result = await ai.models.generateContent({
-                model: 'gemini-pro',
-                contents: [{ role: 'user', parts: [{ text: fullMessage }] }]
-            });
-
-            const reply = result.candidates?.[0]?.content?.parts?.[0]?.text || "Desculpe, tive um problema ao processar sua solicitação.";
+            // Usamos o método getGenerativeModel, que é o mais estável para encontrar o 1.5 Flash
+            const model = ai.getGenerativeModel({ model: "gemini-1.5-flash" });
+            const result = await model.generateContent(fullMessage);
+            const response = await result.response;
+            const reply = response.text();
             
             return {
                 reply,
