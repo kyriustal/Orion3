@@ -13,55 +13,43 @@ export class AIService {
         const apiKey = rawKey?.trim();
 
         if (!apiKey) {
-            throw new Error("GEMINI_API_KEY não encontrada no servidor.");
+            throw new Error("GEMINI_API_KEY não encontrada.");
         }
 
-        // 1. Contexto RAG
-        let knowledgeBase = "";
         try {
-            const { data: files } = await supabase
-                .from('knowledge_files')
-                .select('content_summary')
-                .eq('org_id', orgId)
-                .limit(3);
-            if (files && files.length > 0) {
-                knowledgeBase = "\nContexto:\n" + files.map(f => f.content_summary).join("\n");
-            }
-        } catch (err) {}
+            // TESTE DE DIAGNÓSTICO: Listar modelos disponíveis
+            console.log("[IA] Solicitando lista de modelos disponíveis...");
+            const listUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`;
+            const listResponse = await axios.get(listUrl);
+            const availableModels = listResponse.data.models?.map((m: any) => m.name.replace('models/', '')) || [];
+            
+            console.log("[IA] Modelos disponíveis para esta chave:", availableModels.join(', '));
 
-        const systemPrompt = `Você é o ${botName || 'Orion'}. Seja profissional.\n${knowledgeBase}`;
+            // Tentar o primeiro da lista que seja "flash" ou "pro"
+            const modelToUse = availableModels.find((m: string) => m.includes('1.5-flash')) || 
+                               availableModels.find((m: string) => m.includes('pro')) || 
+                               availableModels[0];
 
-        // 2. Modelos para tentar (em ordem de preferência)
-        const models = ['gemini-1.5-flash', 'gemini-1.5-flash-8b', 'gemini-pro'];
-        let lastError = null;
+            if (!modelToUse) throw new Error("Nenhum modelo disponível para esta chave.");
 
-        for (const model of models) {
-            try {
-                console.log(`[IA] Tentando modelo: ${model}...`);
-                const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-                
-                const response = await axios.post(url, {
-                    contents: [{
-                        role: 'user',
-                        parts: [{ text: `${systemPrompt}\n\nUsuário: ${message}` }]
-                    }]
-                });
+            console.log(`[IA] Tentando o melhor modelo disponível: ${modelToUse}`);
 
-                if (response.data.candidates && response.data.candidates[0].content) {
-                    console.log(`[IA] Sucesso com o modelo: ${model}`);
-                    return {
-                        reply: response.data.candidates[0].content.parts[0].text,
-                        status: 'success'
-                    };
-                }
-            } catch (error: any) {
-                lastError = error.response?.data || error.message;
-                console.error(`[IA] Falha no modelo ${model}:`, lastError);
-                // Se o erro não for 404, pode ser algo mais sério, mas vamos tentar o próximo de qualquer forma
-            }
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelToUse}:generateContent?key=${apiKey}`;
+            const response = await axios.post(url, {
+                contents: [{
+                    parts: [{ text: `Você é o ${botName || 'Orion'}.\nUsuário: ${message}` }]
+                }]
+            });
+
+            return {
+                reply: response.data.candidates[0].content.parts[0].text,
+                status: 'success'
+            };
+
+        } catch (error: any) {
+            console.error('Erro de Diagnóstico:', error.response?.data || error.message);
+            const detail = error.response?.data?.error?.message || error.message;
+            throw new Error(`Erro de Conexão com Google AI Studio. Detalhe: ${detail}`);
         }
-
-        // Se todos falharem
-        throw new Error(`Falha total na IA após tentar ${models.join(', ')}. Último erro: ${JSON.stringify(lastError)}`);
     }
 }
