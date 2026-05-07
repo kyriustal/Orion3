@@ -3,7 +3,7 @@ import { supabase } from '../config/supabase';
 
 export class AIService {
     /**
-     * Gera uma resposta inteligente usando OpenAI (via API REST direta para máxima estabilidade)
+     * Gera uma resposta inteligente usando Google Gemini 1.5 Flash (via REST API para estabilidade)
      */
     static async generateResponse(params: {
         message: string;
@@ -13,10 +13,10 @@ export class AIService {
     }) {
         const { message, botName, orgId, history = [] } = params;
         const name = botName || "Orion Bot";
-        const apiKey = process.env.OPENAI_API_KEY;
+        const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
 
         if (!apiKey) {
-            throw new Error("OPENAI_API_KEY não configurada no servidor.");
+            throw new Error("GEMINI_API_KEY não configurada no servidor.");
         }
 
         // 1. Buscar Contexto da Base de Conhecimento (RAG)
@@ -33,59 +33,48 @@ export class AIService {
         }
 
         // 2. Construir o Prompt do Sistema
-        const systemPrompt = `Você é o ${name}, o assistente virtual oficial.
+        const systemPrompt = `Você é o ${name}, assistente virtual oficial.
 Diretrizes:
-- Seja prestativo, profissional e amigável.
-- Use as informações da "Base de Conhecimento" abaixo para responder se possível.
-- Se não souber algo, peça para falar com um atendente humano.
+- Profissional e amigável.
+- Use a base de conhecimento abaixo para responder.
 ${knowledgeContext}`;
 
-        // 3. Preparar Mensagens para a API da OpenAI
-        const messages: any[] = [
-            { role: 'system', content: systemPrompt }
-        ];
+        // 3. Preparar o corpo da requisição (Formato Gemini API)
+        const contents = [];
+        
+        // Adicionar contexto e mensagem atual
+        // Para simplificar e garantir estabilidade, enviamos como um único prompt estruturado
+        const fullPrompt = `${systemPrompt}\n\nHistórico Recente:\n${history.slice(-5).map(h => `${h.sender}: ${h.text}`).join('\n')}\n\nUsuário: ${message}`;
 
-        // Adicionar histórico (últimas 10 mensagens)
-        history.slice(-10).forEach(h => {
-            messages.push({
-                role: h.sender === 'user' ? 'user' : 'assistant',
-                content: h.text
-            });
-        });
-
-        // Adicionar a mensagem atual
-        messages.push({
+        contents.push({
             role: 'user',
-            content: message
+            parts: [{ text: fullPrompt }]
         });
 
-        // 4. Chamada Direta via Axios (Mais leve que o SDK oficial)
+        // 4. Chamada Direta via Axios para o Gemini 1.5 Flash (v1beta para máxima compatibilidade regional)
         try {
-            const response = await axios.post(
-                'https://api.openai.com/v1/chat/completions',
-                {
-                    model: 'gpt-4o-mini',
-                    messages: messages,
-                    temperature: 0.7
-                },
-                {
-                    headers: {
-                        'Authorization': `Bearer ${apiKey}`,
-                        'Content-Type': 'application/json'
-                    }
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+            
+            const response = await axios.post(url, {
+                contents: contents,
+                generationConfig: {
+                    temperature: 0.7,
+                    maxOutputTokens: 800
                 }
-            );
+            }, {
+                headers: { 'Content-Type': 'application/json' }
+            });
 
-            const reply = response.data.choices[0].message.content;
+            const reply = response.data.candidates?.[0]?.content?.parts?.[0]?.text || "Desculpe, não consegui processar sua mensagem.";
             
             return {
                 reply,
                 status: 'success'
             };
         } catch (error: any) {
-            console.error('OpenAI API Error:', error.response?.data || error.message);
-            const errorDetail = error.response?.data?.error?.message || error.message;
-            throw new Error(`Falha na IA (OpenAI): ${errorDetail}`);
+            console.error('Gemini API Error:', error.response?.data || error.message);
+            const errorDetail = error.response?.data?.[0]?.error?.message || error.message;
+            throw new Error(`Falha na IA (Gemini): ${errorDetail}`);
         }
     }
 }
