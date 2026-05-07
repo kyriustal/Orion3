@@ -1,19 +1,17 @@
-const { spawn } = require('child_process');
+// Ponto de entrada otimizado para Hostinger / Phusion Passenger
+// Este arquivo é JS puro (CommonJS) para evitar qualquer erro de transpilação no servidor.
+
 const path = require('path');
+const fs = require('fs');
 
-// Usando ts-node (mais compatível com Hostinger)
-const tsNodePath = path.join(__dirname, 'node_modules', 'ts-node', 'dist', 'bin.js');
-const serverPath = path.join(__dirname, 'server-dist.js');
+// Verifica se o build do backend já existe
+const serverEntry = path.join(__dirname, 'dist-server', 'server.js');
 
-console.log('🚀 Orion Launcher: Iniciando servidor compilado...');
+if (!fs.existsSync(serverEntry)) {
+    console.error("ERRO CRÍTICO: Backend não compilado.");
+    console.error("Execute 'npm run build:server' para gerar os arquivos na pasta dist-server.");
+    process.exit(1);
+}
 
-const child = spawn(process.execPath, [serverPath], {
-    stdio: 'inherit',
-    env: Object.assign({}, process.env, { NODE_ENV: 'production' }),
-    shell: true
-});
-
-child.on('exit', (code) => {
-    console.log('Finalizado com código:', code);
-    process.exit(code || 0);
-});
+// Inicia o servidor compilado
+require(serverEntry);
