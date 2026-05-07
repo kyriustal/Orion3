@@ -1,51 +1,39 @@
-const express = require('express');
-const cors = require('cors');
+/**
+ * ORION 2 - BOOTLOADER OFICIAL (HOSTINGER)
+ * Este arquivo é o ponto de entrada principal que o Phusion Passenger deve executar.
+ */
+
 const path = require('path');
-const axios = require('axios');
-require('dotenv').config();
+const fs = require('fs');
 
-const app = express();
-const PORT = process.env.PORT || 3000;
+// Carrega variáveis de ambiente manualmente se o .env existir
+const envPath = path.join(__dirname, '.env');
+if (fs.existsSync(envPath)) {
+    require('dotenv').config({ path: envPath });
+    console.log("Variáveis de ambiente carregadas do .env local.");
+}
 
-app.use(cors());
-app.use(express.json());
+// Caminho para o servidor compilado
+const serverEntry = path.join(__dirname, 'dist-server', 'server.js');
 
-// Rota de Saúde (Teste)
-app.get('/api/health', (req, res) => {
-    res.json({ status: 'ok', message: 'Orion 2 ONLINE via Rescue Mode' });
-});
+console.log("Iniciando Orion Backend Intelligence...");
 
-// IA (GPT via Axios)
-app.post('/api/orion-web/chat', async (req, res) => {
-    try {
-        const { message } = req.body;
-        const apiKey = process.env.OPENAI_API_KEY;
-        
-        const response = await axios.post('https://api.openai.com/v1/chat/completions', {
-            model: 'gpt-4o-mini',
-            messages: [{ role: 'user', content: message }]
-        }, {
-            headers: { 'Authorization': `Bearer ${apiKey}` }
-        });
-        
-        res.json({ reply: response.data.choices[0].message.content });
-    } catch (e) {
-        res.status(500).json({ error: e.message });
+try {
+    if (!fs.existsSync(serverEntry)) {
+        throw new Error("Build não encontrado! Por favor, certifique-se de que a pasta 'dist-server' existe.");
     }
-});
-
-// Simulação
-app.post('/api/agent/simulate', async (req, res) => {
-    res.json({ reply: "Simulação ativa (Modo de Resgate)", status: 'success' });
-});
-
-// Frontend
-const distPath = path.join(__dirname, 'dist');
-app.use(express.static(distPath));
-app.get('*', (req, res) => {
-    res.sendFile(path.join(distPath, 'index.html'));
-});
-
-app.listen(PORT, () => {
-    console.log(`Servidor de Resgate rodando na porta ${PORT}`);
-});
+    
+    // Executa o servidor principal
+    require(serverEntry);
+    
+} catch (error) {
+    console.error("ERRO CRÍTICO NO BOOT:");
+    console.error(error.message);
+    
+    // Servidor de emergência para evitar o erro 503 genérico e mostrar o erro real
+    const http = require('http');
+    http.createServer((req, res) => {
+        res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end(`FALHA NA INICIALIZAÇÃO DO ORION\n\nDetalhe técnico:\n${error.message}`);
+    }).listen(process.env.PORT || 3000);
+}

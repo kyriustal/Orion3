@@ -1,53 +1,48 @@
 import express from 'express';
 import cors from 'cors';
-import dotenv from 'dotenv';
 import path from 'path';
 
-// Load environment variables
-dotenv.config();
-
+// Inicialização do App
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Middleware
+// Middleware Global
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// Health check endpoint
+// Health Check
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', message: 'Orion 2 Backend is running successfully!' });
+    res.json({ status: 'ok', server: 'Orion Backend', version: '2.0.0' });
 });
 
-// API Routes
+// Importação das Rotas
 import authRoutes from './api/auth.routes';
 import knowledgeRoutes from './api/knowledge.routes';
-import whatsappRoutes from './api/whatsapp.routes';
 import chatRoutes from './api/chat.routes';
 import coreRoutes from './api/core.routes';
 
+// Registro das Rotas
 app.use('/api/auth', authRoutes);
 app.use('/api/knowledge', knowledgeRoutes);
-app.use('/api/whatsapp', whatsappRoutes);
 app.use('/api/orion-web', chatRoutes);
-app.use('/api', coreRoutes); // General CRUD
+app.use('/api', coreRoutes);
 
-// Serve static frontend in production
+// Frontend em Produção
 const frontendPath = path.join(__dirname, '..', 'dist');
 app.use(express.static(frontendPath));
 
-// Fallback to React Router for all other requests
 app.get('*', (req, res) => {
-  res.sendFile(path.join(frontendPath, 'index.html'));
+    res.sendFile(path.join(frontendPath, 'index.html'));
 });
 
-// Global error handler
+// Error Handler Final
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
-  console.error('Unhandled error:', err);
-  res.status(500).json({ error: 'Internal Server Error', details: err.message });
+    console.error('Fatal Error:', err.message);
+    res.status(500).json({ error: 'Erro interno no servidor' });
 });
 
-// Start server
+// Start
 app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
+    console.log(`🚀 Orion Server pronto na porta ${PORT}`);
 });

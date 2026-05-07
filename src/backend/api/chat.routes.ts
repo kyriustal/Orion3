@@ -1,44 +1,29 @@
-import { Router } from 'express';
-import axios from 'axios';
+import { Router, Request, Response } from 'express';
+import { AIService } from '../services/ai.service';
 
 const router = Router();
 
-router.post('/chat', async (req, res) => {
-  try {
-    const { message, history } = req.body;
-    const apiKey = process.env.OPENAI_API_KEY;
+// /api/orion-web/chat
+router.post('/chat', async (req: Request, res: Response) => {
+    try {
+        const { message, history, botName, orgId } = req.body;
 
-    if (!message) return res.status(400).json({ error: 'Mensagem vazia' });
+        if (!message) {
+            return res.status(400).json({ error: "Mensagem é obrigatória." });
+        }
 
-    console.log("Chamando OpenAI para o Chat...");
+        const result = await AIService.generateResponse({
+            message,
+            botName,
+            orgId: orgId || 'default',
+            history: history || []
+        });
 
-    const response = await axios.post(
-      'https://api.openai.com/v1/chat/completions',
-      {
-        model: 'gpt-4o-mini',
-        messages: [
-          { role: 'system', content: 'Você é um assistente virtual prestativo e profissional.' },
-          ...(history || []).slice(-5).map((h: any) => ({
-             role: h.sender === 'user' ? 'user' : 'assistant',
-             content: h.text
-          })),
-          { role: 'user', content: message }
-        ],
-        temperature: 0.7
-      },
-      {
-        headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' }
-      }
-    );
-
-    res.json({ 
-      reply: response.data.choices[0].message.content, 
-      status: 'success' 
-    });
-  } catch (error: any) {
-    console.error('Chat AI Error:', error.response?.data || error.message);
-    res.status(500).json({ error: 'Erro na IA', details: error.message });
-  }
+        res.json(result);
+    } catch (error: any) {
+        console.error('Erro na Rota de Chat:', error.message);
+        res.status(500).json({ error: error.message });
+    }
 });
 
 export default router;
