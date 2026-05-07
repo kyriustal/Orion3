@@ -1,14 +1,13 @@
 {
   "name": "orion-2",
   "version": "1.0.0",
-  "type": "module",
   "scripts": {
     "dev": "vite --port=3000 --host=0.0.0.0",
     "dev:server": "tsx watch src/backend/server.ts",
     "build": "npm run build:client && npm run build:server",
     "build:client": "vite build",
     "build:server": "tsc -p tsconfig.server.json && node -e \"require('fs').writeFileSync('dist-server/package.json', '{\\\"type\\\":\\\"commonjs\\\"}')\"",
-    "start": "node app.cjs"
+    "start": "node app.js"
   },
   "dependencies": {
     "@google/genai": "^1.43.0",
