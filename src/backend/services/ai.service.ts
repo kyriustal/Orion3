@@ -50,12 +50,14 @@ ${knowledgeContext}`;
             parts: [{ text: message }]
         });
 
-        // 4. Chamar o Gemini 1.5 Flash
+        // 3. Chamar o Gemini 1.5 Flash
         try {
+            // Unificamos o prompt de sistema com a mensagem para compatibilidade total
+            const fullMessage = `${systemPrompt}\n\nUsuário: ${message}`;
+
             const result = await ai.models.generateContent({
                 model: 'gemini-1.5-flash',
-                systemInstruction: systemPrompt,
-                contents: contents
+                contents: [{ role: 'user', parts: [{ text: fullMessage }] }]
             });
 
             const reply = result.candidates?.[0]?.content?.parts?.[0]?.text || "Desculpe, tive um problema ao processar sua solicitação.";
