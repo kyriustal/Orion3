@@ -9,8 +9,6 @@ export class AIService {
         history?: any[];
     }) {
         const { message, botName, orgId, history = [] } = params;
-        
-        // Tenta pegar a chave e remove qualquer espaço em branco acidental
         const rawKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
         const apiKey = rawKey?.trim();
 
@@ -18,8 +16,7 @@ export class AIService {
             throw new Error("GEMINI_API_KEY não encontrada no servidor.");
         }
 
-        console.log(`[IA] Usando chave iniciada em: ${apiKey.substring(0, 4)}...`);
-
+        // 1. Contexto RAG
         let knowledgeBase = "";
         try {
             const { data: files } = await supabase
@@ -27,49 +24,44 @@ export class AIService {
                 .select('content_summary')
                 .eq('org_id', orgId)
                 .limit(3);
-
             if (files && files.length > 0) {
-                knowledgeBase = "\nContexto Base:\n" + files.map(f => f.content_summary).join("\n");
+                knowledgeBase = "\nContexto:\n" + files.map(f => f.content_summary).join("\n");
             }
         } catch (err) {}
 
-        const systemPrompt = `Você é o ${botName || 'Orion'}. Seja profissional e amigável.
-${knowledgeBase}`;
+        const systemPrompt = `Você é o ${botName || 'Orion'}. Seja profissional.\n${knowledgeBase}`;
 
-        try {
-            // URL Universal do Gemini 1.5 Flash
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
-            
-            const response = await axios.post(url, {
-                contents: [{
-                    parts: [{ 
-                        text: `${systemPrompt}\n\nPergunta do usuário: ${message}` 
+        // 2. Modelos para tentar (em ordem de preferência)
+        const models = ['gemini-1.5-flash', 'gemini-1.5-flash-8b', 'gemini-pro'];
+        let lastError = null;
+
+        for (const model of models) {
+            try {
+                console.log(`[IA] Tentando modelo: ${model}...`);
+                const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+                
+                const response = await axios.post(url, {
+                    contents: [{
+                        role: 'user',
+                        parts: [{ text: `${systemPrompt}\n\nUsuário: ${message}` }]
                     }]
-                }],
-                generationConfig: {
-                    temperature: 1,
-                    topP: 0.95,
-                    topK: 40,
-                    maxOutputTokens: 1024,
-                }
-            }, {
-                headers: {
-                    'Content-Type': 'application/json'
-                }
-            });
+                });
 
-            if (response.data.candidates && response.data.candidates[0].content) {
-                return {
-                    reply: response.data.candidates[0].content.parts[0].text,
-                    status: 'success'
-                };
+                if (response.data.candidates && response.data.candidates[0].content) {
+                    console.log(`[IA] Sucesso com o modelo: ${model}`);
+                    return {
+                        reply: response.data.candidates[0].content.parts[0].text,
+                        status: 'success'
+                    };
+                }
+            } catch (error: any) {
+                lastError = error.response?.data || error.message;
+                console.error(`[IA] Falha no modelo ${model}:`, lastError);
+                // Se o erro não for 404, pode ser algo mais sério, mas vamos tentar o próximo de qualquer forma
             }
-
-            throw new Error("Resposta vazia da Google.");
-        } catch (error: any) {
-            console.error('Gemini Request Error:', error.response?.data || error.message);
-            const errorMsg = error.response?.data?.error?.message || error.message;
-            throw new Error(`Falha na IA (Gemini): ${errorMsg}`);
         }
+
+        // Se todos falharem
+        throw new Error(`Falha total na IA após tentar ${models.join(', ')}. Último erro: ${JSON.stringify(lastError)}`);
     }
 }
