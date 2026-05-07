@@ -12,6 +12,7 @@ router.post('/chat', async (req: Request, res: Response) => {
             return res.status(400).json({ error: "Mensagem é obrigatória." });
         }
 
+        // Agora usa o AIService que está configurado com Gemini
         const result = await AIService.generateResponse({
             message,
             botName,
@@ -22,7 +23,7 @@ router.post('/chat', async (req: Request, res: Response) => {
         res.json(result);
     } catch (error: any) {
         console.error('Erro na Rota de Chat:', error.message);
-        res.status(500).json({ error: error.message });
+        res.status(500).json({ error: 'Erro na IA', details: error.message });
     }
 });
 
