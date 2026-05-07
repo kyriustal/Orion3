@@ -1,7 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import { supabase } from '../config/supabase';
-import { ai } from '../config/gemini';
 import { AIService } from '../services/ai.service';
 
 const router = Router();
