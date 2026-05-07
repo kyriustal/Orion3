@@ -38,7 +38,7 @@ ${knowledgeBase}`;
         const fullPrompt = `${systemPrompt}\n\nUsuário: ${message}`;
 
         try {
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+            const url = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
             
             const response = await axios.post(url, {
                 contents: [{
@@ -46,7 +46,7 @@ ${knowledgeBase}`;
                 }],
                 generationConfig: {
                     temperature: 0.7,
-                    maxOutputTokens: 800
+                    maxOutputTokens: 1000
                 }
             });
 
