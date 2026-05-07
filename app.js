@@ -1,23 +1,51 @@
+const express = require('express');
+const cors = require('cors');
 const path = require('path');
-const fs = require('fs');
-
-// Garante que o .env seja carregado antes de qualquer coisa
+const axios = require('axios');
 require('dotenv').config();
 
-const serverEntry = path.join(__dirname, 'dist-server', 'server.js');
+const app = express();
+const PORT = process.env.PORT || 3000;
 
-console.log("Orion 2 - Iniciando Servidor...");
+app.use(cors());
+app.use(express.json());
 
-try {
-    if (!fs.existsSync(serverEntry)) {
-        console.error("ERRO: dist-server/server.js nao encontrado.");
-        process.exit(1);
+// Rota de Saúde (Teste)
+app.get('/api/health', (req, res) => {
+    res.json({ status: 'ok', message: 'Orion 2 ONLINE via Rescue Mode' });
+});
+
+// IA (GPT via Axios)
+app.post('/api/orion-web/chat', async (req, res) => {
+    try {
+        const { message } = req.body;
+        const apiKey = process.env.OPENAI_API_KEY;
+        
+        const response = await axios.post('https://api.openai.com/v1/chat/completions', {
+            model: 'gpt-4o-mini',
+            messages: [{ role: 'user', content: message }]
+        }, {
+            headers: { 'Authorization': `Bearer ${apiKey}` }
+        });
+        
+        res.json({ reply: response.data.choices[0].message.content });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
     }
-    
-    // Inicia o servidor compilado
-    require(serverEntry);
-} catch (error) {
-    console.error("FALHA NO BOOT:");
-    console.error(error.message);
-    process.exit(1);
-}
+});
+
+// Simulação
+app.post('/api/agent/simulate', async (req, res) => {
+    res.json({ reply: "Simulação ativa (Modo de Resgate)", status: 'success' });
+});
+
+// Frontend
+const distPath = path.join(__dirname, 'dist');
+app.use(express.static(distPath));
+app.get('*', (req, res) => {
+    res.sendFile(path.join(distPath, 'index.html'));
+});
+
+app.listen(PORT, () => {
+    console.log(`Servidor de Resgate rodando na porta ${PORT}`);
+});
