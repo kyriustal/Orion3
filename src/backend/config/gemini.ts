@@ -1,12 +1,3 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
-import dotenv from 'dotenv';
-
-dotenv.config();
-
-const apiKey = process.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
-
-if (!apiKey) {
-  console.warn('⚠️ Gemini API key is missing in environment variables');
-}
-
-export const ai = new GoogleGenerativeAI(apiKey || '');
+// Gemini desativado em favor da OpenAI (via Axios) para maior estabilidade.
+// Este arquivo pode ser removido futuramente.
+export const ai = null;
