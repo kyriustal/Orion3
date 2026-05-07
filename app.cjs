@@ -1,27 +1,32 @@
+/**
+ * ORION 2 - BOOTLOADER CJS (HOSTINGER)
+ * Usamos .cjs para forçar o CommonJS e permitir o uso de require() 
+ * mesmo com o projeto sendo "type": "module".
+ */
+
 const path = require('path');
 const fs = require('fs');
 
-// Log de início
-console.log("Iniciando Orion 2 Bootloader...");
+// Carrega variáveis de ambiente
+const envPath = path.join(__dirname, '.env');
+if (fs.existsSync(envPath)) {
+    require('dotenv').config({ path: envPath });
+}
 
 const serverEntry = path.join(__dirname, 'dist-server', 'server.js');
 
+console.log("Iniciando Orion Backend (Modo CJS)...");
+
 try {
     if (!fs.existsSync(serverEntry)) {
-        throw new Error("Arquivo dist-server/server.js nao encontrado. O build falhou ou nao foi enviado.");
+        throw new Error("Build 'dist-server' nao encontrado.");
     }
-    
-    console.log("Carregando backend...");
     require(serverEntry);
 } catch (error) {
-    console.error("ERRO NA INICIALIZACAO:");
-    console.error(error.message);
-    console.error(error.stack);
-    
-    // Pequeno servidor de fallback para mostrar o erro no navegador (ajuda no debug da Hostinger)
+    console.error("ERRO NO BOOT:", error.message);
     const http = require('http');
     http.createServer((req, res) => {
         res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
-        res.end(`Erro 500 - Falha ao iniciar o Orion 2\n\nDetalhes:\n${error.message}\n\n${error.stack}`);
+        res.end(`FALHA NA INICIALIZAÇÃO\n\nErro:\n${error.message}`);
     }).listen(process.env.PORT || 3000);
 }

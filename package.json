@@ -2,14 +2,14 @@
   "name": "orion-2",
   "version": "1.0.0",
   "description": "Orion 2 - Intelligence Platform",
-  "main": "app.js",
+  "type": "module",
   "scripts": {
     "dev": "vite --port=3000 --host=0.0.0.0",
     "dev:server": "tsx watch src/backend/server.ts",
     "build": "npm run build:client && npm run build:server",
     "build:client": "vite build",
     "build:server": "tsc -p tsconfig.server.json && node -e \"require('fs').writeFileSync('dist-server/package.json', '{\\\"type\\\":\\\"commonjs\\\"}')\"",
-    "start": "node app.js"
+    "start": "node app.cjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",
@@ -19,7 +19,7 @@
     "dotenv": "^16.4.5",
     "express": "^4.18.2",
     "jsonwebtoken": "^9.0.2",
-    "lucide-react": "^0.344.0",
+    "lucide-react": "^0.446.0",
     "mammoth": "^1.7.0",
     "multer": "^1.4.5-lts.1",
     "pdf-parse": "^1.1.1",
