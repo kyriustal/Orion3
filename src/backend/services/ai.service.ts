@@ -9,7 +9,7 @@ export class AIService {
         botName?: string;
         orgId: string;
         history?: any[];
-        mode?: 'simulation' | 'support'; // NOVO: Diferencia a finalidade
+        mode?: 'simulation' | 'support';
     }) {
         const { message, botName, orgId, history = [], mode = 'simulation' } = params;
         const apiKey = (process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || '').trim();
@@ -20,29 +20,20 @@ export class AIService {
         let knowledgeContext = "";
 
         if (mode === 'support') {
-            // PERSONALIDADE: SUPORTE TÉCNICO ORION (Chat Flutuante)
-            systemPrompt = `Você é o Assistente da Orion. 
-            SOBRE A ORION: A Orion é uma plataforma avançada de IA criada para automatizar o atendimento de empresas e vendedores no WhatsApp através de assistentes virtuais 24h.
-            SEU OBJETIVO: Ajudar o usuário a configurar seus agentes, conectar o WhatsApp e tirar dúvidas técnicas sobre a plataforma.
-            Seja prestativo e profissional.`;
+            systemPrompt = `Você é o Suporte da Orion. Ajude o usuário com a plataforma.`;
         } else {
-            // PERSONALIDADE 2: AGENTE DA EMPRESA (Simulação)
-            // Busca conhecimento específico da empresa do usuário no Supabase
+            // Busca conhecimento...
             try {
-                const { data: files } = await supabase
-                    .from('knowledge_files')
-                    .select('content_summary')
-                    .eq('org_id', orgId)
-                    .limit(3);
-
+                const { data: files } = await supabase.from('knowledge_files').select('content_summary').eq('org_id', orgId).limit(3);
                 if (files && files.length > 0) {
-                    knowledgeContext = "\nCONHECIMENTO DA EMPRESA:\n" + 
-                        files.map(f => f.content_summary).join("\n---\n");
+                    knowledgeContext = "\nCONTEXTO:\n" + files.map(f => f.content_summary).join("\n");
                 }
             } catch (err) {}
 
-            systemPrompt = `Você é o ${botName || 'Assistente Virtual'}. Seu objetivo é atender os clientes da empresa cadastrada. 
-            Use apenas o conhecimento abaixo para responder. Se não souber, peça para o cliente aguardar um humano.
+            systemPrompt = `Você é o ${botName || 'Assistente'}. 
+            REGRAS DE AUTOMAÇÃO:
+            - Se o usuário quiser comprar, agendar ou deixar contato, responda e termine com o código [TRIGGER_LEAD].
+            - Se o usuário estiver bravo ou pedir um atendente humano, termine com [TRIGGER_TRANSFER].
             ${knowledgeContext}`;
         }
 
@@ -65,9 +56,28 @@ export class AIService {
             });
 
             const data: any = await response.json();
-            const reply = data.candidates?.[0]?.content?.parts?.[0]?.text;
+            let reply = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
 
-            return { reply: reply || "Não consegui responder agora.", status: 'success' };
+            // Lógica de Automação (Processamento de Triggers)
+            let automation_triggered = null;
+            let transfer = false;
+
+            if (reply.includes('[TRIGGER_LEAD]')) {
+                automation_triggered = "Captura de Lead";
+                reply = reply.replace('[TRIGGER_LEAD]', '').trim();
+            }
+            if (reply.includes('[TRIGGER_TRANSFER]')) {
+                transfer = true;
+                automation_triggered = "Transferência Humana";
+                reply = reply.replace('[TRIGGER_TRANSFER]', '').trim();
+            }
+
+            return { 
+                reply, 
+                automation_triggered, 
+                transfer,
+                status: 'success' 
+            };
         } catch (error: any) {
             throw new Error(error.message);
         }
