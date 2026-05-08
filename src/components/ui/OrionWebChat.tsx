@@ -25,7 +25,7 @@ export function OrionWebChat() {
                 {
                     id: Date.now(),
                     sender: "bot",
-                    text: "Olá! Sou a Assistente Virtual da Orion. Posso te ajudar a entender melhor nossos planos, como conectar seu WhatsApp ou configurar a Inteligência Artificial. Qual é a sua principal dúvida hoje?",
+                    text: "Olá! Sou o Assistente Orion. A Orion é uma plataforma criada para automatizar o atendimento de empresas e vendedores no WhatsApp através de assistentes virtuais 24h. Como posso te ajudar a configurar sua conta ou tirar dúvidas hoje?",
                     time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
                 }
             ]);
