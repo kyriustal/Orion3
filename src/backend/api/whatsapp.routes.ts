@@ -1,34 +1,34 @@
 import { Router } from 'express';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import { supabase } from '../config/supabase';
-import { AIService } from '../services/ai.service';
-import { WhatsAppService } from '../services/whatsapp.service';
 
 const router = Router();
 
-// /api/whatsapp/config (GET)
-router.get('/config', requireAuth, async (req: AuthRequest, res) => {
-  try {
-    const orgId = req.user?.id;
-    const { data, error } = await supabase
-      .from('whatsapp_config')
-      .select('*')
-      .eq('org_id', orgId)
-      .single();
-
-    if (error && error.code !== 'PGRST116') throw error;
-    res.json(data || null);
-  } catch (error: any) {
-    console.error('Erro ao buscar config WhatsApp:', error.message);
-    res.status(500).json({ error: error.message });
-  }
+// Diagnóstico de Tabela (Para saber se o SQL foi rodado)
+router.get('/debug-table', requireAuth, async (req: any, res) => {
+    try {
+        const { data, error } = await supabase.from('whatsapp_config').select('count', { count: 'exact', head: true });
+        if (error) throw error;
+        res.json({ status: 'success', message: 'Tabela whatsapp_config existe e está acessível.' });
+    } catch (err: any) {
+        res.status(500).json({ status: 'error', message: 'Tabela whatsapp_config NÃO acessível.', details: err.message });
+    }
 });
 
-// /api/whatsapp/config (POST)
+// /api/whatsapp/config (POST) - Versão com Diagnóstico Pesado
 router.post('/config', requireAuth, async (req: AuthRequest, res) => {
+  console.log('[DEBUG-WA] Recebendo nova configuração...');
   try {
     const orgId = req.user?.id;
-    const configData = { ...req.body, org_id: orgId };
+    if (!orgId) throw new Error('Usuário não autenticado no servidor.');
+
+    const configData = { 
+        ...req.body, 
+        org_id: orgId,
+        is_active: true 
+    };
+
+    console.log('[DEBUG-WA] Tentando UPSERT no Supabase para Org:', orgId);
 
     const { data, error } = await supabase
       .from('whatsapp_config')
@@ -37,38 +37,38 @@ router.post('/config', requireAuth, async (req: AuthRequest, res) => {
       .single();
 
     if (error) {
-        console.error('Erro ao salvar no banco (whatsapp_config):', error.message);
-        throw new Error(`Erro no Banco de Dados: ${error.message}`);
+        console.error('[DEBUG-WA] ERRO CRÍTICO NO SUPABASE:', error);
+        return res.status(400).json({ 
+            error: 'Erro no Banco de Dados', 
+            details: error.message,
+            hint: 'Verifique se você rodou o comando SQL no Supabase Editor.'
+        });
     }
 
-    res.json({ message: 'Configuração salva com sucesso!', data });
+    console.log('[DEBUG-WA] Configuração salva com sucesso!');
+    res.json({ message: 'Conectado!', data });
+
   } catch (error: any) {
-    res.status(500).json({ error: error.message });
+    console.error('[DEBUG-WA] FALHA GERAL NA ROTA:', error.message);
+    res.status(500).json({ error: 'Erro Interno', details: error.message });
   }
 });
 
-// Configuração do Webhook da Meta (GET para verificação)
-router.get('/webhook', (req, res) => {
-  const mode = req.query['hub.mode'];
-  const token = req.query['hub.verify_token'];
-  const challenge = req.query['hub.challenge'];
-
-  console.log(`[META] Tentativa de verificação. Mode: ${mode}, Token: ${token}`);
-
-  const VERIFY_TOKEN = process.env.META_VERIFY_TOKEN || 'orion_webhook_token';
-
-  if (mode === 'subscribe' && (token === VERIFY_TOKEN || token === 'orion_webhook_token')) {
-    console.log('✅ WEBHOOK DA META VERIFICADO COM SUCESSO');
-    return res.status(200).send(challenge);
-  } else {
-    console.error('❌ FALHA NA VERIFICAÇÃO: Token incorreto ou ausente.');
-    return res.sendStatus(403);
-  }
-});
-
-router.post('/webhook', async (req, res) => {
-    // Lógica do webhook de resposta automática...
-    res.sendStatus(200);
-});
+// Listar Config
+router.get('/config', requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const orgId = req.user?.id;
+      const { data, error } = await supabase
+        .from('whatsapp_config')
+        .select('*')
+        .eq('org_id', orgId)
+        .maybeSingle();
+  
+      if (error) throw error;
+      res.json(data || null);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
 
 export default router;
