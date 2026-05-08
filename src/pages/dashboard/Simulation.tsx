@@ -1,9 +1,10 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/src/components/ui/card";
 import { Button } from "@/src/components/ui/button";
 import { Input } from "@/src/components/ui/input";
-import { Send, User, Bot, RefreshCw, Zap } from "lucide-react";
+import { Send, User, Bot, RefreshCw, Zap, X } from "lucide-react";
 import { useState, useRef, useEffect } from "react";
 import { toast } from "sonner";
+import { BookingForm } from "@/src/components/ui/BookingForm";
 
 type Message = {
   id: number;
@@ -67,6 +68,8 @@ export default function Simulation() {
     fetchBotName();
   }, []);
 
+  const [showBooking, setShowBooking] = useState(false);
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isTyping]);
@@ -101,11 +104,7 @@ export default function Simulation() {
       const data = await response.json();
 
       if (!response.ok) {
-        // Build a detailed error message from all available fields
-        const errorMsg = data.details
-          ? `${data.error} \n\nDetalhes técnicos: ${data.details}${data.code ? ` [${data.code}]` : ''}`
-          : (data.error || "Erro desconhecido ao comunicar com a IA");
-        throw new Error(errorMsg);
+        throw new Error(data.details || data.error);
       }
 
       setMessages(prev => [...prev, {
@@ -115,30 +114,23 @@ export default function Simulation() {
         time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       }]);
 
-      if (data.automation_triggered) {
-        toast.success(`Automação disparada: ${data.automation_triggered}`, {
-            icon: <Zap className="w-4 h-4 text-amber-500" />
-        });
+      if (data.automation_triggered === "Captura de Lead") {
+        setShowBooking(true);
+        toast.success("Formulário de agendamento liberado!");
       }
 
       if (data.transfer) {
         toast.info("A IA solicitou transferência para um atendente humano.");
       }
     } catch (error: any) {
-      console.error("Simulation error:", error);
       toast.error(`Erro: ${error.message}`);
-      setMessages(prev => [...prev, {
-        id: Date.now(),
-        sender: "bot",
-        text: `Desculpe, ocorreu um erro: ${error.message}`,
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-      }]);
     } finally {
       setIsTyping(false);
     }
   };
 
   const handleReset = () => {
+    setShowBooking(false);
     setMessages([
       { id: 1, sender: "bot", text: `Olá! Sou o ${botName}. Como posso te ajudar hoje?`, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) },
     ]);
@@ -217,6 +209,26 @@ export default function Simulation() {
           </div>
         </div>
       </Card>
+
+      {/* Slide-over de Agendamento */}
+      {showBooking && (
+        <Card className="fixed right-6 top-24 w-[400px] z-50 shadow-2xl border-emerald-100 animate-in slide-in-from-right-10">
+          <CardHeader className="bg-emerald-50 border-b border-emerald-100">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-emerald-800 flex items-center gap-2">
+                <Zap className="w-5 h-5" /> Agendamento Rápido
+              </CardTitle>
+              <Button variant="ghost" size="icon" onClick={() => setShowBooking(false)}>
+                <X className="w-4 h-4" />
+              </Button>
+            </div>
+            <CardDescription>Preencha os dados para confirmar a reserva.</CardDescription>
+          </CardHeader>
+          <CardContent className="pt-6">
+            <BookingForm onSuccess={() => setTimeout(() => setShowBooking(false), 3000)} />
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

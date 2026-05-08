@@ -21,11 +21,15 @@ import authRoutes from './api/auth.routes';
 import knowledgeRoutes from './api/knowledge.routes';
 import chatRoutes from './api/chat.routes';
 import coreRoutes from './api/core.routes';
+import whatsappRoutes from './api/whatsapp.routes';
+import bookingsRoutes from './api/bookings.routes';
 
 // Registro das Rotas
 app.use('/api/auth', authRoutes);
 app.use('/api/knowledge', knowledgeRoutes);
 app.use('/api/orion-web', chatRoutes);
+app.use('/api/whatsapp', whatsappRoutes);
+app.use('/api/bookings', bookingsRoutes);
 app.use('/api', coreRoutes);
 
 // Frontend em Produção
