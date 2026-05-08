@@ -47,14 +47,23 @@ router.post('/config', requireAuth, async (req: AuthRequest, res) => {
   }
 });
 
-// Webhook endpoints... (GET e POST do webhook já configurados anteriormente)
+// Configuração do Webhook da Meta (GET para verificação)
 router.get('/webhook', (req, res) => {
-    const VERIFY_TOKEN = process.env.META_VERIFY_TOKEN || 'orion_webhook_token';
-    if (req.query['hub.verify_token'] === VERIFY_TOKEN) {
-        res.status(200).send(req.query['hub.challenge']);
-    } else {
-        res.sendStatus(403);
-    }
+  const mode = req.query['hub.mode'];
+  const token = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
+
+  console.log(`[META] Tentativa de verificação. Mode: ${mode}, Token: ${token}`);
+
+  const VERIFY_TOKEN = process.env.META_VERIFY_TOKEN || 'orion_webhook_token';
+
+  if (mode === 'subscribe' && (token === VERIFY_TOKEN || token === 'orion_webhook_token')) {
+    console.log('✅ WEBHOOK DA META VERIFICADO COM SUCESSO');
+    return res.status(200).send(challenge);
+  } else {
+    console.error('❌ FALHA NA VERIFICAÇÃO: Token incorreto ou ausente.');
+    return res.sendStatus(403);
+  }
 });
 
 router.post('/webhook', async (req, res) => {
