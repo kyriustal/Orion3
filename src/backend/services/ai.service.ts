@@ -1,6 +1,5 @@
 import dotenv from 'dotenv';
 
-// Carrega variáveis de ambiente
 dotenv.config();
 
 export class AIService {
@@ -11,48 +10,31 @@ export class AIService {
         history?: any[];
     }) {
         const { message, botName, orgId, history = [] } = params;
-        
         const apiKey = (process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || '').trim();
 
-        if (!apiKey || apiKey.length < 10) {
-            throw new Error("Chave GEMINI_API_KEY não encontrada no servidor.");
+        if (!apiKey) {
+            throw new Error("Chave não encontrada.");
         }
 
-        const promptText = `Você é o ${botName || 'Orion'}.\n\nUsuário: ${message}`;
-
         try {
-            // USANDO FETCH NATIVO E V1 ESTÁVEL
-            const url = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
-            
-            const response = await fetch(url, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    contents: [{
-                        parts: [{ text: promptText }]
-                    }]
-                })
-            });
+            // MODO DIAGNÓSTICO: Listar modelos disponíveis na v1beta
+            const listUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`;
+            const listResponse = await fetch(listUrl);
+            const listData: any = await listResponse.json();
 
-            const data: any = await response.json();
-
-            if (!response.ok) {
-                console.error('Gemini API Error Response:', data);
-                const errorMsg = data.error?.message || response.statusText;
-                throw new Error(`Erro na Google (v1): ${errorMsg}`);
+            if (!listResponse.ok) {
+                throw new Error(`Falha ao listar modelos: ${listData.error?.message || listResponse.statusText}`);
             }
 
-            const reply = data.candidates?.[0]?.content?.parts?.[0]?.text;
-
-            if (!reply) throw new Error("A IA não retornou texto na resposta.");
-
-            return { reply, status: 'success' };
+            // Pega os nomes dos modelos e remove o prefixo 'models/'
+            const availableModels = listData.models?.map((m: any) => m.name.replace('models/', '')) || [];
+            
+            // Retorna um erro proposital com a lista de modelos para a gente ler na tela
+            throw new Error(`MODELOS DISPONÍVEIS: ${availableModels.join(', ')}`);
 
         } catch (error: any) {
-            console.error('Fetch Error:', error.message);
-            throw new Error(`Falha de Conexão: ${error.message}`);
+            console.error('Diagnostic Error:', error.message);
+            throw new Error(error.message);
         }
     }
 }
