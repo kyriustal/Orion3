@@ -31,6 +31,7 @@ import Pricing from './pages/public/Pricing';
 import About from './pages/public/About';
 import Security from './pages/public/Security';
 import Terms from './pages/public/Terms';
+import Privacy from './pages/public/Privacy';
 import ApiDocs from './pages/public/ApiDocs';
 import WhatsappIA from './pages/public/WhatsappIA';
 import KnowledgeRAG from './pages/public/KnowledgeRAG';
@@ -60,6 +61,7 @@ export default function App() {
           <Route path="/sobre" element={<About />} />
           <Route path="/seguranca" element={<Security />} />
           <Route path="/termos" element={<Terms />} />
+          <Route path="/privacidade" element={<Privacy />} />
           <Route path="/api-docs" element={<ApiDocs />} />
           <Route path="/whatsapp-ia" element={<WhatsappIA />} />
           <Route path="/rag" element={<KnowledgeRAG />} />
