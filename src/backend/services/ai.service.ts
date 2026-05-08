@@ -1,9 +1,8 @@
-import axios from 'axios';
-import { supabase } from '../config/supabase';
+import dotenv from 'dotenv';
 
-/**
- * Serviço de IA - Orion 2 (Versão Ultra-Estável)
- */
+// Carrega variáveis de ambiente
+dotenv.config();
+
 export class AIService {
     static async generateResponse(params: {
         message: string;
@@ -12,38 +11,48 @@ export class AIService {
         history?: any[];
     }) {
         const { message, botName, orgId, history = [] } = params;
-        const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
+        
+        const apiKey = (process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || '').trim();
 
-        if (!apiKey) {
-            throw new Error("API Key não encontrada. Verifique o seu .env.");
+        if (!apiKey || apiKey.length < 10) {
+            throw new Error("Chave GEMINI_API_KEY não encontrada no servidor.");
         }
 
-        // 1. Prompt Simplificado (Evita erros de codificação)
-        const systemPrompt = `Você é o ${botName || 'Orion'}.`;
-        const promptText = `${systemPrompt}\n\nPergunta: ${message}`;
+        const promptText = `Você é o ${botName || 'Orion'}.\n\nUsuário: ${message}`;
 
         try {
-            // Usando Gemini Pro (v1beta) - O modelo mais compatível
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${apiKey.trim()}`;
+            // USANDO FETCH NATIVO E V1 ESTÁVEL
+            const url = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
             
-            const response = await axios.post(url, {
-                contents: [{
-                    parts: [{ text: promptText }]
-                }]
-            }, { timeout: 10000 });
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    contents: [{
+                        parts: [{ text: promptText }]
+                    }]
+                })
+            });
 
-            const reply = response.data.candidates?.[0]?.content?.parts?.[0]?.text;
+            const data: any = await response.json();
 
-            if (!reply) {
-                throw new Error("A IA respondeu mas o texto veio vazio. Verifique sua cota no Google AI Studio.");
+            if (!response.ok) {
+                console.error('Gemini API Error Response:', data);
+                const errorMsg = data.error?.message || response.statusText;
+                throw new Error(`Erro na Google (v1): ${errorMsg}`);
             }
+
+            const reply = data.candidates?.[0]?.content?.parts?.[0]?.text;
+
+            if (!reply) throw new Error("A IA não retornou texto na resposta.");
 
             return { reply, status: 'success' };
 
         } catch (error: any) {
-            console.error('IA ERROR:', error.response?.data || error.message);
-            const detail = error.response?.data?.[0]?.error?.message || error.message;
-            throw new Error(`Erro na IA: ${detail}`);
+            console.error('Fetch Error:', error.message);
+            throw new Error(`Falha de Conexão: ${error.message}`);
         }
     }
 }
