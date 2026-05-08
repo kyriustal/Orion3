@@ -11,6 +11,7 @@ const router = Router();
 
 // /api/knowledge/upload
 router.post('/upload', requireAuth, upload.single('file'), async (req: any, res) => {
+  let tempFilePath = '';
   try {
     const file = req.file;
     const orgId = req.body.orgId || req.user?.id;
@@ -19,33 +20,41 @@ router.post('/upload', requireAuth, upload.single('file'), async (req: any, res)
       return res.status(400).json({ error: 'Nenhum arquivo enviado.' });
     }
 
-    console.log(`Processando arquivo: ${file.originalname} (${file.size} bytes)`);
+    tempFilePath = file.path;
+    console.log(`[INDEX] Processando: ${file.originalname}`);
 
     let textContent = '';
 
-    // Extração de Texto Robusta
+    // Extração de Texto com Timeouts
     try {
         if (file.mimetype === 'application/pdf') {
           const dataBuffer = fs.readFileSync(file.path);
-          // @ts-ignore
           const data = await pdfParse(dataBuffer);
           textContent = data.text;
         } else if (file.mimetype === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
           const result = await mammoth.extractRawText({ path: file.path });
           textContent = result.value;
-        } else if (file.mimetype === 'text/plain' || file.mimetype === 'text/csv') {
+        } else {
           textContent = fs.readFileSync(file.path, 'utf8');
         }
     } catch (err: any) {
-        console.error('Erro na extração de texto:', err);
-        return res.status(500).json({ error: 'Falha ao ler o conteúdo do arquivo.', details: err.message });
+        console.error('[INDEX] Erro na leitura do arquivo:', err);
+        throw new Error(`Falha ao ler conteúdo do arquivo: ${err.message}`);
     }
 
-    if (!textContent || textContent.trim().length === 0) {
-        return res.status(400).json({ error: 'O arquivo parece estar vazio ou não contém texto legível.' });
+    // Limpeza básica do texto para evitar erros de SQL
+    const cleanedText = textContent
+        .replace(/\x00/g, '') // Remove caracteres nulos
+        .replace(/'/g, "''")   // Escapa aspas simples
+        .trim();
+
+    if (!cleanedText) {
+        throw new Error("Não foi possível extrair nenhum texto legível deste arquivo.");
     }
 
-    // "Aprendizado": Salvando o conteúdo processado no Supabase para busca da IA
+    console.log(`[INDEX] Texto extraído (${cleanedText.length} caracteres). Salvando no banco...`);
+
+    // Salvando no Supabase
     const { data: dbFile, error } = await supabase
       .from('knowledge_files')
       .upsert({
@@ -55,33 +64,37 @@ router.post('/upload', requireAuth, upload.single('file'), async (req: any, res)
         path: file.path,
         org_id: orgId,
         processed: true,
-        content_summary: textContent // Armazenamos o texto completo para o RAG simples
+        content_summary: cleanedText
       })
       .select()
       .single();
 
     if (error) {
-       console.warn('Erro ao salvar no DB, tabela knowledge_files pode estar ausente:', error.message);
-       // Fallback para o usuário não ficar travado
-       return res.status(201).json({
-          message: 'Arquivo processado com sucesso (Modo Simulação)',
-          file: { name: file.originalname, size: file.size },
-          preview: textContent.substring(0, 200)
-       });
+       console.error('[INDEX] Erro no banco de dados:', error.message);
+       throw new Error(`Erro ao salvar no banco: ${error.message}`);
     }
 
+    // Deleta o arquivo temporário após o processamento
+    if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+
     res.status(201).json({
-      message: 'Arquivo aprendido com sucesso! O bot já pode usar este conhecimento.',
+      message: 'Arquivo aprendido com sucesso!',
       file: dbFile
     });
 
   } catch (error: any) {
-    console.error('Upload error:', error);
-    res.status(500).json({ error: 'Erro interno ao processar upload', details: error.message });
+    console.error('[INDEX] FALHA TOTAL:', error.message);
+    // Limpa o arquivo se houver erro
+    if (tempFilePath && fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+    
+    res.status(500).json({ 
+        error: 'A indexação falhou.', 
+        details: error.message 
+    });
   }
 });
 
-// Listar arquivos aprendidos
+// Listar arquivos...
 router.get('/files', requireAuth, async (req: AuthRequest, res) => {
   try {
     const orgId = req.query.orgId || req.user?.id;
@@ -93,8 +106,8 @@ router.get('/files', requireAuth, async (req: AuthRequest, res) => {
 
     if (error) throw error;
     res.json({ files: data });
-  } catch (error: any) {
-    res.status(500).json({ error: 'Erro ao listar arquivos', details: error.message });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
   }
 });
 

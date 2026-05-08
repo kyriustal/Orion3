@@ -23,6 +23,9 @@ import chatRoutes from './api/chat.routes';
 import coreRoutes from './api/core.routes';
 import whatsappRoutes from './api/whatsapp.routes';
 import bookingsRoutes from './api/bookings.routes';
+import automationsRoutes from './api/automations.routes';
+import templatesRoutes from './api/templates.routes';
+import campaignsRoutes from './api/campaigns.routes';
 
 // Registro das Rotas
 app.use('/api/auth', authRoutes);
@@ -30,6 +33,9 @@ app.use('/api/knowledge', knowledgeRoutes);
 app.use('/api/orion-web', chatRoutes);
 app.use('/api/whatsapp', whatsappRoutes);
 app.use('/api/bookings', bookingsRoutes);
+app.use('/api/automations', automationsRoutes);
+app.use('/api/templates', templatesRoutes);
+app.use('/api/campaigns', campaignsRoutes);
 app.use('/api', coreRoutes);
 
 // Frontend em Produção

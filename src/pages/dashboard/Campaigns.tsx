@@ -28,7 +28,7 @@ export default function Campaigns() {
 
     setIsSubmitting(true);
     try {
-      const response = await fetch("/api/automations/campaigns/send", {
+      const response = await fetch("/api/campaigns/send", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
