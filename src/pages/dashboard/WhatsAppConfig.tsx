@@ -173,8 +173,10 @@ export default function WhatsAppConfig() {
       toast.info("Sincronizando dados com a Meta...");
       await handleSyncWebhooks();
 
-    } catch (error) {
-      toast.error("Erro ao conectar número.");
+    } catch (error: any) {
+      const errorMessage = error.message || "Erro desconhecido ao conectar número.";
+      toast.error(`Falha: ${errorMessage}`);
+      console.error("WhatsApp Connection Error:", error);
     } finally {
       setIsSubmitting(false);
     }
