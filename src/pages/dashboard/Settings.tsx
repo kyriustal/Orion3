@@ -295,8 +295,8 @@ export default function Settings() {
               <CardContent className="space-y-2">
                 <Label className="text-[10px] uppercase font-bold text-zinc-400">Verify Token (Meta Cloud API)</Label>
                 <div className="flex gap-2">
-                  <code className="flex-1 p-2 bg-white border border-zinc-200 rounded text-xs">orion_verify_token_2024</code>
-                  <Button variant="outline" size="icon" onClick={() => { navigator.clipboard.writeText('orion_verify_token_2024'); toast.success('Copiado!'); }}>
+                  <code className="flex-1 p-2 bg-white border border-zinc-200 rounded text-xs">orion_secure_token_123</code>
+                  <Button variant="outline" size="icon" onClick={() => { navigator.clipboard.writeText('orion_secure_token_123'); toast.success('Copiado!'); }}>
                     <Save className="w-4 h-4" />
                   </Button>
                 </div>
