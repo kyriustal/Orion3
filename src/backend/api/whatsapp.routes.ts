@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { requireAuth, AuthRequest } from '../middleware/auth';
-import { supabase } from '../config/supabase';
+import { supabaseAdmin } from '../config/supabase';
 
 const router = Router();
 
@@ -8,7 +8,7 @@ const router = Router();
 router.get('/config', requireAuth, async (req: AuthRequest, res) => {
   try {
     const orgId = req.user?.id;
-    const { data, error } = await supabase
+    const { data, error } = await supabaseAdmin
       .from('whatsapp_config')
       .select('*')
       .eq('org_id', orgId)
@@ -25,16 +25,17 @@ router.get('/config', requireAuth, async (req: AuthRequest, res) => {
 router.post('/config', requireAuth, async (req: AuthRequest, res) => {
   try {
     const orgId = req.user?.id;
+    
+    // Pick only known columns to avoid "column not found" errors
     const configData = { 
-        ...req.body, 
         org_id: orgId,
+        phone_number_id: req.body.phone_number_id,
+        waba_id: req.body.waba_id,
+        access_token: req.body.access_token,
         is_active: true 
     };
 
-    // Remove campos que podem vir do frontend mas não estão no banco (limpeza)
-    delete configData.phone; 
-
-    const { data, error } = await supabase
+    const { data, error } = await supabaseAdmin
       .from('whatsapp_config')
       .upsert(configData, { onConflict: 'org_id' })
       .select()
