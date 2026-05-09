@@ -3,7 +3,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter }
 import { Button } from "@/src/components/ui/button";
 import { Input } from "@/src/components/ui/input";
 import { Label } from "@/src/components/ui/label";
-import { Switch } from "@/src/components/ui/switch";
 import { Save, Loader2, Key, User, Building2, Bot, ShieldCheck, Mail } from "lucide-react";
 import { toast } from "sonner";
 
@@ -25,7 +24,8 @@ export default function Settings() {
     employees_count: "",
     product_description: "",
     chatbot_name: "",
-    use_emojis: true
+    use_emojis: true,
+    emoji_mode: "moderate" // 'none' | 'moderate' | 'adaptive'
   });
 
   const [pwd, setPwd] = useState({ current: "", new: "", confirm: "" });
@@ -43,7 +43,11 @@ export default function Settings() {
       });
       if (!response.ok) throw new Error("Erro ao carregar configurações");
       const data = await response.json();
-      setSettings(prev => ({ ...prev, ...data }));
+      setSettings(prev => ({
+        ...prev,
+        ...data,
+        emoji_mode: data.emoji_mode || 'moderate' // garantir valor padrão
+      }));
     } catch (error: any) {
       toast.error(error.message);
     } finally {
@@ -241,15 +245,51 @@ export default function Settings() {
                   placeholder="Descreva o que seu negócio faz, preços, horários e políticas..."
                 />
               </div>
-              <div className="flex items-center justify-between border-t border-zinc-100 pt-4">
-                <div className="space-y-0.5">
-                  <Label>Humanizar com Emojis</Label>
-                  <p className="text-xs text-zinc-500">A IA usará emojis para parecer mais amigável.</p>
+              <div className="space-y-3 border-t border-zinc-100 pt-4">
+                <Label>Modo de Emojis da IA</Label>
+                <p className="text-xs text-zinc-500">Controla como a IA usa emojis ao responder os clientes.</p>
+                <div className="grid grid-cols-1 gap-2">
+                  {[
+                    {
+                      id: "none",
+                      label: "🚫 Não usar emojis",
+                      desc: "A IA responde de forma puramente textual, sem emojis. Ideal para contextos formais e corporativos."
+                    },
+                    {
+                      id: "moderate",
+                      label: "😊 Uso moderado",
+                      desc: "A IA usa emojis com parcimónia para humanizar as respostas, sem exagerar."
+                    },
+                    {
+                      id: "adaptive",
+                      label: "🎯 Conforme o perfil do cliente",
+                      desc: "A IA analisa o estilo do cliente. Só usa emojis se o cliente usar emojis, após 5-10 mensagens de conversa."
+                    }
+                  ].map(opt => (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => setSettings({ ...settings, emoji_mode: opt.id })}
+                      className={`flex items-start gap-3 p-3 rounded-xl border text-left transition-all ${
+                        (settings as any).emoji_mode === opt.id
+                          ? 'border-emerald-500 bg-emerald-50 ring-1 ring-emerald-500'
+                          : 'border-zinc-200 bg-white hover:border-zinc-300 hover:bg-zinc-50'
+                      }`}
+                    >
+                      <div className={`w-4 h-4 mt-0.5 rounded-full border-2 flex-shrink-0 ${
+                        (settings as any).emoji_mode === opt.id
+                          ? 'border-emerald-500 bg-emerald-500'
+                          : 'border-zinc-300'
+                      }`} />
+                      <div>
+                        <p className={`text-sm font-medium ${ (settings as any).emoji_mode === opt.id ? 'text-emerald-800' : 'text-zinc-800' }`}>
+                          {opt.label}
+                        </p>
+                        <p className="text-xs text-zinc-500 mt-0.5">{opt.desc}</p>
+                      </div>
+                    </button>
+                  ))}
                 </div>
-                <Switch
-                  checked={settings.use_emojis}
-                  onCheckedChange={(checked) => setSettings({ ...settings, use_emojis: checked })}
-                />
               </div>
             </CardContent>
           </Card>
