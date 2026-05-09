@@ -26,6 +26,7 @@ import bookingsRoutes from './api/bookings.routes';
 import automationsRoutes from './api/automations.routes';
 import templatesRoutes from './api/templates.routes';
 import campaignsRoutes from './api/campaigns.routes';
+import billingRoutes from './api/billing.routes';
 
 // Registro das Rotas
 app.use('/api/auth', authRoutes);
@@ -36,6 +37,7 @@ app.use('/api/bookings', bookingsRoutes);
 app.use('/api/automations', automationsRoutes);
 app.use('/api/templates', templatesRoutes);
 app.use('/api/campaigns', campaignsRoutes);
+app.use('/api/billing', billingRoutes);
 app.use('/api', coreRoutes);
 
 // Frontend em Produção

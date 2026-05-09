@@ -1,6 +1,7 @@
 import { Outlet, Link, useLocation } from 'react-router-dom';
 import { Bot, Smartphone, LayoutDashboard, BookOpen, MessageSquare, CreditCard, Settings, Megaphone, Users, BarChart, LogOut, UserCircle, PlayCircle, Menu, X, Zap } from 'lucide-react';
 import { useState, useEffect } from 'react';
+import TrialExpiredGate from '@/src/components/TrialExpiredGate';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -13,21 +14,31 @@ export default function DashboardLayout() {
   const location = useLocation();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [user, setUser] = useState({ name: 'Carregando...', email: '' });
+  const [subStatus, setSubStatus] = useState<{ status: string; plan: string; daysLeft: number } | null>(null);
 
   useEffect(() => {
+    const token = localStorage.getItem("token");
     fetch("/api/auth/me", {
-      headers: { "Authorization": `Bearer ${localStorage.getItem("token")}` }
+      headers: { "Authorization": `Bearer ${token}` }
     })
       .then(res => res.json())
       .then(data => {
         if (data.user) {
           setUser({
-            name: data.user.name || "Usuário",
+            name: data.user.name || data.user.email?.split('@')[0] || "Usuário",
             email: data.user.email
           });
         }
       })
       .catch(err => console.error("Erro ao carregar usuário:", err));
+
+    // Verificar subscrição
+    fetch("/api/billing/status", {
+      headers: { "Authorization": `Bearer ${token}` }
+    })
+      .then(res => res.json())
+      .then(data => setSubStatus(data))
+      .catch(() => {});
   }, []);
 
   const navItems = [
@@ -185,6 +196,11 @@ export default function DashboardLayout() {
       <main className="flex-1 overflow-y-auto p-4 md:p-8">
         <Outlet />
       </main>
+
+      {/* Bloqueio de Trial/Dívida */}
+      {subStatus && ['expired', 'debt'].includes(subStatus.status) && (
+        <TrialExpiredGate status={subStatus.status as 'expired' | 'debt'} daysLeft={subStatus.daysLeft} />
+      )}
     </div>
   );
 }
