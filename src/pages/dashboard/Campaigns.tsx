@@ -16,7 +16,8 @@ export default function Campaigns() {
     name: "",
     template: "oferta_01",
     audience: "all",
-    filters: ""
+    filters: "",
+    delay_seconds: 2
   });
 
   const handleStartCampaign = async (e: React.FormEvent) => {
@@ -55,7 +56,7 @@ export default function Campaigns() {
 
       toast.success(data.message);
       setIsModalOpen(false);
-      setNewCampaign({ name: "", template: "oferta_01", audience: "all", filters: "" });
+      setNewCampaign({ name: "", template: "oferta_01", audience: "all", filters: "", delay_seconds: 2 });
     } catch (error) {
       toast.error("Erro ao iniciar a campanha.");
     } finally {
@@ -187,6 +188,19 @@ export default function Campaigns() {
                     onChange={(e) => setNewCampaign({ ...newCampaign, filters: e.target.value })}
                   />
                   <p className="text-xs text-zinc-500">Separe as tags por vírgula.</p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="delay">Atraso entre mensagens (Segundos)</Label>
+                  <Input
+                    id="delay"
+                    type="number"
+                    min="1"
+                    max="60"
+                    value={newCampaign.delay_seconds}
+                    onChange={(e) => setNewCampaign({ ...newCampaign, delay_seconds: parseInt(e.target.value) || 2 })}
+                  />
+                  <p className="text-[10px] text-zinc-500 italic">Recomendamos no mínimo 2 segundos para evitar bloqueios de spam.</p>
                 </div>
 
                 <div className="bg-amber-50 border border-amber-200 rounded-md p-3 mt-4">

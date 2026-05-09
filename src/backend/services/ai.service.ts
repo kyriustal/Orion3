@@ -24,9 +24,9 @@ export class AIService {
         } else {
             // Busca conhecimento...
             try {
-                const { data: files } = await supabase.from('knowledge_files').select('content_summary').eq('org_id', orgId).limit(3);
+                const { data: files } = await supabase.from('knowledge_files').select('content_summary').eq('org_id', orgId).limit(50);
                 if (files && files.length > 0) {
-                    knowledgeContext = "\nCONTEXTO:\n" + files.map(f => f.content_summary).join("\n");
+                    knowledgeContext = "\nCONTEXTO:\n" + files.map(f => f.content_summary).join("\n\n");
                 }
             } catch (err) {}
 

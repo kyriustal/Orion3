@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { supabase } from '../config/supabase';
+import { supabaseAdmin } from '../config/supabase';
 import { requireAuth } from '../middleware/auth';
 
 const router = Router();
@@ -8,7 +8,7 @@ const router = Router();
 router.get('/', requireAuth, async (req: any, res) => {
   try {
     const orgId = req.user.id;
-    const { data, error } = await supabase
+    const { data, error } = await supabaseAdmin
       .from('templates')
       .select('*')
       .eq('org_id', orgId);
@@ -26,7 +26,7 @@ router.post('/', requireAuth, async (req: any, res) => {
     const orgId = req.user.id;
     const { name, category, language, content } = req.body;
 
-    const { data, error } = await supabase
+    const { data, error } = await supabaseAdmin
       .from('templates')
       .insert({
         org_id: orgId,

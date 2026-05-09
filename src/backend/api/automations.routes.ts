@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { supabase } from '../config/supabase';
+import { supabaseAdmin } from '../config/supabase';
 import { requireAuth } from '../middleware/auth';
 
 const router = Router();
@@ -8,7 +8,7 @@ const router = Router();
 router.get('/', requireAuth, async (req: any, res) => {
   try {
     const orgId = req.user.id;
-    const { data, error } = await supabase
+    const { data, error } = await supabaseAdmin
       .from('automations')
       .select('*')
       .eq('org_id', orgId);
@@ -26,7 +26,7 @@ router.post('/', requireAuth, async (req: any, res) => {
     const orgId = req.user.id;
     const { name, type, config } = req.body;
 
-    const { data, error } = await supabase
+    const { data, error } = await supabaseAdmin
       .from('automations')
       .insert({
         org_id: orgId,
@@ -49,7 +49,7 @@ router.post('/', requireAuth, async (req: any, res) => {
 router.put('/:id/toggle', requireAuth, async (req: any, res) => {
   try {
     const { status } = req.body;
-    const { data, error } = await supabase
+    const { data, error } = await supabaseAdmin
       .from('automations')
       .update({ status })
       .eq('id', req.params.id);

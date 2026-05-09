@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { supabase } from '../config/supabase';
+import { supabaseAdmin } from '../config/supabase';
 import { requireAuth } from '../middleware/auth';
 
 const router = Router();
@@ -8,10 +8,10 @@ const router = Router();
 router.post('/send', requireAuth, async (req: any, res) => {
   try {
     const orgId = req.user.id;
-    const { name, template, audience, filters } = req.body;
+    const { name, template, audience, filters, delay_seconds } = req.body;
 
     // 1. Registra a campanha no histórico
-    const { data, error } = await supabase
+    const { data, error } = await supabaseAdmin
       .from('campaigns')
       .insert({
         org_id: orgId,
@@ -20,7 +20,7 @@ router.post('/send', requireAuth, async (req: any, res) => {
         audience,
         status: 'SENDING',
         progress: 0,
-        filters
+        filters: { ...filters, delay_seconds: delay_seconds || 0 }
       })
       .select()
       .single();
@@ -43,7 +43,7 @@ router.post('/send', requireAuth, async (req: any, res) => {
 router.get('/', requireAuth, async (req: any, res) => {
   try {
     const orgId = req.user.id;
-    const { data, error } = await supabase
+    const { data, error } = await supabaseAdmin
       .from('campaigns')
       .select('*')
       .eq('org_id', orgId)
