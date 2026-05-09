@@ -1,6 +1,7 @@
 import { Router, Response } from 'express';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import { AIService } from '../services/ai.service';
+import { supabaseAdmin } from '../config/supabase';
 
 const router = Router();
 
@@ -24,7 +25,30 @@ router.post('/agent/simulate', requireAuth, async (req: AuthRequest, res: Respon
     }
 });
 
-// Outras rotas permanecem...
-router.get('/settings/org', requireAuth, (req, res) => res.json({ data: [] }));
+// Settings: GET
+router.get('/settings/org', requireAuth, async (req: AuthRequest, res) => {
+    try {
+        const orgId = req.user?.id;
+        const { data, error } = await supabaseAdmin.from('organizations').select('*').eq('id', orgId).maybeSingle();
+        if (error) throw error;
+        res.json(data || {});
+    } catch (err: any) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Settings: POST
+router.post('/settings/org', requireAuth, async (req: AuthRequest, res) => {
+    try {
+        const orgId = req.user?.id;
+        const body = req.body;
+        // Upsert organization data
+        const { error } = await supabaseAdmin.from('organizations').upsert({ id: orgId, ...body });
+        if (error) throw error;
+        res.json({ message: 'Configurações salvas' });
+    } catch (err: any) {
+        res.status(500).json({ error: err.message });
+    }
+});
 
 export default router;
