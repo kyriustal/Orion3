@@ -3,7 +3,7 @@ import { Button } from "@/src/components/ui/button";
 import { Input } from "@/src/components/ui/input";
 import { Label } from "@/src/components/ui/label";
 import { Megaphone, Plus, PlayCircle, PauseCircle, Settings2, Loader2 } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { toast } from "sonner";
 
 export default function Campaigns() {
@@ -19,6 +19,24 @@ export default function Campaigns() {
     filters: "",
     delay_seconds: 2
   });
+
+  useEffect(() => {
+    fetchCampaigns();
+  }, []);
+
+  const fetchCampaigns = async () => {
+    try {
+      const response = await fetch("/api/campaigns", {
+        headers: { "Authorization": `Bearer ${localStorage.getItem("token")}` }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setCampaigns(data.campaigns || []);
+      }
+    } catch (error) {
+      console.error("Erro ao buscar campanhas", error);
+    }
+  };
 
   const handleStartCampaign = async (e: React.FormEvent) => {
     e.preventDefault();

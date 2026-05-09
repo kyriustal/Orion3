@@ -20,7 +20,7 @@ router.post('/send', requireAuth, async (req: any, res) => {
         audience,
         status: 'SENDING',
         progress: 0,
-        filters: { tags: filters, delay_seconds: delay_seconds || 0 }
+        filters: JSON.stringify({ tags: filters, delay_seconds: delay_seconds || 0 })
       })
       .select()
       .single();
