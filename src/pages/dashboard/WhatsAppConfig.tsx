@@ -36,7 +36,7 @@ type NewNumberFormValues = z.infer<typeof newNumberSchema>;
 
 export default function WhatsAppConfig() {
   const [webhookUrl] = useState(`${window.location.origin}/api/whatsapp/webhook`);
-  const [verifyToken] = useState("orion_webhook_token");
+  const [verifyToken] = useState("orion_secure_token_123");
 
   const [numbers, setNumbers] = useState<WhatsAppNumber[]>([]);
 
