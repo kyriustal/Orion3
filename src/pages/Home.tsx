@@ -4,37 +4,37 @@ import { Button } from "@/src/components/ui/button";
 
 export default function Home() {
   return (
-    <div className="w-full">
+    <div className="w-full overflow-x-hidden">
       {/* Hero Section */}
-      <main className="max-w-7xl mx-auto px-6 pt-20 pb-32">
-        <div className="grid md:grid-cols-2 gap-12 items-center mb-20">
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 pt-12 md:pt-20 pb-20 md:pb-32">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-12 items-center mb-16 md:mb-20">
           <div>
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 text-sm font-medium mb-6">
               <Sparkles className="w-4 h-4" />
               <span>Plataforma Oficial WhatsApp Cloud API</span>
             </div>
-            <h1 className="text-5xl md:text-7xl font-bold tracking-tight leading-[1.1] mb-8 text-zinc-900">
+            <h1 className="text-4xl sm:text-5xl md:text-7xl font-bold tracking-tight leading-[1.1] mb-8 text-zinc-900">
               O Suporte Perfeito.<br />
               <span className="text-emerald-600">100% Automático.</span>
             </h1>
             <p className="text-xl text-zinc-600 leading-relaxed mb-8 max-w-lg">
               Construa um Agente de IA avançado que atende pelo seu número de WhatsApp. Treine-o com os PDFs e regras da sua empresa em segundos.
             </p>
-            <div className="flex items-center gap-4">
-              <Link to="/register" target="_blank">
-                <Button className="rounded-full bg-emerald-600 text-white hover:bg-emerald-700 px-8 py-6 text-lg font-semibold shadow-lg shadow-emerald-200">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4">
+              <Link to="/register" target="_blank" className="w-full sm:w-auto">
+                <Button className="w-full rounded-full bg-emerald-600 text-white hover:bg-emerald-700 px-8 py-6 text-lg font-semibold shadow-lg shadow-emerald-200">
                   Começar Gratuitamente
                 </Button>
               </Link>
-              <Link to="/funcionalidades">
-                <Button variant="outline" className="rounded-full px-8 py-6 text-lg border-zinc-200 hover:bg-zinc-50 font-medium">
+              <Link to="/funcionalidades" className="w-full sm:w-auto">
+                <Button variant="outline" className="w-full rounded-full px-8 py-6 text-lg border-zinc-200 hover:bg-zinc-50 font-medium">
                   Ver Funcionalidades
                 </Button>
               </Link>
             </div>
           </div>
-          <div className="relative">
-            <div className="absolute inset-0 bg-gradient-to-tr from-emerald-100 to-teal-50 rounded-[3rem] transform rotate-3 scale-105 -z-10"></div>
+          <div className="relative mt-8 md:mt-0">
+            <div className="absolute inset-0 bg-gradient-to-tr from-emerald-100 to-teal-50 rounded-[2rem] md:rounded-[3rem] transform md:rotate-3 md:scale-105 -z-10"></div>
             <div className="bg-white border text-zinc-800 border-zinc-100 shadow-xl rounded-[2rem] p-6 lg:p-8">
               <div className="flex items-center gap-4 border-b border-zinc-100 pb-4 mb-6">
                 <div className="w-12 h-12 rounded-full bg-emerald-100 flexItems-center justify-center flex items-center">
@@ -64,7 +64,7 @@ export default function Home() {
         </div>
 
         {/* Feature Highlights */}
-        <div className="grid md:grid-cols-3 gap-8 mb-32">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-8 mb-20 md:mb-32">
           <div className="bg-zinc-50 rounded-3xl p-8 hover:bg-zinc-100 transition-colors">
             <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center shadow-sm mb-6">
               <BotMessageSquare className="w-6 h-6 text-emerald-600" />
@@ -89,7 +89,7 @@ export default function Home() {
         </div>
 
         {/* Deep Dive Section */}
-        <div className="bg-[#f5f5f0] rounded-[3rem] p-8 md:p-16 mb-32">
+        <div className="bg-[#f5f5f0] rounded-[2rem] md:rounded-[3rem] p-4 sm:p-8 md:p-16 mb-20 md:mb-32">
           <div className="max-w-3xl mx-auto text-center mb-16">
             <h2 className="text-4xl md:text-5xl font-bold tracking-tight mb-6">Apenas Ensine. Ele Atende.</h2>
             <p className="text-xl text-zinc-600">
@@ -97,7 +97,7 @@ export default function Home() {
             </p>
           </div>
 
-          <div className="grid md:grid-cols-2 gap-12 bg-white rounded-[2rem] p-8 shadow-sm items-center">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 md:gap-12 bg-white rounded-[1.5rem] md:rounded-[2rem] p-6 md:p-8 shadow-sm items-center">
             <div>
               <h3 className="text-2xl font-bold mb-6">Como o processo funciona:</h3>
               <ul className="space-y-6">
@@ -166,7 +166,7 @@ export default function Home() {
             </Link>
           </div>
 
-          <div className="grid md:grid-cols-2 gap-12 pb-16">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 md:gap-12 pb-16">
             <div>
               <p className="text-lg text-zinc-600 mb-8">Nossa infraestrutura intermedeia automaticamente os Webhooks da Meta com o seu Cérebro Gemini. Mas você também pode criar regras, integrações de faturamento e CRMs acoplando-se à nossa arquitetura transparente baseada em Express e Supabase.</p>
 
