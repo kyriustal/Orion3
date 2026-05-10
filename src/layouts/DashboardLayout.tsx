@@ -62,8 +62,8 @@ export default function DashboardLayout() {
 
       {/* Mobile Header */}
       <div className="md:hidden flex items-center justify-between p-4 bg-white border-b border-zinc-200 z-40 relative">
-        <Link to="/dashboard" className="flex items-center gap-2">
-          <img src="/Orion.png" alt="Orion Logo" className="w-[25%] sm:w-[20%] md:w-[15%] h-auto" />
+        <Link to="/dashboard" className="flex items-center w-1/2">
+          <img src="/Orion.png" alt="Orion Logo" className="w-full h-auto max-h-12 object-contain" />
         </Link>
         <button onClick={() => setIsMobileMenuOpen(true)} className="p-2 -mr-2">
           <Menu className="w-6 h-6 text-zinc-900" />
@@ -74,8 +74,8 @@ export default function DashboardLayout() {
       {isMobileMenuOpen && (
         <div className="fixed inset-0 z-50 bg-white text-zinc-900 flex flex-col animate-in fade-in duration-200">
           <div className="flex items-center justify-between p-4 border-b border-zinc-100">
-            <div className="flex items-center gap-2">
-              <img src="/Orion.png" alt="Orion Logo" className="w-[25%] h-auto" />
+            <div className="flex items-center w-1/2">
+              <img src="/Orion.png" alt="Orion Logo" className="w-full h-auto max-h-12 object-contain" />
             </div>
             <button onClick={() => setIsMobileMenuOpen(false)} className="p-2 -mr-2 text-zinc-500 hover:text-zinc-900">
               <X className="w-6 h-6" />
@@ -124,8 +124,8 @@ export default function DashboardLayout() {
       {/* Desktop Sidebar */}
       <aside className="hidden md:flex w-64 bg-white border-r border-zinc-200 flex-col">
         <div className="p-6 border-b border-zinc-200">
-          <Link to="/dashboard">
-            <img src="/Orion.png" alt="Orion Logo" className="w-[15%] h-auto" />
+          <Link to="/dashboard" className="block w-full">
+            <img src="/Orion.png" alt="Orion Logo" className="w-1/2 h-auto object-contain" />
           </Link>
         </div>
         <nav className="flex-1 overflow-y-auto p-4 space-y-1">
