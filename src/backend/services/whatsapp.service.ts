@@ -7,11 +7,11 @@ export class WhatsAppService {
     /**
      * Envia uma mensagem de texto simples para um número
      */
-    static async sendTextMessage(phoneNumberId: string, to: string, text: string) {
-        const accessToken = process.env.META_ACCESS_TOKEN;
+    static async sendTextMessage(phoneNumberId: string, to: string, text: string, accessToken?: string) {
+        const token = accessToken || process.env.META_ACCESS_TOKEN;
         
-        if (!accessToken) {
-            console.error('META_ACCESS_TOKEN não configurado.');
+        if (!token) {
+            console.error('WhatsApp Access Token não configurado.');
             return;
         }
 
@@ -26,7 +26,7 @@ export class WhatsAppService {
                 text: { body: text }
             }, {
                 headers: {
-                    'Authorization': `Bearer ${accessToken}`,
+                    'Authorization': `Bearer ${token}`,
                     'Content-Type': 'application/json'
                 }
             });
