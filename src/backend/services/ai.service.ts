@@ -14,9 +14,15 @@ export class AIService {
         referral?: any;
     }) {
         const { message, botName, orgId, history = [], mode = 'simulation', media, referral } = params;
-        const apiKey = (process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || '').trim();
+        const rawKeys = (process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || '').trim();
+        // Limpar aspas e espaços extras que podem vir do .env
+        const keys = rawKeys.replace(/["']/g, '').split(',').map(k => k.trim()).filter(k => k);
 
-        if (!apiKey) throw new Error("Chave de API não encontrada.");
+        if (keys.length === 0) throw new Error("Chave de API não encontrada.");
+
+        // Usar um índice baseado no timestamp para rodízio simples entre as chaves
+        const keyIndex = Math.floor(Date.now() / 1000) % keys.length;
+        let apiKey = keys[keyIndex];
 
         let systemPrompt = "";
         let knowledgeContext = "";
@@ -192,10 +198,11 @@ FORMATAÇÃO:
             parts: currentMessageParts
         });
 
-        let retries = 3;
-        let delay = 2000; // 2 segundos inicial
+        let retries = keys.length * 2; // Tentar cada chave pelo menos 2 vezes
+        let currentKeyIdx = keyIndex;
 
         while (retries > 0) {
+            let apiKey = keys[currentKeyIdx];
             try {
                 const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
                 const response = await fetch(url, {
@@ -225,12 +232,11 @@ FORMATAÇÃO:
                 const data: any = await response.json();
 
                 if (data.error) {
-                    // Se for erro de cota, esperamos e tentamos de novo
-                    if (data.error.code === 429 || data.error.message?.includes('quota')) {
-                        console.warn(`[AI SERVICE] Cota excedida. Tentando novamente em ${delay/1000}s... (${retries} tentativas restantes)`);
-                        await new Promise(resolve => setTimeout(resolve, delay));
+                    // Se for erro de cota (429) OU chave inválida (400), pulamos para a próxima
+                    if (data.error.code === 429 || data.error.code === 400 || data.error.message?.includes('quota') || data.error.message?.includes('key')) {
+                        console.warn(`[AI SERVICE] Falha na chave ${currentKeyIdx + 1}: ${data.error.message}. Tentando próxima...`);
+                        currentKeyIdx = (currentKeyIdx + 1) % keys.length;
                         retries--;
-                        delay *= 2; // Backoff exponencial
                         continue;
                     }
                     throw new Error(`Gemini API Error: ${data.error.message}`);
