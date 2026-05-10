@@ -120,8 +120,9 @@ async function triggerAIResponse(params: {
   accessToken: string;
   botName: string;
   media?: { base64: string; mimeType: string };
+  referral?: any;
 }) {
-  const { orgId, fromNumber, phoneNumberId, accessToken, botName, media } = params;
+  const { orgId, fromNumber, phoneNumberId, accessToken, botName, media, referral } = params;
 
   console.log(`[IA PROATIVA] Gerando resposta para ${fromNumber}...`);
 
@@ -153,7 +154,8 @@ async function triggerAIResponse(params: {
       history: history, // Envia o histórico completo (24h) para a IA
       botName,
       mode: 'simulation',
-      media
+      media,
+      referral // Passa o contexto do anúncio
     });
 
     const replyText = aiResult.reply;
@@ -199,6 +201,7 @@ router.post('/webhook', async (req, res) => {
     const incomingMsg = messages[0];
     const fromNumber = incomingMsg.from;
     const phoneNumberId = metadata?.phone_number_id;
+    const referral = incomingMsg.referral; // Captura o anúncio
 
     // 1. Buscar organização e configuração
     const { data: configData } = await supabaseAdmin
@@ -247,11 +250,17 @@ router.post('/webhook', async (req, res) => {
     if (!userText && !media) return;
 
     // 3. Persistir Mensagem do Cliente no Histórico (Banco de Dados)
+    let dbText = userText || `(Mídia: ${incomingMsg.type})`;
+    if (referral) {
+      dbText = `[Vindo do Anúncio: ${referral.headline || 'Sem título'}] ${dbText}`;
+      console.log(`[WEBHOOK] Cliente vindo de anúncio: ${referral.headline}`);
+    }
+
     await supabaseAdmin.from('conversation_history').insert({
       org_id: orgId,
       customer_phone: fromNumber,
       sender: 'user',
-      text: userText || `(Mídia: ${incomingMsg.type})`
+      text: dbText
     });
 
     // 4. Verificar Modo de Coexistência
@@ -270,7 +279,7 @@ router.post('/webhook', async (req, res) => {
         // Agendar verificação para daqui a 5 minutos
         const timeout = setTimeout(() => {
           scheduledChecks.delete(historyKey);
-          triggerAIResponse({ orgId, fromNumber, phoneNumberId, accessToken, botName: botName || 'Assistente', media });
+          triggerAIResponse({ orgId, fromNumber, phoneNumberId, accessToken, botName: botName || 'Assistente', media, referral });
         }, 5 * 60 * 1000);
 
         scheduledChecks.set(historyKey, timeout);
@@ -279,7 +288,7 @@ router.post('/webhook', async (req, res) => {
     }
 
     // 5. Resposta Imediata
-    await triggerAIResponse({ orgId, fromNumber, phoneNumberId, accessToken, botName: botName || 'Assistente', media });
+    await triggerAIResponse({ orgId, fromNumber, phoneNumberId, accessToken, botName: botName || 'Assistente', media, referral });
 
   } catch (error: any) {
     console.error('[WEBHOOK] Erro:', error.message);
