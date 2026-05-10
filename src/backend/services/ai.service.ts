@@ -33,13 +33,14 @@ Seja direto, mas sempre amigável. Use linguagem portuguesa de Angola quando apr
             try {
                 const { data: org } = await supabaseAdmin
                     .from('organizations')
-                    .select('name, product_description, chatbot_name, use_emojis, emoji_mode, social_object, whatsapp, phone, address')
+                    .select('name, product_description, chatbot_name, use_emojis, emoji_mode, social_object, whatsapp, phone, address, ai_tone')
                     .eq('id', orgId)
                     .maybeSingle();
 
                 if (org) {
+                    const orgData = org as any;
                     // Determinar instrução de emojis conforme o modo configurado
-                    const emojiMode = org.emoji_mode || (org.use_emojis ? 'moderate' : 'none');
+                    const emojiMode = orgData.emoji_mode || (orgData.use_emojis ? 'moderate' : 'none');
                     const emojiCount = history.length;
                     let emojiInstruction = '';
 
@@ -56,7 +57,7 @@ Seja direto, mas sempre amigável. Use linguagem portuguesa de Angola quando apr
                         }
                     }
 
-                    const tone = org.ai_tone || 'professional';
+                    const tone = orgData.ai_tone || 'professional';
                     let toneInstruction = '';
 
                     if (tone === 'friendly') {
@@ -83,12 +84,12 @@ PERSONALIDADE: EXTREMAMENTE PROFISSIONAL
                     }
 
                     orgContext = `
-EMPRESA: ${org.name || 'Empresa'}
-RAMO DE ATIVIDADE: ${org.social_object || 'Não especificado'}
-ENDEREÇO: ${org.address || 'Não especificado'}
-CONTATO: ${org.whatsapp || org.phone || 'Não especificado'}
-PRODUTO/SERVIÇO: ${org.product_description || 'Não especificado'}
-NOME DO AGENTE: ${org.chatbot_name || botName || 'Assistente'}
+EMPRESA: ${orgData.name || 'Empresa'}
+RAMO DE ATIVIDADE: ${orgData.social_object || 'Não especificado'}
+ENDEREÇO: ${orgData.address || 'Não especificado'}
+CONTATO: ${orgData.whatsapp || orgData.phone || 'Não especificado'}
+PRODUTO/SERVIÇO: ${orgData.product_description || 'Não especificado'}
+NOME DO AGENTE: ${orgData.chatbot_name || botName || 'Assistente'}
 ${toneInstruction}
 ${emojiInstruction}
                     `.trim();

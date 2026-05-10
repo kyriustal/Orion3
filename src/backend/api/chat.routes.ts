@@ -9,6 +9,7 @@ router.post('/chat', async (req: Request, res: Response) => {
         const { message, history } = req.body;
         if (!message) return res.status(400).json({ error: "Mensagem vazia." });
 
+        const extendedHistory = (history || []).slice(-30);
         const result = await AIService.generateResponse({
             message,
             history: extendedHistory,
