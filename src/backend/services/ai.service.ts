@@ -256,8 +256,7 @@ FORMATAÇÃO:
                     }
                 }
                 retries--;
-                await new Promise(resolve => setTimeout(resolve, delay));
-                delay *= 2;
+                await new Promise(resolve => setTimeout(resolve, 1000));
             }
         }
         throw new Error("Falha ao obter resposta após várias tentativas.");
