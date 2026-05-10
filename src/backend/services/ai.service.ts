@@ -192,63 +192,145 @@ FORMATAÇÃO:
             parts: currentMessageParts
         });
 
+        let retries = 3;
+        let delay = 2000; // 2 segundos inicial
+
+        while (retries > 0) {
+            try {
+                const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        system_instruction: {
+                            parts: [{ text: systemPrompt }]
+                        },
+                        contents,
+                        tools: [{ google_search: {} }],
+                        generationConfig: {
+                            temperature: 0.7,
+                            topK: 40,
+                            topP: 0.9,
+                            maxOutputTokens: 1024,
+                        },
+                        safetySettings: [
+                            { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_ONLY_HIGH" },
+                            { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_ONLY_HIGH" },
+                            { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_ONLY_HIGH" },
+                            { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_ONLY_HIGH" },
+                        ]
+                    })
+                });
+
+                const data: any = await response.json();
+
+                if (data.error) {
+                    // Se for erro de cota, esperamos e tentamos de novo
+                    if (data.error.code === 429 || data.error.message?.includes('quota')) {
+                        console.warn(`[AI SERVICE] Cota excedida. Tentando novamente em ${delay/1000}s... (${retries} tentativas restantes)`);
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                        retries--;
+                        delay *= 2; // Backoff exponencial
+                        continue;
+                    }
+                    throw new Error(`Gemini API Error: ${data.error.message}`);
+                }
+
+                let reply = data.candidates?.[0]?.content?.parts?.[0]?.text || "Desculpe, não consegui processar a sua mensagem. Tente novamente.";
+                return this.processTriggers(reply);
+
+            } catch (error: any) {
+                if (retries <= 1) {
+                    console.error('[AI SERVICE] Erro final no Gemini:', error.message);
+                    // Tentar OpenAI como última instância (mesmo que possa falhar se não houver saldo)
+                    try {
+                        return await this.generateOpenAIFallback(message, systemPrompt, history);
+                    } catch (fallbackError: any) {
+                        throw new Error(`Ambos os motores falharam. Gemini: ${error.message} | OpenAI: ${fallbackError.message}`);
+                    }
+                }
+                retries--;
+                await new Promise(resolve => setTimeout(resolve, delay));
+                delay *= 2;
+            }
+        }
+        throw new Error("Falha ao obter resposta após várias tentativas.");
+    }
+
+    /**
+     * Fallback para OpenAI (GPT-4o) para garantir disponibilidade
+     */
+    private static async generateOpenAIFallback(message: string, systemPrompt: string, history: any[]) {
+        const openaiKey = process.env.OPENAI_API_KEY;
+        if (!openaiKey) {
+            console.error('[AI SERVICE] Chave OpenAI não encontrada no .env');
+            throw new Error("Cota Gemini excedida e chave OpenAI não configurada.");
+        }
+
+        console.log('[AI SERVICE] Iniciando chamada OpenAI (gpt-4o-mini)...');
+
+        const messages = [
+            { role: "system", content: systemPrompt },
+            ...history.slice(-10).map(msg => ({
+                role: msg.sender === 'user' ? "user" : "assistant",
+                content: msg.text
+            })),
+            { role: "user", content: message || "(O usuário enviou uma mídia)" }
+        ];
+
         try {
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
-            const response = await fetch(url, {
+            const response = await fetch('https://api.openai.com/v1/chat/completions', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Authorization': `Bearer ${openaiKey}`,
+                    'Content-Type': 'application/json'
+                },
                 body: JSON.stringify({
-                    system_instruction: {
-                        parts: [{ text: systemPrompt }]
-                    },
-                    contents,
-                    tools: [{ google_search: {} }],
-                    generationConfig: {
-                        temperature: 0.7,
-                        topK: 40,
-                        topP: 0.9,
-                        maxOutputTokens: 1024,
-                    },
-                    safetySettings: [
-                        { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_ONLY_HIGH" },
-                        { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_ONLY_HIGH" },
-                        { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_ONLY_HIGH" },
-                        { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_ONLY_HIGH" },
-                    ]
+                    model: "gpt-4o-mini",
+                    messages,
+                    temperature: 0.7,
+                    max_tokens: 1024
                 })
             });
 
             const data: any = await response.json();
-
+            
             if (data.error) {
-                throw new Error(`Gemini API Error: ${data.error.message}`);
+                console.error('[AI SERVICE] Erro retornado pela OpenAI:', data.error.message);
+                throw new Error(`OpenAI Error: ${data.error.message}`);
             }
 
-            let reply = data.candidates?.[0]?.content?.parts?.[0]?.text || "Desculpe, não consegui processar a sua mensagem. Tente novamente.";
-
-            // Processar Triggers de Automação
-            let automation_triggered = null;
-            let transfer = false;
-
-            if (reply.includes('[TRIGGER_LEAD]')) {
-                automation_triggered = "lead_capture";
-                reply = reply.replace(/\[TRIGGER_LEAD\]/g, '').trim();
-            }
-            if (reply.includes('[TRIGGER_TRANSFER]')) {
-                transfer = true;
-                automation_triggered = "human_transfer";
-                reply = reply.replace(/\[TRIGGER_TRANSFER\]/g, '').trim();
-            }
-
-            return {
-                reply,
-                automation_triggered,
-                transfer,
-                status: 'success'
-            };
+            const reply = data.choices?.[0]?.message?.content || "Desculpe, tive um problema técnico temporário.";
+            console.log('[AI SERVICE] Resposta OpenAI obtida com sucesso.');
+            return this.processTriggers(reply);
         } catch (error: any) {
-            console.error('[AI SERVICE ERROR]', error.message);
-            throw new Error(error.message);
+            console.error('[AI SERVICE] Falha crítica no Fallback OpenAI:', error.message);
+            throw error;
         }
+    }
+
+    /**
+     * Processa gatilhos de automação na resposta
+     */
+    private static processTriggers(reply: string) {
+        let automation_triggered = null;
+        let transfer = false;
+
+        if (reply.includes('[TRIGGER_LEAD]')) {
+            automation_triggered = "lead_capture";
+            reply = reply.replace(/\[TRIGGER_LEAD\]/g, '').trim();
+        }
+        if (reply.includes('[TRIGGER_TRANSFER]')) {
+            transfer = true;
+            automation_triggered = "human_transfer";
+            reply = reply.replace(/\[TRIGGER_TRANSFER\]/g, '').trim();
+        }
+
+        return {
+            reply,
+            automation_triggered,
+            transfer,
+            status: 'success'
+        };
     }
 }
