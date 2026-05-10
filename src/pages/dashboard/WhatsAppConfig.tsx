@@ -285,7 +285,7 @@ export default function WhatsAppConfig() {
                         <span className="text-emerald-600 flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Conectado e Ativo</span>
                       )}
                     </div>
-                    <div className="text-xs text-zinc-400 mt-1 font-mono">ID: {num.phoneId}</div>
+                    <div className="text-xs text-zinc-400 mt-1 font-mono break-all">ID: {num.phoneId}</div>
                   </div>
                 </div>
                 <div className="flex gap-2">
@@ -339,16 +339,16 @@ export default function WhatsAppConfig() {
           <CardContent className="space-y-4">
             <div className="space-y-2">
               <label className="text-sm font-medium text-zinc-700">URL de Retorno (Callback URL)</label>
-              <div className="flex gap-2">
-                <Input value={webhookUrl} readOnly className="bg-zinc-50 text-zinc-600 font-mono text-sm" />
-                <Button variant="outline" size="icon" onClick={() => copyToClipboard(webhookUrl)} title="Copiar"><Copy className="w-4 h-4" /></Button>
+              <div className="flex flex-col sm:flex-row gap-2">
+                <Input value={webhookUrl} readOnly className="bg-zinc-50 text-zinc-600 font-mono text-sm break-all" />
+                <Button variant="outline" size="icon" onClick={() => copyToClipboard(webhookUrl)} title="Copiar" className="shrink-0"><Copy className="w-4 h-4" /></Button>
               </div>
             </div>
             <div className="space-y-2">
               <label className="text-sm font-medium text-zinc-700">Token de Verificação</label>
-              <div className="flex gap-2">
-                <Input value={verifyToken} readOnly className="bg-zinc-50 text-zinc-600 font-mono text-sm" />
-                <Button variant="outline" size="icon" onClick={() => copyToClipboard(verifyToken)} title="Copiar"><Copy className="w-4 h-4" /></Button>
+              <div className="flex flex-col sm:flex-row gap-2">
+                <Input value={verifyToken} readOnly className="bg-zinc-50 text-zinc-600 font-mono text-sm break-all" />
+                <Button variant="outline" size="icon" onClick={() => copyToClipboard(verifyToken)} title="Copiar" className="shrink-0"><Copy className="w-4 h-4" /></Button>
               </div>
             </div>
           </CardContent>
