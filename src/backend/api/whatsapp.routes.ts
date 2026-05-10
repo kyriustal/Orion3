@@ -107,6 +107,10 @@ router.get('/webhook', (req, res) => {
   }
 });
 
+// Cache para Pausas de IA (Modo Híbrido)
+// Estrutura: { "orgId:fromNumber": timestamp_expiracao }
+const aiPauses: Map<string, number> = new Map();
+
 // Webhook — Recepção de Mensagens (POST)
 router.post('/webhook', async (req, res) => {
   // Responder imediatamente à Meta para evitar timeout
@@ -119,23 +123,18 @@ router.post('/webhook', async (req, res) => {
     const entry = body.entry?.[0];
     const changes = entry?.changes?.[0];
     const value = changes?.value;
+    
+    // Detectar se a mensagem é do próprio negócio (atendente humano via Meta Business Suite)
+    // No webhook da Meta, mensagens enviadas pelo negócio aparecem em 'messages' mas com 'from' sendo o ID do negócio
+    // ou podem vir em outros campos. Uma forma comum é verificar se há um campo 'messages' e o sender é diferente do metadata.
     const messages = value?.messages;
+    const metadata = value?.metadata;
 
     if (!messages || messages.length === 0) return;
 
     const incomingMsg = messages[0];
-    if (incomingMsg.type !== 'text') {
-      console.log(`[WEBHOOK] Mensagem ignorada (tipo: ${incomingMsg.type})`);
-      return;
-    }
-
-    const phoneNumberId = value.metadata?.phone_number_id;
     const fromNumber = incomingMsg.from;
-    const userText = incomingMsg.text?.body;
-
-    if (!phoneNumberId || !fromNumber || !userText) return;
-
-    console.log(`[WEBHOOK] Mensagem recebida de ${fromNumber} via ${phoneNumberId}: "${userText}"`);
+    const phoneNumberId = metadata?.phone_number_id;
 
     // 1. Buscar organização e configuração pelo phone_number_id
     const { data: configData, error: configError } = await supabaseAdmin
@@ -145,50 +144,87 @@ router.post('/webhook', async (req, res) => {
       .eq('is_active', true)
       .maybeSingle();
 
-    if (configError || !configData) {
-      console.error(`[WEBHOOK] Nenhuma organização encontrada para phone_number_id: ${phoneNumberId}`);
+    if (configError || !configData) return;
+    const { org_id: orgId, access_token: accessToken, display_name: botName } = configData;
+
+    // 2. Verificar se a mensagem é do Negócio (Humano respondendo)
+    // Se o 'from' da mensagem for igual ao número configurado ou se vier de um 'atendente', pausamos a IA.
+    // Dica: A Meta envia o campo 'contacts' apenas para mensagens de clientes.
+    const isFromCustomer = value.contacts && value.contacts.length > 0;
+
+    const historyKey = `${orgId}:${fromNumber}`;
+
+    if (!isFromCustomer) {
+      console.log(`[WEBHOOK] Atendente humano detectado para ${fromNumber}. Pausando IA por 30 min.`);
+      // Pausar IA por 30 minutos (Modo Híbrido)
+      aiPauses.set(historyKey, Date.now() + (30 * 60 * 1000));
       return;
     }
 
-    const { org_id: orgId, access_token: accessToken, display_name: botName } = configData;
+    // 3. É uma mensagem do cliente. Verificar Modo de Coexistência.
+    const { data: org } = await supabaseAdmin
+      .from('organizations')
+      .select('handover_mode')
+      .eq('id', orgId)
+      .maybeSingle();
+    
+    const handoverMode = org?.handover_mode || 'hybrid';
 
-    // 2. Recuperar histórico de conversa em cache
-    const historyKey = `${orgId}:${fromNumber}`;
+    if (handoverMode === 'hybrid') {
+      const pauseUntil = aiPauses.get(historyKey);
+      if (pauseUntil && pauseUntil > Date.now()) {
+        const remaining = Math.round((pauseUntil - Date.now()) / 1000 / 60);
+        console.log(`[WEBHOOK] IA em pausa para ${fromNumber} (${remaining} min restantes). Ignorando.`);
+        return;
+      }
+    }
+
+    if (incomingMsg.type !== 'text') return;
+    const userText = incomingMsg.text?.body;
+    if (!userText) return;
+
+    console.log(`[WEBHOOK] Processando mensagem de ${fromNumber}: "${userText}"`);
+
+    // 4. Recuperar histórico de conversa em cache
     if (!conversationHistory[historyKey]) {
       conversationHistory[historyKey] = [];
     }
     const history = conversationHistory[historyKey];
 
-    // 3. Adicionar mensagem do utilizador ao histórico
+    // 5. Adicionar mensagem do utilizador ao histórico
     history.push({ sender: 'user', text: userText });
 
-    // 4. Gerar resposta com a IA
+    // 6. Gerar resposta com a IA
     const aiResult = await AIService.generateResponse({
       message: userText,
       orgId,
-      history: history.slice(-10), // Últimas 10 mensagens para contexto
+      history: history.slice(-10),
       botName: botName || 'Assistente',
       mode: 'simulation'
     });
 
-    const replyText = aiResult.reply;
+    let replyText = aiResult.reply;
 
-    // 5. Adicionar resposta da IA ao histórico
+    // 7. Se a IA solicitar transferência, pausamos ela imediatamente (Modo Coexistência)
+    if (aiResult.transfer) {
+      console.log(`[WEBHOOK] Transferência solicitada para ${fromNumber}. Pausando IA.`);
+      aiPauses.set(historyKey, Date.now() + (24 * 60 * 60 * 1000)); // Pausa longa (24h) ou até reset manual
+    }
+
+    // 8. Adicionar resposta da IA ao histórico
     history.push({ sender: 'bot', text: replyText });
 
-    // Manter o histórico com max 20 entradas (10 trocas)
     if (history.length > 20) {
       conversationHistory[historyKey] = history.slice(-20);
     }
 
-    // 6. Enviar resposta ao utilizador via Meta API
+    // 9. Enviar resposta ao utilizador via Meta API
     await WhatsAppService.sendTextMessage(phoneNumberId, fromNumber, replyText, accessToken);
 
-    console.log(`[WEBHOOK] Resposta enviada para ${fromNumber}.`);
-
   } catch (error: any) {
-    console.error('[WEBHOOK] Erro ao processar mensagem:', error.message);
+    console.error('[WEBHOOK] Erro:', error.message);
   }
 });
 
 export default router;
+

@@ -90,8 +90,55 @@ export default function WhatsAppConfig() {
     resolver: zodResolver(newNumberSchema),
   });
 
-  // Webhook Subscriptions State
-  const [isSyncing, setIsSyncing] = useState(false);
+  // Embedded Signup Logic
+  const launchEmbeddedSignup = () => {
+    // @ts-ignore
+    if (typeof FB === 'undefined') {
+      toast.error("O SDK da Meta ainda não carregou. Por favor, recarregue a página.");
+      return;
+    }
+
+    // Configuração do App (Pode ser puxada de uma variável de ambiente ou config)
+    const appId = "SEU_APP_ID_AQUI"; // O usuário deve substituir isto
+
+    if (appId === "34557883637136073") {
+      toast.warning("Configuração pendente: Insira o App ID no código ou painel para usar o fluxo automático.");
+      setIsModalOpen(true); // Abre o manual como fallback
+      return;
+    }
+
+    // @ts-ignore
+    FB.login((response: any) => {
+      if (response.authResponse) {
+        const accessToken = response.authResponse.accessToken;
+        toast.success("Conectado com sucesso à Meta!");
+        console.log("Access Token recebido:", accessToken);
+        // Aqui você chamaria uma rota de backend para processar o token e listar as WABAs
+        toast.info("Processando integração automática...");
+      } else {
+        toast.error("O utilizador cancelou o login ou não autorizou a aplicação.");
+      }
+    }, {
+      scope: 'whatsapp_business_management,whatsapp_business_messaging',
+      extras: {
+        feature: 'whatsapp_embedded_signup'
+      }
+    });
+  };
+
+  useEffect(() => {
+    // @ts-ignore
+    window.fbAsyncInit = function () {
+      // @ts-ignore
+      FB.init({
+        appId: '34557883637136073',
+        cookie: true,
+        xfbml: true,
+        version: 'v19.0'
+      });
+    };
+  }, []);
+
   const [subscriptions, setSubscriptions] = useState({
     messages: true,
     statuses: false,
@@ -267,10 +314,19 @@ export default function WhatsAppConfig() {
             ))
           )}
         </CardContent>
-        <CardFooter className="bg-zinc-50 border-t border-zinc-200 py-4">
-          <Button onClick={() => setIsModalOpen(true)} className="ml-auto gap-2">
-            <Plus className="w-4 h-4" /> Adicionar Novo Número
-          </Button>
+        <CardFooter className="bg-zinc-50 border-t border-zinc-200 py-4 flex flex-col sm:flex-row gap-4 items-center justify-between">
+          <div className="flex items-center gap-2 text-xs text-zinc-500">
+            <ShieldCheck className="w-4 h-4 text-emerald-600" />
+            <span>Fluxo Oficial e Seguro via Meta Embedded Signup</span>
+          </div>
+          <div className="flex gap-3">
+            <Button variant="outline" onClick={() => setIsModalOpen(true)} className="gap-2">
+              <Key className="w-4 h-4" /> Configuração Manual
+            </Button>
+            <Button onClick={launchEmbeddedSignup} className="bg-[#1877F2] hover:bg-[#166fe5] text-white gap-2 font-bold shadow-md">
+              <Building className="w-4 h-4" /> Conectar com Meta
+            </Button>
+          </div>
         </CardFooter>
       </Card>
 

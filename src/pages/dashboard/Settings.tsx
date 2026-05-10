@@ -291,6 +291,53 @@ export default function Settings() {
                   ))}
                 </div>
               </div>
+
+              <div className="space-y-3 border-t border-zinc-100 pt-4">
+                <Label>Coexistência (API + Humano)</Label>
+                <p className="text-xs text-zinc-500">Define como a IA se comporta quando um atendente humano interage.</p>
+                <div className="grid grid-cols-1 gap-2">
+                  {[
+                    {
+                      id: "auto",
+                      label: "🤖 100% Automático",
+                      desc: "A IA responde a todas as mensagens, mesmo que um humano esteja a falar."
+                    },
+                    {
+                      id: "hybrid",
+                      label: "🤝 Modo Híbrido (Recomendado)",
+                      desc: "A IA pausa automaticamente por 30 minutos se um atendente humano enviar uma mensagem manual."
+                    },
+                    {
+                      id: "transfer",
+                      label: "📞 Apenas sob demanda",
+                      desc: "A IA só responde até o momento em que o cliente pede para falar com um humano."
+                    }
+                  ].map(opt => (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => setSettings({ ...settings, handover_mode: opt.id } as any)}
+                      className={`flex items-start gap-3 p-3 rounded-xl border text-left transition-all ${
+                        (settings as any).handover_mode === opt.id || (!(settings as any).handover_mode && opt.id === 'hybrid')
+                          ? 'border-emerald-500 bg-emerald-50 ring-1 ring-emerald-500'
+                          : 'border-zinc-200 bg-white hover:border-zinc-300 hover:bg-zinc-50'
+                      }`}
+                    >
+                      <div className={`w-4 h-4 mt-0.5 rounded-full border-2 flex-shrink-0 ${
+                        (settings as any).handover_mode === opt.id || (!(settings as any).handover_mode && opt.id === 'hybrid')
+                          ? 'border-emerald-500 bg-emerald-500'
+                          : 'border-zinc-300'
+                      }`} />
+                      <div>
+                        <p className={`text-sm font-medium ${ ((settings as any).handover_mode === opt.id || (!(settings as any).handover_mode && opt.id === 'hybrid')) ? 'text-emerald-800' : 'text-zinc-800' }`}>
+                          {opt.label}
+                        </p>
+                        <p className="text-xs text-zinc-500 mt-0.5">{opt.desc}</p>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
             </CardContent>
           </Card>
         )}
@@ -326,6 +373,26 @@ export default function Settings() {
                   </Button>
                 </CardFooter>
               </form>
+            </Card>
+
+            <Card className="shadow-sm border-zinc-200 bg-zinc-50/50">
+              <CardHeader>
+                <CardTitle className="text-sm flex items-center gap-2">
+                  <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                  Uso no Telemóvel (App)
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <p className="text-xs text-zinc-600 leading-relaxed">
+                  *Atenção:* Números na Cloud API não funcionam no aplicativo "WhatsApp Business" comum. 
+                </p>
+                <p className="text-xs text-zinc-600 leading-relaxed">
+                  Para responder do telemóvel, instale o aplicativo **Meta Business Suite** (oficial da Meta). Ele permite gerir as conversas da API e coexistir com a nossa IA.
+                </p>
+                <Button variant="outline" className="w-full text-xs h-8" onClick={() => window.open('https://business.facebook.com/', '_blank')}>
+                  Abrir Meta Business Suite
+                </Button>
+              </CardContent>
             </Card>
 
             <Card className="shadow-sm border-zinc-200 bg-zinc-50/50">
