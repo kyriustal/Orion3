@@ -165,11 +165,25 @@ FORMATAÇÃO:
             }
         }
 
-        // Construir histórico da conversa
-        const contents = history.slice(-15).map(msg => ({
-            role: msg.sender === 'user' ? 'user' : 'model',
-            parts: [{ text: msg.text }]
-        }));
+        // Construir histórico da conversa e mesclar roles consecutivos (exigência do Gemini)
+        let cleanHistory = [...history];
+        // Remover a última mensagem do histórico se for a mensagem atual duplicada
+        if (cleanHistory.length > 0 && cleanHistory[cleanHistory.length - 1].sender === 'user' && cleanHistory[cleanHistory.length - 1].text === message) {
+            cleanHistory.pop();
+        }
+
+        const contents: any[] = [];
+        for (const msg of cleanHistory.slice(-15)) {
+            const role = msg.sender === 'user' ? 'user' : 'model';
+            if (contents.length > 0 && contents[contents.length - 1].role === role) {
+                contents[contents.length - 1].parts[0].text += `\n\n${msg.text}`;
+            } else {
+                contents.push({
+                    role,
+                    parts: [{ text: msg.text }]
+                });
+            }
+        }
 
         // Mensagem atual
         const currentMessageParts: any[] = [];
@@ -185,10 +199,14 @@ FORMATAÇÃO:
         
         currentMessageParts.push({ text: message || (media ? '(Análise de mídia)' : '') });
 
-        contents.push({
-            role: 'user',
-            parts: currentMessageParts
-        });
+        if (contents.length > 0 && contents[contents.length - 1].role === 'user') {
+            contents[contents.length - 1].parts.push(...currentMessageParts);
+        } else {
+            contents.push({
+                role: 'user',
+                parts: currentMessageParts
+            });
+        }
 
         let retries = keys.length * 2; // Tentar cada chave pelo menos 2 vezes
         let currentKeyIdx = keyIndex;

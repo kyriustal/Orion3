@@ -127,6 +127,12 @@ async function triggerAIResponse(params: {
 }) {
   const { orgId, fromNumber, phoneNumberId, accessToken, botName, media, referral } = params;
 
+  const historyKey = `${orgId}:${fromNumber}`;
+  if (aiPauses.has(historyKey) && aiPauses.get(historyKey)! > Date.now()) {
+    console.log(`[IA PROATIVA] IA pausada para ${fromNumber} (transferência em andamento). Ignorando.`);
+    return;
+  }
+
   console.log(`[IA PROATIVA] Gerando resposta para ${fromNumber}...`);
 
   try {
