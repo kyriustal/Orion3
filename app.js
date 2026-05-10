@@ -1,5 +1,5 @@
 /**
- * ORION 2 - BOOTLOADER OFICIAL (HOSTINGER)
+ * ORION - BOOTLOADER OFICIAL (HOSTINGER)
  * Este arquivo é o ponto de entrada principal que o Phusion Passenger deve executar.
  */
 

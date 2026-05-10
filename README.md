@@ -1,4 +1,4 @@
-# Orion 2
+# Orion
 
 Plataforma de automação e gestão com inteligência artificial integrada.
 

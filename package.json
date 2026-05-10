@@ -1,7 +1,7 @@
 {
   "name": "orion-2",
   "version": "1.0.0",
-  "description": "Orion 2 - Intelligence Platform",
+  "description": "Orion - Intelligence Platform",
   "type": "module",
   "scripts": {
     "dev": "vite --port=3000 --host=0.0.0.0",

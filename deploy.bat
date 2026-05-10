@@ -1,5 +1,5 @@
 @echo off
-title Orion 2 - Auto Deploy
+title Orion - Auto Deploy
 echo [1/3] Adicionando arquivos...
 git add .
 

@@ -18,7 +18,7 @@ export default function Terms() {
             <CardTitle>1. Aceitação dos Termos</CardTitle>
           </CardHeader>
           <CardContent className="text-zinc-600 leading-relaxed space-y-4">
-            <p>Ao acessar e usar a plataforma Orion 2, você concorda em cumprir estes termos e todas as leis aplicáveis ao uso de comunicações automatizadas via WhatsApp.</p>
+            <p>Ao acessar e usar a plataforma Orion, você concorda em cumprir estes termos e todas as leis aplicáveis ao uso de comunicações automatizadas via WhatsApp.</p>
           </CardContent>
         </Card>
 
@@ -27,7 +27,7 @@ export default function Terms() {
             <CardTitle>2. Uso Permitido</CardTitle>
           </CardHeader>
           <CardContent className="text-zinc-600 leading-relaxed space-y-4">
-            <p>O usuário é inteiramente responsável pelo conteúdo das mensagens enviadas e pelo cumprimento das políticas Anti-Spam da Meta. O uso do Orion 2 para envio de mensagens não solicitadas ou ofensivas pode resultar no bloqueio imediato da conta.</p>
+            <p>O usuário é inteiramente responsável pelo conteúdo das mensagens enviadas e pelo cumprimento das políticas Anti-Spam da Meta. O uso do Orion para envio de mensagens não solicitadas ou ofensivas pode resultar no bloqueio imediato da conta.</p>
           </CardContent>
         </Card>
 
@@ -36,12 +36,12 @@ export default function Terms() {
             <CardTitle>3. Limitação de Responsabilidade</CardTitle>
           </CardHeader>
           <CardContent className="text-zinc-600 leading-relaxed space-y-4">
-            <p>O Orion 2 é uma ferramenta de automação. Não nos responsabilizamos por eventuais banimentos de números impostos pela Meta devido ao uso indevido da ferramenta por parte do usuário.</p>
+            <p>O Orion é uma ferramenta de automação. Não nos responsabilizamos por eventuais banimentos de números impostos pela Meta devido ao uso indevido da ferramenta por parte do usuário.</p>
           </CardContent>
         </Card>
 
         <div className="text-center text-sm text-zinc-400 py-8">
-          © 2026 Orion 2 - Tecnologia e Automação.
+          © 2026 Orion - Tecnologia e Automação.
         </div>
       </div>
     </div>

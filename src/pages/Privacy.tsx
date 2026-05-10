@@ -18,7 +18,7 @@ export default function Privacy() {
             <CardTitle>1. Coleta de Informações</CardTitle>
           </CardHeader>
           <CardContent className="text-zinc-600 leading-relaxed space-y-4">
-            <p>O Orion 2 coleta informações necessárias para a prestação de serviços de automação via WhatsApp. Isso inclui dados fornecidos voluntariamente pelos usuários e logs de interação com a API da Meta.</p>
+            <p>O Orion coleta informações necessárias para a prestação de serviços de automação via WhatsApp. Isso inclui dados fornecidos voluntariamente pelos usuários e logs de interação com a API da Meta.</p>
             <p>Não compartilhamos dados pessoais com terceiros, exceto quando necessário para o funcionamento técnico da plataforma (ex: integração oficial com a Meta Cloud API).</p>
           </CardContent>
         </Card>
@@ -43,7 +43,7 @@ export default function Privacy() {
         </Card>
 
         <div className="text-center text-sm text-zinc-400 py-8">
-          © 2026 Orion 2 - Todos os direitos reservados.
+          © 2026 Orion - Todos os direitos reservados.
         </div>
       </div>
     </div>
