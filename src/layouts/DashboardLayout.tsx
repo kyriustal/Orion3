@@ -1,5 +1,6 @@
 import { Outlet, Link, useLocation } from 'react-router-dom';
 import { Bot, Smartphone, LayoutDashboard, BookOpen, MessageSquare, CreditCard, Settings, Megaphone, Users, BarChart, LogOut, UserCircle, PlayCircle, Menu, X, Zap } from 'lucide-react';
+import { PageTransition } from '@/src/components/ui/PageTransition';
 import { useState, useEffect } from 'react';
 import TrialExpiredGate from '@/src/components/TrialExpiredGate';
 import {
@@ -194,7 +195,9 @@ export default function DashboardLayout() {
 
       {/* Main Content */}
       <main className="flex-1 overflow-y-auto p-4 md:p-8">
-        <Outlet />
+        <PageTransition>
+          <Outlet />
+        </PageTransition>
       </main>
 
       {/* Bloqueio de Trial/Dívida */}
