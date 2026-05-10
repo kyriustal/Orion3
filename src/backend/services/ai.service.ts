@@ -215,7 +215,7 @@ IDIOMA:
                     contents,
                     tools: [
                         {
-                            google_search_retrieval: {}
+                            google_search: {}
                         }
                     ],
                     generationConfig: {
