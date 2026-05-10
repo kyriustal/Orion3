@@ -215,7 +215,7 @@ FORMATAÇÃO:
                         contents,
                         tools: [{ google_search: {} }],
                         generationConfig: {
-                            temperature: 0.7,
+                            temperature: 0.3,
                             topK: 40,
                             topP: 0.9,
                             maxOutputTokens: 1024,
@@ -293,7 +293,7 @@ FORMATAÇÃO:
                 body: JSON.stringify({
                     model: "gpt-4o-mini",
                     messages,
-                    temperature: 0.7,
+                    temperature: 0.3,
                     max_tokens: 1024
                 })
             });

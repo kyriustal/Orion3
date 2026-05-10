@@ -203,34 +203,26 @@ router.post('/webhook', async (req, res) => {
     const phoneNumberId = metadata?.phone_number_id;
     const referral = incomingMsg.referral; // Captura o anúncio
 
+    console.log(`[WEBHOOK] Mensagem recebida de ${fromNumber} para o ID ${phoneNumberId}`);
+
     // 1. Buscar organização e configuração
-    const { data: configData } = await supabaseAdmin
+    const { data: configData, error: dbError } = await supabaseAdmin
       .from('whatsapp_config')
       .select('org_id, access_token, display_name')
       .eq('phone_number_id', phoneNumberId)
       .eq('is_active', true)
       .maybeSingle();
 
-    if (!configData) return;
+    if (dbError) console.error('[WEBHOOK] Erro ao buscar config no banco:', dbError.message);
+
+    if (!configData) {
+      console.warn(`[WEBHOOK] Nenhuma configuração ativa encontrada para o Phone Number ID: ${phoneNumberId}. Verifique o Dashboard.`);
+      return;
+    }
     const { org_id: orgId, access_token: accessToken, display_name: botName } = configData;
     const historyKey = `${orgId}:${fromNumber}`;
 
-    // 2. Detectar Atendente Humano (Business)
-    const isFromCustomer = value.contacts && value.contacts.length > 0;
-
-    if (!isFromCustomer) {
-      console.log(`[WEBHOOK] Humano respondeu para ${fromNumber}. Pausando IA por 5 min.`);
-      aiPauses.set(historyKey, Date.now() + (5 * 60 * 1000)); // Pausa de 5 minutos
-      
-      // Limpar qualquer check agendado, pois o humano já respondeu
-      if (scheduledChecks.has(historyKey)) {
-        clearTimeout(scheduledChecks.get(historyKey));
-        scheduledChecks.delete(historyKey);
-      }
-      return;
-    }
-
-    // 3. Mensagem do Cliente
+    // 2. Detectar Mensagem (Simplificado para garantir resposta)
     let userText = "";
     let media = undefined;
 
@@ -263,31 +255,7 @@ router.post('/webhook', async (req, res) => {
       text: dbText
     });
 
-    // 4. Verificar Modo de Coexistência
-    const { data: org } = await supabaseAdmin.from('organizations').select('handover_mode').eq('id', orgId).maybeSingle();
-    const handoverMode = org?.handover_mode || 'hybrid';
-
-    if (handoverMode === 'hybrid') {
-      const pauseUntil = aiPauses.get(historyKey);
-      
-      if (pauseUntil && pauseUntil > Date.now()) {
-        console.log(`[WEBHOOK] IA em pausa para ${fromNumber}. Agendando resposta proativa para daqui a 5 min.`);
-        
-        // Cancelar agendamento anterior se houver
-        if (scheduledChecks.has(historyKey)) clearTimeout(scheduledChecks.get(historyKey));
-
-        // Agendar verificação para daqui a 5 minutos
-        const timeout = setTimeout(() => {
-          scheduledChecks.delete(historyKey);
-          triggerAIResponse({ orgId, fromNumber, phoneNumberId, accessToken, botName: botName || 'Assistente', media, referral });
-        }, 5 * 60 * 1000);
-
-        scheduledChecks.set(historyKey, timeout);
-        return;
-      }
-    }
-
-    // 5. Resposta Imediata
+    // 4. Resposta Imediata
     await triggerAIResponse({ orgId, fromNumber, phoneNumberId, accessToken, botName: botName || 'Assistente', media, referral });
 
   } catch (error: any) {
