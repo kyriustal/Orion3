@@ -11,9 +11,9 @@ router.post('/chat', async (req: Request, res: Response) => {
 
         const result = await AIService.generateResponse({
             message,
-            history: history || [],
-            orgId: 'orion_system', // ID fixo para suporte
-            mode: 'support',       // FORÇA MODO SUPORTE
+            history: extendedHistory,
+            orgId: 'orion_system',
+            mode: 'support',
             botName: 'Orion Support'
         });
 

@@ -12,6 +12,7 @@ const agentSchema = z.object({
   prompt: z.string().min(10, "O prompt deve ter pelo menos 10 caracteres."),
   model: z.string(),
   temperature: z.number().min(0).max(1),
+  tone: z.enum(['friendly', 'professional', 'extremely_professional']),
 });
 
 type AgentFormValues = z.infer<typeof agentSchema>;
@@ -33,6 +34,7 @@ export default function AgentSettings() {
       prompt: "Você é um assistente corporativo de inteligência artificial. Seja educado, humano e ajude os clientes respondendo dúvidas de forma prática e objetiva baseando-se no contexto da empresa.",
       model: "gemini-2.0-flash",
       temperature: 0.3,
+      tone: "professional",
     },
   });
 
@@ -108,6 +110,36 @@ export default function AgentSettings() {
                 placeholder="Descreva como o bot deve agir..."
               />
               {errors.prompt && <p className="text-xs text-red-500">{errors.prompt.message}</p>}
+            </div>
+            <div className="space-y-4">
+              <label className="text-sm font-medium text-zinc-700">Tom de Voz da IA</label>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                {[
+                  { id: 'friendly', name: 'Amigável', desc: 'Muita compreensão e empatia.' },
+                  { id: 'professional', name: 'Profissional', desc: 'Direto, culto e objetivo.' },
+                  { id: 'extremely_professional', name: 'Extremamente Profissional', desc: 'Foco total em eficiência, empatia reduzida.' }
+                ].map((tone) => (
+                  <label 
+                    key={tone.id}
+                    className={`cursor-pointer border rounded-xl p-4 transition-all ${
+                      watch("tone") === tone.id 
+                        ? 'border-emerald-500 bg-emerald-50 ring-1 ring-emerald-500' 
+                        : 'border-zinc-200 bg-white hover:border-zinc-300'
+                    }`}
+                  >
+                    <input 
+                      type="radio" 
+                      value={tone.id} 
+                      {...register("tone")} 
+                      className="hidden" 
+                    />
+                    <p className={`font-bold text-sm ${watch("tone") === tone.id ? 'text-emerald-700' : 'text-zinc-900'}`}>
+                      {tone.name}
+                    </p>
+                    <p className="text-[10px] text-zinc-500 mt-1 leading-tight">{tone.desc}</p>
+                  </label>
+                ))}
+              </div>
             </div>
           </CardContent>
         </Card>

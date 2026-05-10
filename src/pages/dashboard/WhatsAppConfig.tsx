@@ -94,8 +94,8 @@ export default function WhatsAppConfig() {
   // Embedded Signup Logic
   const launchEmbeddedSignup = () => {
     // @ts-ignore
-    if (typeof FB === 'undefined') {
-      toast.error("O SDK da Meta ainda não carregou. Por favor, recarregue a página.");
+    if (typeof window.FB === 'undefined') {
+      toast.error("O SDK da Meta ainda não carregou ou foi bloqueado pelo navegador. Por favor, tente recarregar ou desativar bloqueadores de anúncios.");
       return;
     }
 
@@ -128,6 +128,7 @@ export default function WhatsAppConfig() {
   };
 
   useEffect(() => {
+    // Inicialização do SDK da Meta
     // @ts-ignore
     window.fbAsyncInit = function () {
       // @ts-ignore
@@ -137,7 +138,15 @@ export default function WhatsAppConfig() {
         xfbml: true,
         version: 'v19.0'
       });
+      console.log("[META SDK] Inicializado com sucesso.");
     };
+
+    // Caso o script já tenha carregado antes deste efeito
+    // @ts-ignore
+    if (window.FB) {
+      // @ts-ignore
+      window.fbAsyncInit();
+    }
   }, []);
 
   const [subscriptions, setSubscriptions] = useState({

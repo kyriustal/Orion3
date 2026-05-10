@@ -7,9 +7,8 @@ import axios from 'axios';
 
 const router = Router();
 
-// Cache em memória para histórico de conversas WhatsApp (por número de telefone)
-// Estrutura: { "orgId:fromNumber": Message[] }
-const conversationHistory: Record<string, Array<{ sender: 'user' | 'bot'; text: string }>> = {};
+// O histórico agora é persistido no banco de dados (tabela conversation_history)
+// para permitir janelas de contexto de 24h e recuperação de longo prazo.
 
 // /api/whatsapp/config (GET)
 router.get('/config', requireAuth, async (req: AuthRequest, res) => {
@@ -114,9 +113,6 @@ const aiPauses: Map<string, number> = new Map();
 // Controle de timeouts agendados para evitar duplicidade
 const scheduledChecks: Map<string, NodeJS.Timeout> = new Map();
 
-/**
- * Função central para processar a lógica da IA e enviar resposta
- */
 async function triggerAIResponse(params: {
   orgId: string;
   fromNumber: string;
@@ -126,20 +122,35 @@ async function triggerAIResponse(params: {
   media?: { base64: string; mimeType: string };
 }) {
   const { orgId, fromNumber, phoneNumberId, accessToken, botName, media } = params;
-  const historyKey = `${orgId}:${fromNumber}`;
-  const history = conversationHistory[historyKey] || [];
-
-  // Só processa se a última mensagem for do cliente (user)
-  const lastMsg = history[history.length - 1];
-  if (!lastMsg || lastMsg.sender !== 'user') return;
 
   console.log(`[IA PROATIVA] Gerando resposta para ${fromNumber}...`);
 
   try {
+    // 1. Recuperar contexto das últimas 24 horas do banco de dados
+    const last24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    
+    const { data: dbHistory } = await supabaseAdmin
+      .from('conversation_history')
+      .select('sender, text, created_at')
+      .eq('org_id', orgId)
+      .eq('customer_phone', fromNumber)
+      .gt('created_at', last24h)
+      .order('created_at', { ascending: true })
+      .limit(20);
+
+    const history = (dbHistory || []).map(h => ({ 
+      sender: h.sender, 
+      text: h.text 
+    }));
+
+    // Pegar a última mensagem do usuário para processar
+    const lastUserMsg = [...history].reverse().find(h => h.sender === 'user');
+    const messageToProcess = lastUserMsg?.text || '(Mídia enviada)';
+
     const aiResult = await AIService.generateResponse({
-      message: lastMsg.text,
+      message: messageToProcess,
       orgId,
-      history: history.slice(-10),
+      history: history, // Envia o histórico completo (24h) para a IA
       botName,
       mode: 'simulation',
       media
@@ -147,16 +158,21 @@ async function triggerAIResponse(params: {
 
     const replyText = aiResult.reply;
 
-    // Atualizar histórico
-    history.push({ sender: 'bot', text: replyText });
-    if (history.length > 20) conversationHistory[historyKey] = history.slice(-20);
+    // 2. Persistir a resposta da IA no histórico
+    await supabaseAdmin.from('conversation_history').insert({
+      org_id: orgId,
+      customer_phone: fromNumber,
+      sender: 'bot',
+      text: replyText
+    });
 
     // Se a IA pedir transferência, pausamos por 24h
     if (aiResult.transfer) {
+      const historyKey = `${orgId}:${fromNumber}`;
       aiPauses.set(historyKey, Date.now() + (24 * 60 * 60 * 1000));
     }
 
-    // Enviar mensagem
+    // Enviar mensagem via WhatsApp
     await WhatsAppService.sendTextMessage(phoneNumberId, fromNumber, replyText, accessToken);
     console.log(`[IA PROATIVA] Resposta enviada com sucesso.`);
   } catch (err: any) {
@@ -230,9 +246,13 @@ router.post('/webhook', async (req, res) => {
 
     if (!userText && !media) return;
 
-    // Atualizar Histórico
-    if (!conversationHistory[historyKey]) conversationHistory[historyKey] = [];
-    conversationHistory[historyKey].push({ sender: 'user', text: userText || `(Mídia: ${incomingMsg.type})` });
+    // 3. Persistir Mensagem do Cliente no Histórico (Banco de Dados)
+    await supabaseAdmin.from('conversation_history').insert({
+      org_id: orgId,
+      customer_phone: fromNumber,
+      sender: 'user',
+      text: userText || `(Mídia: ${incomingMsg.type})`
+    });
 
     // 4. Verificar Modo de Coexistência
     const { data: org } = await supabaseAdmin.from('organizations').select('handover_mode').eq('id', orgId).maybeSingle();
