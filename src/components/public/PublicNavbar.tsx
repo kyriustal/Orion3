@@ -7,7 +7,7 @@ export default function PublicNavbar() {
             <div className="max-w-7xl mx-auto px-6 h-full grid grid-cols-2 md:grid-cols-3 items-center">
                 <div className="flex justify-start border-red-500">
                     <Link to="/" className="flex items-center gap-2">
-                        <img src="/Orion.png" alt="Orion Logo" className="h-8 w-auto" />
+                        <img src="/Orion.png" alt="Orion Logo" className="w-[25%] sm:w-[20%] md:w-[15%] h-auto" />
                     </Link>
                 </div>
                 <div className="hidden md:flex items-center justify-center gap-8">

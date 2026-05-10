@@ -304,8 +304,8 @@ export default function Settings() {
                     },
                     {
                       id: "hybrid",
-                      label: "🤝 Modo Híbrido (Recomendado)",
-                      desc: "A IA pausa automaticamente por 30 minutos se um atendente humano enviar uma mensagem manual."
+                      label: "🤝 Modo Híbrido (Proativo)",
+                      desc: "A IA pausa por 5 minutos se você responder. Se o cliente falar e você não responder em 5 minutos, a IA assume proativamente."
                     },
                     {
                       id: "transfer",

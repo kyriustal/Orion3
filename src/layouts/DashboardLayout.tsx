@@ -63,7 +63,7 @@ export default function DashboardLayout() {
       {/* Mobile Header */}
       <div className="md:hidden flex items-center justify-between p-4 bg-white border-b border-zinc-200 z-40 relative">
         <Link to="/dashboard" className="flex items-center gap-2">
-          <img src="/Orion.png" alt="Orion Logo" className="h-6 w-auto" />
+          <img src="/Orion.png" alt="Orion Logo" className="w-[25%] sm:w-[20%] md:w-[15%] h-auto" />
         </Link>
         <button onClick={() => setIsMobileMenuOpen(true)} className="p-2 -mr-2">
           <Menu className="w-6 h-6 text-zinc-900" />
@@ -72,12 +72,12 @@ export default function DashboardLayout() {
 
       {/* Fullscreen Mobile Menu */}
       {isMobileMenuOpen && (
-        <div className="fixed inset-0 z-50 bg-zinc-950 text-white flex flex-col animate-in fade-in duration-200">
-          <div className="flex items-center justify-between p-4 border-b border-zinc-800">
+        <div className="fixed inset-0 z-50 bg-white text-zinc-900 flex flex-col animate-in fade-in duration-200">
+          <div className="flex items-center justify-between p-4 border-b border-zinc-100">
             <div className="flex items-center gap-2">
-              <img src="/Orion.png" alt="Orion Logo" className="h-6 w-auto" />
+              <img src="/Orion.png" alt="Orion Logo" className="w-[25%] h-auto" />
             </div>
-            <button onClick={() => setIsMobileMenuOpen(false)} className="p-2 -mr-2 text-zinc-400 hover:text-white">
+            <button onClick={() => setIsMobileMenuOpen(false)} className="p-2 -mr-2 text-zinc-500 hover:text-zinc-900">
               <X className="w-6 h-6" />
             </button>
           </div>
@@ -91,23 +91,23 @@ export default function DashboardLayout() {
                   to={item.path}
                   onClick={() => setIsMobileMenuOpen(false)}
                   className={`flex items-center gap-4 px-4 py-3 rounded-lg text-base font-medium transition-colors ${isActive
-                    ? 'bg-emerald-500/10 text-emerald-400'
-                    : 'text-zinc-300 hover:bg-zinc-800 hover:text-white'
+                    ? 'bg-emerald-50 text-emerald-600'
+                    : 'text-zinc-600 hover:bg-zinc-50 hover:text-zinc-900'
                     }`}
                 >
-                  <item.icon className={`w-6 h-6 ${isActive ? 'text-emerald-400' : 'text-zinc-400'}`} />
+                  <item.icon className={`w-6 h-6 ${isActive ? 'text-emerald-600' : 'text-zinc-400'}`} />
                   {item.name}
                 </Link>
               );
             })}
           </nav>
 
-          <div className="p-4 border-t border-zinc-800">
+          <div className="p-4 border-t border-zinc-100">
             <div className="flex items-center gap-3 mb-4 px-2">
               <UserCircle className="w-10 h-10 text-zinc-400" />
               <div className="flex-1 min-w-0">
-                <p className="text-base font-medium text-white truncate">{user.name}</p>
-                <p className="text-sm text-zinc-400 truncate">{user.email}</p>
+                <p className="text-base font-medium text-zinc-900 truncate">{user.name}</p>
+                <p className="text-sm text-zinc-500 truncate">{user.email}</p>
               </div>
             </div>
             <button
@@ -125,7 +125,7 @@ export default function DashboardLayout() {
       <aside className="hidden md:flex w-64 bg-white border-r border-zinc-200 flex-col">
         <div className="p-6 border-b border-zinc-200">
           <Link to="/dashboard">
-            <img src="/Orion.png" alt="Orion Logo" className="h-8 w-auto" />
+            <img src="/Orion.png" alt="Orion Logo" className="w-[15%] h-auto" />
           </Link>
         </div>
         <nav className="flex-1 overflow-y-auto p-4 space-y-1">
