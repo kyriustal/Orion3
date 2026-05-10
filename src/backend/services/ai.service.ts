@@ -10,8 +10,9 @@ export class AIService {
         orgId: string;
         history?: any[];
         mode?: 'simulation' | 'support';
+        media?: { base64: string; mimeType: string };
     }) {
-        const { message, botName, orgId, history = [], mode = 'simulation' } = params;
+        const { message, botName, orgId, history = [], mode = 'simulation', media } = params;
         const apiKey = (process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || '').trim();
 
         if (!apiKey) throw new Error("Chave de API não encontrada.");
@@ -107,19 +108,31 @@ PERSONALIDADE:
 - Fale como um ser humano — não como um robô. Seja natural, fluente e caloroso.
 - Adapte o seu tom ao do cliente: se ele for informal, seja informal. Se for formal, seja formal.
 - Nunca repita as mesmas frases mecânicas. Seja original em cada resposta.
+- EVITE O EXCESSO DE COMPREENSÃO: Não use frases de preenchimento como "Essa é uma pergunta muito importante" ou "Compreendo perfeitamente" em todas as mensagens. Use validação apenas quando for realmente necessário para o contexto (ex: uma reclamação). Seja direto e eficiente.
 - Demonstre empatia genuína em situações de reclamação ou dificuldade.
 - Seja confiante e assertivo, mas nunca arrogante.
 
-VENDAS E PERSUASÃO:
-- Você é um especialista em vendas consultivas. Identifica a necessidade real do cliente e apresenta a solução ideal.
-- Use técnicas de persuasão naturais: escassez, prova social, benefícios claros, resolução de objeções.
-- Nunca force uma venda, mas conduza a conversa estrategicamente para o fechamento.
+VENDAS E PERSUASÃO (POLÍTICA DE NÃO-CONSULTORIA):
+- Você é um especialista em vendas consultivas, NÃO em consultoria gratuita.
+- PRODUTOS FÍSICOS E CONSTRUÇÃO: Deve dar todos os esclarecimentos necessários sobre o produto, materiais, prazos e preços para converter a venda. Seja informativo e prestativo.
+- SERVIÇOS DE CONSULTORIA/VISTOS: Você deve explicar o serviço e os processos da empresa de forma clara. No entanto, se perceber que o cliente quer apenas informações/dicas ("leeching") sem real intenção de compra, não dê a solução completa.
+- Se o cliente apenas desejar informações profundas sem intenção de contratar agora ou no futuro, recomende educadamente uma marcação presencial ou consultoria paga, conforme a política da empresa.
+- Nunca force uma venda, mas conduza a conversa estrategicamente para o fechamento ou agendamento.
 - Se o cliente mostrar interesse em comprar, agendar ou deixar dados, responda plenamente e adicione [TRIGGER_LEAD] ao FINAL da mensagem.
 
 GESTÃO DE SITUAÇÕES DIFÍCEIS:
 - Se o cliente estiver insatisfeito, valide a frustração dele ANTES de dar explicações.
-- Se o cliente pedir para falar com um humano, responda com empatia e adicione [TRIGGER_TRANSFER] ao FINAL da mensagem.
-- Se não souber algo específico (ex: preço exato não informado), seja honesto e ofereça alternativas.
+- Se o cliente pedir para falar com um humano, tente primeiro resolver o problema dele de forma educada e persistente. Só solicite a transferência se o cliente insistir muito (mais de 2 ou 3 vezes) ou se for uma situação de extrema complexidade que exija julgamento humano imediato.
+- Quando a transferência for inevitável:
+  a) Responda com extrema empatia: "Com certeza, compreendo perfeitamente. Vou solicitar agora mesmo que um dos nossos especialistas humanos assuma esta conversa."
+  b) Informe que ele deve aguardar um momento: "Por favor, aguarde um instante enquanto faço a transferência."
+  c) Adicione o gatilho [TRIGGER_TRANSFER] ao FINAL da mensagem.
+
+ANÁLISE MULTIMODAL (ÁUDIO, IMAGEM, VÍDEO E DOCUMENTOS):
+- Você é capaz de ver imagens, assistir vídeos, OUVIR áudios e ler documentos (PDFs, etc.) enviados pelo cliente.
+- Se receber um áudio, ouça-o atentamente e responda por texto de forma precisa.
+- Se receber um documento, analise o conteúdo para responder a dúvidas ou processar informações solicitadas.
+- Sempre descreva brevemente o que entendeu da mídia antes de dar a resposta final, para que o cliente saiba que você analisou corretamente.
 
 PESQUISA EXTERNA E CONHECIMENTO GERAL:
 - Você tem acesso à Pesquisa Google em tempo real. Se o cliente fizer uma pergunta complexa ou de domínio geral que você não saiba, use a pesquisa para encontrar informações atualizadas em fontes oficiais e credíveis.
@@ -166,16 +179,30 @@ IDIOMA:
         }));
 
         // Mensagem atual com o sistema prompt incorporado
+        const currentMessageParts: any[] = [{ text: `[SISTEMA: ${systemPrompt}]\n\nMensagem do cliente: ${message || '(Mídia enviada)'}` }];
+        
+        if (media) {
+            currentMessageParts.push({
+                inline_data: {
+                    mime_type: media.mimeType,
+                    data: media.base64
+                }
+            });
+        }
+
         if (contents.length === 0) {
             contents.push({
                 role: 'user',
-                parts: [{ text: `[SISTEMA: ${systemPrompt}]\n\nMensagem do cliente: ${message}` }]
+                parts: currentMessageParts
             });
         } else {
+            // Se já houver histórico, colocamos o prompt na primeira mensagem (como já feito)
             contents[0].parts[0].text = `[SISTEMA: ${systemPrompt}]\n\n${contents[0].parts[0].text}`;
+            
+            // Adicionamos a mensagem atual com a mídia
             contents.push({
                 role: 'user',
-                parts: [{ text: message }]
+                parts: media ? currentMessageParts.map(p => p.inline_data ? p : { text: message || '(Mídia enviada)' }) : [{ text: message }]
             });
         }
 

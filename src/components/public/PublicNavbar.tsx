@@ -10,15 +10,15 @@ export default function PublicNavbar() {
                         <img src="/Orion.png" alt="Orion Logo" className="w-32 md:w-40 h-auto" />
                     </Link>
                 </div>
-                <div className="hidden md:flex items-center justify-center gap-8">
+                <div className="hidden lg:flex items-center justify-center gap-8">
                     <Link to="/funcionalidades" className="text-sm font-medium text-zinc-600 hover:text-emerald-600 transition-colors">Funcionalidades</Link>
-                    <Link to="/casos-de-uso" className="text-sm font-medium text-zinc-600 hover:text-emerald-600 transition-colors">Casos de Uso</Link>
+                    <Link to="/casos-de-uso" className="text-sm font-medium text-zinc-600 hover:text-emerald-600 transition-colors text-center">Casos de Uso</Link>
                     <Link to="/precos" className="text-sm font-medium text-zinc-600 hover:text-emerald-600 transition-colors">Preços</Link>
                     <Link to="/sobre" className="text-sm font-medium text-zinc-600 hover:text-emerald-600 transition-colors">Sobre Nós</Link>
                 </div>
                 <div className="flex items-center justify-end gap-4">
                     <Link to="/login" target="_blank">
-                        <Button variant="ghost" className="hidden md:inline-flex font-medium">Entrar</Button>
+                        <Button variant="ghost" className="hidden lg:inline-flex font-medium">Entrar</Button>
                     </Link>
                     <Link to="/register" target="_blank">
                         <Button className="rounded-full bg-emerald-600 text-white hover:bg-emerald-700 font-medium">

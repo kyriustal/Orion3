@@ -7,7 +7,7 @@ export default function Home() {
     <div className="w-full overflow-x-hidden">
       {/* Hero Section */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 pt-12 md:pt-20 pb-20 md:pb-32">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-12 items-center mb-16 md:mb-20">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center mb-16 md:mb-20">
           <div>
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 text-sm font-medium mb-6">
               <Sparkles className="w-4 h-4" />
@@ -33,8 +33,8 @@ export default function Home() {
               </Link>
             </div>
           </div>
-          <div className="relative mt-8 md:mt-0">
-            <div className="absolute inset-0 bg-gradient-to-tr from-emerald-100 to-teal-50 rounded-[2rem] md:rounded-[3rem] transform md:rotate-3 md:scale-105 -z-10"></div>
+          <div className="relative mt-12 lg:mt-0">
+            <div className="absolute inset-0 bg-gradient-to-tr from-emerald-100 to-teal-50 rounded-[2rem] md:rounded-[3rem] transform lg:rotate-3 lg:scale-105 -z-10"></div>
             <div className="bg-white border text-zinc-800 border-zinc-100 shadow-xl rounded-[2rem] p-6 lg:p-8">
               <div className="flex items-center gap-4 border-b border-zinc-100 pb-4 mb-6">
                 <div className="w-12 h-12 rounded-full bg-emerald-100 flexItems-center justify-center flex items-center">
@@ -64,7 +64,7 @@ export default function Home() {
         </div>
 
         {/* Feature Highlights */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-8 mb-20 md:mb-32">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 md:gap-8 mb-20 md:mb-32">
           <div className="bg-zinc-50 rounded-3xl p-8 hover:bg-zinc-100 transition-colors">
             <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center shadow-sm mb-6">
               <BotMessageSquare className="w-6 h-6 text-emerald-600" />
@@ -97,7 +97,7 @@ export default function Home() {
             </p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 md:gap-12 bg-white rounded-[1.5rem] md:rounded-[2rem] p-6 md:p-8 shadow-sm items-center">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 md:gap-12 bg-white rounded-[1.5rem] md:rounded-[2rem] p-6 md:p-8 shadow-sm items-center">
             <div>
               <h3 className="text-2xl font-bold mb-6">Como o processo funciona:</h3>
               <ul className="space-y-6">
@@ -166,7 +166,7 @@ export default function Home() {
             </Link>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 md:gap-12 pb-16">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 md:gap-12 pb-16">
             <div>
               <p className="text-lg text-zinc-600 mb-8">Nossa infraestrutura intermedeia automaticamente os Webhooks da Meta com o seu Cérebro Gemini. Mas você também pode criar regras, integrações de faturamento e CRMs acoplando-se à nossa arquitetura transparente baseada em Express e Supabase.</p>
 

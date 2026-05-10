@@ -123,8 +123,9 @@ async function triggerAIResponse(params: {
   phoneNumberId: string;
   accessToken: string;
   botName: string;
+  media?: { base64: string; mimeType: string };
 }) {
-  const { orgId, fromNumber, phoneNumberId, accessToken, botName } = params;
+  const { orgId, fromNumber, phoneNumberId, accessToken, botName, media } = params;
   const historyKey = `${orgId}:${fromNumber}`;
   const history = conversationHistory[historyKey] || [];
 
@@ -140,7 +141,8 @@ async function triggerAIResponse(params: {
       orgId,
       history: history.slice(-10),
       botName,
-      mode: 'simulation'
+      mode: 'simulation',
+      media
     });
 
     const replyText = aiResult.reply;
@@ -210,13 +212,27 @@ router.post('/webhook', async (req, res) => {
     }
 
     // 3. Mensagem do Cliente
-    if (incomingMsg.type !== 'text') return;
-    const userText = incomingMsg.text?.body;
-    if (!userText) return;
+    let userText = "";
+    let media = undefined;
+
+    if (incomingMsg.type === 'text') {
+      userText = incomingMsg.text?.body;
+    } else if (['image', 'video', 'audio', 'document'].includes(incomingMsg.type)) {
+      const mediaId = incomingMsg[incomingMsg.type].id;
+      userText = incomingMsg[incomingMsg.type].caption || incomingMsg[incomingMsg.type].filename || "";
+      
+      console.log(`[WEBHOOK] Mídia detectada (${incomingMsg.type}). Baixando...`);
+      const mediaData = await WhatsAppService.getMedia(mediaId, accessToken);
+      if (mediaData) {
+        media = mediaData;
+      }
+    }
+
+    if (!userText && !media) return;
 
     // Atualizar Histórico
     if (!conversationHistory[historyKey]) conversationHistory[historyKey] = [];
-    conversationHistory[historyKey].push({ sender: 'user', text: userText });
+    conversationHistory[historyKey].push({ sender: 'user', text: userText || `(Mídia: ${incomingMsg.type})` });
 
     // 4. Verificar Modo de Coexistência
     const { data: org } = await supabaseAdmin.from('organizations').select('handover_mode').eq('id', orgId).maybeSingle();
@@ -234,7 +250,7 @@ router.post('/webhook', async (req, res) => {
         // Agendar verificação para daqui a 5 minutos
         const timeout = setTimeout(() => {
           scheduledChecks.delete(historyKey);
-          triggerAIResponse({ orgId, fromNumber, phoneNumberId, accessToken, botName: botName || 'Assistente' });
+          triggerAIResponse({ orgId, fromNumber, phoneNumberId, accessToken, botName: botName || 'Assistente', media });
         }, 5 * 60 * 1000);
 
         scheduledChecks.set(historyKey, timeout);
@@ -242,8 +258,8 @@ router.post('/webhook', async (req, res) => {
       }
     }
 
-    // 5. Resposta Imediata (Modo Automático ou Pausa expirada)
-    await triggerAIResponse({ orgId, fromNumber, phoneNumberId, accessToken, botName: botName || 'Assistente' });
+    // 5. Resposta Imediata
+    await triggerAIResponse({ orgId, fromNumber, phoneNumberId, accessToken, botName: botName || 'Assistente', media });
 
   } catch (error: any) {
     console.error('[WEBHOOK] Erro:', error.message);

@@ -17,7 +17,7 @@ export default function Campaigns() {
     template: "oferta_01",
     audience: "all",
     filters: "",
-    delay_seconds: 2
+    delay_seconds: 5
   });
 
   useEffect(() => {
@@ -74,7 +74,7 @@ export default function Campaigns() {
 
       toast.success(data.message);
       setIsModalOpen(false);
-      setNewCampaign({ name: "", template: "oferta_01", audience: "all", filters: "", delay_seconds: 2 });
+      setNewCampaign({ name: "", template: "oferta_01", audience: "all", filters: "", delay_seconds: 5 });
     } catch (error) {
       toast.error("Erro ao iniciar a campanha.");
     } finally {
@@ -155,7 +155,7 @@ export default function Campaigns() {
             <form onSubmit={handleStartCampaign}>
               <CardHeader>
                 <CardTitle>Criar Nova Campanha</CardTitle>
-                <CardDescription>Configure o envio em massa. O sistema aplicará um atraso de 2s por mensagem para cumprir as políticas da Meta.</CardDescription>
+                <CardDescription>Configure o envio em massa. O sistema aplicará um atraso de 5s por mensagem para cumprir as políticas da Meta.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-2">
@@ -216,9 +216,9 @@ export default function Campaigns() {
                     min="1"
                     max="60"
                     value={newCampaign.delay_seconds}
-                    onChange={(e) => setNewCampaign({ ...newCampaign, delay_seconds: parseInt(e.target.value) || 2 })}
+                    onChange={(e) => setNewCampaign({ ...newCampaign, delay_seconds: parseInt(e.target.value) || 5 })}
                   />
-                  <p className="text-[10px] text-zinc-500 italic">Recomendamos no mínimo 2 segundos para evitar bloqueios de spam.</p>
+                  <p className="text-[10px] text-zinc-500 italic">Recomendamos no mínimo 5 segundos para evitar bloqueios de spam da Meta.</p>
                 </div>
 
                 <div className="bg-amber-50 border border-amber-200 rounded-md p-3 mt-4">
