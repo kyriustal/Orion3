@@ -32,6 +32,11 @@ export class WhatsAppService {
             });
             
             console.log(`Resposta enviada para ${to}`);
+        } catch (error: any) {
+            console.error('Erro ao enviar mensagem para Meta:', error.response?.data || error.message);
+        }
+    }
+
     /**
      * Busca a URL de mídia da Meta e retorna o conteúdo em Base64
      */
