@@ -5,12 +5,12 @@ import { Button } from "@/src/components/ui/button";
 export default function About() {
     return (
         <div className="max-w-7xl mx-auto px-6 pt-20 pb-32">
-            <div className="text-center max-w-3xl mx-auto mb-20">
-                <h1 className="text-5xl font-bold tracking-tight mb-6">Democratizando as IAs Autônomas.</h1>
-                <p className="text-xl text-zinc-600">Nossa missão é colocar o poder dos modelos fundacionais das Big Techs diretamente no bolso de cada pequeno e médio empreendedor brasileiro de forma inteligente, barata e via WhatsApp.</p>
+            <div className="text-center max-w-3xl mx-auto mb-12 md:mb-20">
+                <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight mb-6">Democratizando as IAs Autônomas.</h1>
+                <p className="text-lg md:text-xl text-zinc-600">Nossa missão é colocar o poder dos modelos fundacionais das Big Techs diretamente no bolso de cada pequeno e médio empreendedor brasileiro de forma inteligente, barata e via WhatsApp.</p>
             </div>
 
-            <div className="grid md:grid-cols-2 gap-12 items-center mb-32">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-12 items-center mb-20 md:mb-32">
                 <div>
                     <h2 className="text-3xl font-bold mb-6">A Era da Geração Aumentada (RAG)</h2>
                     <p className="text-lg text-zinc-600 mb-6">
@@ -38,13 +38,13 @@ export default function About() {
                 </div>
             </div>
 
-            <div className="bg-zinc-900 text-white rounded-[2rem] p-12 md:p-16 text-center">
-                <h2 className="text-4xl font-bold mb-6">Pronto para transformar sua operação?</h2>
-                <p className="text-xl text-zinc-400 mb-10 max-w-2xl mx-auto">
+            <div className="bg-zinc-900 text-white rounded-[1.5rem] md:rounded-[2rem] p-8 md:p-16 text-center">
+                <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold mb-6">Pronto para transformar sua operação?</h2>
+                <p className="text-lg md:text-xl text-zinc-400 mb-8 md:mb-10 max-w-2xl mx-auto">
                     Faça parte de uma nova era de suporte. Substitua filas de espera, chamados parados e agentes cansados por respostas imediatas e inteligentes.
                 </p>
                 <Link to="/register" target="_blank">
-                    <Button className="rounded-full bg-emerald-500 hover:bg-emerald-600 text-white px-8 py-6 text-lg font-bold">Criar Minha Conta Organizacional</Button>
+                    <Button className="w-full sm:w-auto rounded-full bg-emerald-500 hover:bg-emerald-600 text-white px-8 py-6 text-lg font-bold">Criar Minha Conta</Button>
                 </Link>
             </div>
         </div>

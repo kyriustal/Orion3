@@ -9,7 +9,7 @@ export default function Privacy() {
             </div>
 
             <div className="prose prose-zinc max-w-none text-zinc-600">
-                <p className="text-sm uppercase tracking-widest font-bold mb-8 text-zinc-400">Última atualização: Julho 2026</p>
+                <p className="text-sm uppercase tracking-widest font-bold mb-8 text-zinc-400">Última atualização: Maio 2026</p>
 
                 <h3 className="text-2xl font-bold text-zinc-900 mt-12 mb-4">1. Compromisso com a Privacidade</h3>
                 <p>Na Orion, a privacidade dos seus dados e dos dados dos seus clientes finais é nossa prioridade absoluta. Esta política detalha como lidamos com as informações processadas por nossos agentes de IA e integrações com a Meta Cloud API.</p>

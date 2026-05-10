@@ -9,7 +9,7 @@ export default function Terms() {
             </div>
 
             <div className="prose prose-zinc max-w-none text-zinc-600">
-                <p className="text-sm uppercase tracking-widest font-bold mb-8 text-zinc-400">Última atualização: Julho 2026</p>
+                <p className="text-sm uppercase tracking-widest font-bold mb-8 text-zinc-400">Última atualização: Maio 2026</p>
 
                 <h3 className="text-2xl font-bold text-zinc-900 mt-12 mb-4">1. Aceitação dos Termos</h3>
                 <p>Ao se inscrever, acessar ou utilizar a Plataforma Orion de Agentes de IA ("Serviço"), você concorda em ficar vinculado a estes Termos de Serviço ("Termos"). Se você não concorda com qualquer parte dos Termos, você não deve utilizar o Serviço.</p>

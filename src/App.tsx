@@ -36,6 +36,7 @@ import ApiDocs from './pages/public/ApiDocs';
 import WhatsappIA from './pages/public/WhatsappIA';
 import KnowledgeRAG from './pages/public/KnowledgeRAG';
 import MetaWebhooks from './pages/public/MetaWebhooks';
+import Cookies from './pages/public/Cookies';
 
 const GatekeeperLayout = () => {
   return (
@@ -66,6 +67,7 @@ export default function App() {
           <Route path="/whatsapp-ia" element={<WhatsappIA />} />
           <Route path="/rag" element={<KnowledgeRAG />} />
           <Route path="/webhooks" element={<MetaWebhooks />} />
+          <Route path="/cookies" element={<Cookies />} />
         </Route>
 
         {/* Protected Area (GATEKEEPER REQUIRED) */}

@@ -8,12 +8,12 @@ export default function ApiDocs() {
                     <Code2 className="w-4 h-4" />
                     <span>Developer Preview</span>
                 </div>
-                <h1 className="text-5xl font-bold tracking-tight mb-6">Referência de API</h1>
+                <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight mb-6">Referência de API</h1>
                 <p className="text-xl text-zinc-600 max-w-2xl">Use as APIs e os webhooks interligados do Orion para enviar, acionar conversas, injetar documentos programaticamente ou criar fluxos Node.js externos.</p>
             </div>
 
-            <div className="grid md:grid-cols-12 gap-12">
-                <aside className="md:col-span-3">
+            <div className="flex flex-col lg:grid lg:grid-cols-12 gap-12">
+                <aside className="lg:col-span-3">
                     <nav className="sticky top-10 space-y-1">
                         <div className="font-bold text-zinc-900 mb-4 tracking-wider text-xs uppercase">Conceitos Core</div>
                         <a href="#auth" className="block text-sm text-zinc-500 hover:text-emerald-600 font-medium py-1">Autenticação</a>
@@ -22,7 +22,7 @@ export default function ApiDocs() {
                     </nav>
                 </aside>
 
-                <section className="md:col-span-9 space-y-20">
+                <section className="lg:col-span-9 space-y-20">
 
                     <div id="auth">
                         <h2 className="text-2xl font-bold mb-4 flex items-center gap-3"><LockIcon /> Autenticação via Chave</h2>
