@@ -7,7 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter }
 import { Button } from "@/src/components/ui/button";
 import { Input } from "@/src/components/ui/input";
 import { Switch } from "@/src/components/ui/switch";
-import { Smartphone, Copy, AlertCircle, Plus, Loader2, Trash2, RefreshCw, CheckCircle2, Key, Building, Webhook } from "lucide-react";
+import { Smartphone, Copy, AlertCircle, Plus, Loader2, Trash2, RefreshCw, CheckCircle2, Key, Building, Webhook, ShieldCheck } from "lucide-react";
 
 type WhatsAppNumber = {
   id: string;
