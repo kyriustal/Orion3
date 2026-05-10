@@ -44,11 +44,12 @@ export default function KnowledgeBase() {
       });
       if (!response.ok) throw new Error("Falha ao carregar documentos");
       const data = await response.json();
-      setFiles(data.map((f: any) => ({
+      const filesList = Array.isArray(data) ? data : data.files || [];
+      setFiles(filesList.map((f: any) => ({
         id: f.id,
         name: f.original_name || f.name,
         size: typeof f.size === "number" ? formatSize(f.size) : f.size,
-        status: f.status || "ready",
+        status: (f.processed === true || f.status === 'ready') ? "ready" : f.status || "processing",
         created_at: f.created_at
       })));
     } catch (error: any) {
