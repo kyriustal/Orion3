@@ -242,7 +242,7 @@ FORMATAÇÃO:
                     console.error('[AI SERVICE] Erro final no Gemini:', error.message);
                     // Tentar OpenAI como última instância (mesmo que possa falhar se não houver saldo)
                     try {
-                        return await this.generateOpenAIFallback(message, systemPrompt, history);
+                        return await this.generateOpenAIFallback(message, systemPrompt, history, media);
                     } catch (fallbackError: any) {
                         throw new Error(`Ambos os motores falharam. Gemini: ${error.message} | OpenAI: ${fallbackError.message}`);
                     }
@@ -257,14 +257,23 @@ FORMATAÇÃO:
     /**
      * Fallback para OpenAI (GPT-4o) para garantir disponibilidade
      */
-    private static async generateOpenAIFallback(message: string, systemPrompt: string, history: any[]) {
+    private static async generateOpenAIFallback(message: string, systemPrompt: string, history: any[], media?: any) {
         const openaiKey = process.env.OPENAI_API_KEY;
         if (!openaiKey) {
-            console.error('[AI SERVICE] Chave OpenAI não encontrada no .env');
-            throw new Error("Cota Gemini excedida e chave OpenAI não configurada.");
+            console.error('[AI SERVICE] Chave OpenAI não encontrada para Fallback');
+            throw new Error("Cota Gemini excedida e reserva não configurada.");
         }
 
-        console.log('[AI SERVICE] Iniciando chamada OpenAI (gpt-4o-mini)...');
+        console.log('[AI SERVICE] Ativando Visão OpenAI (gpt-4o-mini)...');
+
+        const userContent: any[] = [{ type: "text", text: message || "(O usuário enviou uma mídia)" }];
+        
+        if (media && media.mimeType.startsWith('image/')) {
+            userContent.push({
+                type: "image_url",
+                image_url: { url: `data:${media.mimeType};base64,${media.base64}` }
+            });
+        }
 
         const messages = [
             { role: "system", content: systemPrompt },
@@ -272,7 +281,7 @@ FORMATAÇÃO:
                 role: msg.sender === 'user' ? "user" : "assistant",
                 content: msg.text
             })),
-            { role: "user", content: message || "(O usuário enviou uma mídia)" }
+            { role: "user", content: userContent }
         ];
 
         try {
@@ -291,17 +300,12 @@ FORMATAÇÃO:
             });
 
             const data: any = await response.json();
-            
-            if (data.error) {
-                console.error('[AI SERVICE] Erro retornado pela OpenAI:', data.error.message);
-                throw new Error(`OpenAI Error: ${data.error.message}`);
-            }
+            if (data.error) throw new Error(`OpenAI Error: ${data.error.message}`);
 
-            const reply = data.choices?.[0]?.message?.content || "Desculpe, tive um problema técnico temporário.";
-            console.log('[AI SERVICE] Resposta OpenAI obtida com sucesso.');
+            const reply = data.choices?.[0]?.message?.content || "Desculpe, tive um problema técnico.";
             return this.processTriggers(reply);
         } catch (error: any) {
-            console.error('[AI SERVICE] Falha crítica no Fallback OpenAI:', error.message);
+            console.error('[AI SERVICE] Falha total no Fallback:', error.message);
             throw error;
         }
     }

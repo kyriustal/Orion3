@@ -107,10 +107,13 @@ router.get('/webhook', (req, res) => {
 });
 
 // Cache para Pausas de IA (Modo Híbrido)
-// Estrutura: { "orgId:fromNumber": timestamp_expiracao }
 const aiPauses: Map<string, number> = new Map();
 
-// Controle de timeouts agendados para evitar duplicidade
+// Controle de deduplicação de mensagens (IDs da Meta)
+const processedMessages: Set<string> = new Set();
+setInterval(() => processedMessages.clear(), 10 * 60 * 1000); // Limpa a cada 10 min
+
+// Controle de timeouts agendados
 const scheduledChecks: Map<string, NodeJS.Timeout> = new Map();
 
 async function triggerAIResponse(params: {
@@ -199,6 +202,15 @@ router.post('/webhook', async (req, res) => {
     if (!messages || messages.length === 0) return;
 
     const incomingMsg = messages[0];
+    const messageId = incomingMsg.id;
+
+    // Evitar processamento duplicado
+    if (processedMessages.has(messageId)) {
+      console.log(`[WEBHOOK] Mensagem ${messageId} já processada. Ignorando.`);
+      return;
+    }
+    processedMessages.add(messageId);
+
     const fromNumber = incomingMsg.from;
     const phoneNumberId = metadata?.phone_number_id;
     const referral = incomingMsg.referral; // Captura o anúncio
