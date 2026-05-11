@@ -8,16 +8,17 @@ import { Button } from "@/src/components/ui/button";
 import { Bot, Upload, Loader2, MessageSquare } from "lucide-react";
 
 const agentSchema = z.object({
-  name: z.string().min(2, "O nome do agente deve ter pelo menos 2 caracteres."),
-  prompt: z.string().min(10, "O prompt deve ter pelo menos 10 caracteres."),
+  chatbot_name: z.string().min(2, "O nome do agente deve ter pelo menos 2 caracteres."),
+  product_description: z.string().min(10, "A descrição deve ter pelo menos 10 caracteres."),
   model: z.string(),
   temperature: z.number().min(0).max(1),
-  tone: z.enum(['friendly', 'professional', 'extremely_professional']),
+  ai_tone: z.enum(['friendly', 'professional', 'extremely_professional']),
 });
 
 type AgentFormValues = z.infer<typeof agentSchema>;
 
 export default function AgentSettings() {
+  const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
 
@@ -30,33 +31,56 @@ export default function AgentSettings() {
   } = useForm<AgentFormValues>({
     resolver: zodResolver(agentSchema),
     defaultValues: {
-      name: "Assistente Virtual",
-      prompt: "Você é um assistente corporativo de inteligência artificial. Seja educado, humano e ajude os clientes respondendo dúvidas de forma prática e objetiva baseando-se no contexto da empresa.",
-      model: "gemini-2.0-flash",
+      chatbot_name: "Assistente Virtual",
+      product_description: "Você é um assistente corporativo de inteligência artificial. Seja educado, humano e ajude os clientes respondendo dúvidas de forma prática e objetiva baseando-se no contexto da empresa.",
+      model: "gemini-1.5-flash",
       temperature: 0.3,
-      tone: "professional",
+      ai_tone: "professional",
     },
   });
 
   const temperatureValue = watch("temperature");
 
   useEffect(() => {
-    const saved = localStorage.getItem('agent_settings');
-    if (saved) {
-      const parsed = JSON.parse(saved);
-      if (parsed.name) setValue("name", parsed.name);
-      if (parsed.prompt) setValue("prompt", parsed.prompt);
-      if (parsed.model) setValue("model", parsed.model);
-      if (parsed.temperature !== undefined) setValue("temperature", parsed.temperature);
-    }
+    fetchSettings();
   }, [setValue]);
+
+  const fetchSettings = async () => {
+    setIsLoading(true);
+    try {
+      const response = await fetch("/api/settings/org", {
+        headers: { "Authorization": `Bearer ${localStorage.getItem("token")}` }
+      });
+      if (!response.ok) throw new Error("Erro ao carregar configurações");
+      const data = await response.json();
+      
+      if (data.chatbot_name) setValue("chatbot_name", data.chatbot_name);
+      if (data.product_description) setValue("product_description", data.product_description);
+      if (data.model) setValue("model", data.model);
+      if (data.temperature !== undefined) setValue("temperature", Number(data.temperature));
+      if (data.ai_tone) setValue("ai_tone", data.ai_tone);
+      
+    } catch (error: any) {
+      console.error("Erro ao carregar settings:", error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const onSubmit = async (data: AgentFormValues) => {
     setIsSaving(true);
     try {
-      // Simulating API call: PATCH /agents/{agent_id}
-      await new Promise(resolve => setTimeout(resolve, 800));
-      localStorage.setItem('agent_settings', JSON.stringify(data));
+      const response = await fetch("/api/settings/org", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${localStorage.getItem("token")}`
+        },
+        body: JSON.stringify(data)
+      });
+
+      if (!response.ok) throw new Error("Erro ao salvar no servidor");
+      
       toast.success("Configurações do agente salvas com sucesso!");
     } catch (error) {
       toast.error("Erro ao salvar configurações.");
@@ -78,6 +102,14 @@ export default function AgentSettings() {
     }
   };
 
+  if (isLoading) {
+    return (
+      <div className="flex h-[400px] items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-emerald-600" />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6 max-w-3xl">
       <div>
@@ -95,21 +127,21 @@ export default function AgentSettings() {
             <div className="space-y-2">
               <label className="text-sm font-medium text-zinc-700">Nome do Agente</label>
               <input
-                {...register("name")}
+                {...register("chatbot_name")}
                 className="flex h-10 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-950"
                 placeholder="Ex: Assistente de Suporte Avançado"
               />
-              {errors.name && <p className="text-xs text-red-500">{errors.name.message}</p>}
+              {errors.chatbot_name && <p className="text-xs text-red-500">{errors.chatbot_name.message}</p>}
             </div>
 
             <div className="space-y-2">
-              <label className="text-sm font-medium text-zinc-700">System Prompt</label>
+              <label className="text-sm font-medium text-zinc-700">Instruções do Negócio (System Prompt)</label>
               <textarea
-                {...register("prompt")}
+                {...register("product_description")}
                 className="w-full h-40 rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-950 resize-none"
-                placeholder="Descreva como o bot deve agir..."
+                placeholder="Descreva como o bot deve agir e o que ele deve saber sobre a empresa..."
               />
-              {errors.prompt && <p className="text-xs text-red-500">{errors.prompt.message}</p>}
+              {errors.product_description && <p className="text-xs text-red-500">{errors.product_description.message}</p>}
             </div>
             <div className="space-y-4">
               <label className="text-sm font-medium text-zinc-700">Tom de Voz da IA</label>
@@ -117,12 +149,12 @@ export default function AgentSettings() {
                 {[
                   { id: 'friendly', name: 'Amigável', desc: 'Muita compreensão e empatia.' },
                   { id: 'professional', name: 'Profissional', desc: 'Direto, culto e objetivo.' },
-                  { id: 'extremely_professional', name: 'Extremamente Profissional', desc: 'Foco total em eficiência, empatia reduzida.' }
+                  { id: 'extremely_professional', name: 'Muito Profissional', desc: 'Foco total em eficiência, empatia reduzida.' }
                 ].map((tone) => (
                   <label 
                     key={tone.id}
                     className={`cursor-pointer border rounded-xl p-4 transition-all ${
-                      watch("tone") === tone.id 
+                      watch("ai_tone") === tone.id 
                         ? 'border-emerald-500 bg-emerald-50 ring-1 ring-emerald-500' 
                         : 'border-zinc-200 bg-white hover:border-zinc-300'
                     }`}
@@ -130,10 +162,10 @@ export default function AgentSettings() {
                     <input 
                       type="radio" 
                       value={tone.id} 
-                      {...register("tone")} 
+                      {...register("ai_tone")} 
                       className="hidden" 
                     />
-                    <p className={`font-bold text-sm ${watch("tone") === tone.id ? 'text-emerald-700' : 'text-zinc-900'}`}>
+                    <p className={`font-bold text-sm ${watch("ai_tone") === tone.id ? 'text-emerald-700' : 'text-zinc-900'}`}>
                       {tone.name}
                     </p>
                     <p className="text-[10px] text-zinc-500 mt-1 leading-tight">{tone.desc}</p>
@@ -155,7 +187,7 @@ export default function AgentSettings() {
                 {...register("model")}
                 className="flex h-10 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-950"
               >
-                <option value="gemini-2.0-flash">Gemini 2.0 Flash (Rápido e Eficiente)</option>
+                <option value="gemini-1.5-flash">Gemini 1.5 Flash (Rápido e Eficiente)</option>
                 <option value="gemini-1.5-pro">Gemini 1.5 Pro (Complexo e Preciso)</option>
               </select>
             </CardContent>

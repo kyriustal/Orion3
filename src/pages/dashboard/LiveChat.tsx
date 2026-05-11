@@ -15,6 +15,7 @@ type Message = {
 };
 
 export default function LiveChat() {
+  const [isLoading, setIsLoading] = useState(true);
   const [isAiActive, setIsAiActive] = useState(true);
   const [message, setMessage] = useState("");
   const [socket, setSocket] = useState<Socket | null>(null);
@@ -23,6 +24,16 @@ export default function LiveChat() {
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [chats, setChats] = useState<any[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
+
+  // Initialize Socket
+  useEffect(() => {
+    const newSocket = io(window.location.origin);
+    setSocket(newSocket);
+
+    return () => {
+      newSocket.disconnect();
+    };
+  }, []);
 
   // Fetch active chats
   const fetchChats = async () => {
@@ -35,6 +46,8 @@ export default function LiveChat() {
       setChats(data);
     } catch (err) {
       console.error("Erro ao buscar chats:", err);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -120,7 +133,11 @@ export default function LiveChat() {
           <CardTitle className="text-lg">Conversas Ativas</CardTitle>
         </CardHeader>
         <CardContent className="flex-1 overflow-y-auto p-0">
-          {!Array.isArray(chats) || chats.length === 0 ? (
+          {isLoading ? (
+            <div className="flex items-center justify-center h-full">
+              <Loader2 className="w-6 h-6 animate-spin text-emerald-600" />
+            </div>
+          ) : !Array.isArray(chats) || chats.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full p-8 text-center text-zinc-500">
               <MessageCircle className="w-12 h-12 mb-3 opacity-20" />
               <p className="text-sm">Nenhuma conversa ativa no momento.</p>

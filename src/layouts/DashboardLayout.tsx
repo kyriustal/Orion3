@@ -11,6 +11,23 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/src/components/ui/dropdown-menu";
+const navItems = [
+  { name: 'Dashboard', path: '/dashboard', icon: LayoutDashboard },
+  { name: 'Live Chat', path: '/dashboard/live-chat', icon: MessageSquare, isNew: true },
+  { name: 'Simulação', path: '/dashboard/simulation', icon: PlayCircle },
+  { name: 'Agentes (Bots)', path: '/dashboard/agent', icon: Bot },
+  { name: 'WhatsApp', path: '/dashboard/whatsapp', icon: Smartphone },
+  { name: 'Facebook Messenger', path: '/dashboard/facebook', icon: Smartphone, isNew: true },
+  { name: 'Base de Conhecimento', path: '/dashboard/knowledge', icon: BookOpen },
+  { name: 'Campanhas', path: '/dashboard/campaigns', icon: Megaphone },
+  { name: 'Automações', path: '/dashboard/automations', icon: Zap },
+  { name: 'Templates (HSM)', path: '/dashboard/templates', icon: MessageSquare },
+  { name: 'Insights & Sentimento', path: '/dashboard/insights', icon: BarChart },
+  { name: 'Equipe', path: '/dashboard/team', icon: Users },
+  { name: 'Assinatura', path: '/dashboard/billing', icon: CreditCard },
+  { name: 'Configurações', path: '/dashboard/settings', icon: Settings },
+];
+
 export default function DashboardLayout() {
   const location = useLocation();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -41,23 +58,6 @@ export default function DashboardLayout() {
       .then(data => setSubStatus(data))
       .catch(() => {});
   }, []);
-
-  const navItems = [
-    { name: 'Dashboard', path: '/dashboard', icon: LayoutDashboard },
-    { name: 'Live Chat', path: '/dashboard/live-chat', icon: MessageSquare, isNew: true },
-    { name: 'Simulação', path: '/dashboard/simulation', icon: PlayCircle },
-    { name: 'Agentes (Bots)', path: '/dashboard/agent', icon: Bot },
-    { name: 'WhatsApp', path: '/dashboard/whatsapp', icon: Smartphone },
-    { name: 'Facebook Messenger', path: '/dashboard/facebook', icon: Smartphone, isNew: true },
-    { name: 'Base de Conhecimento', path: '/dashboard/knowledge', icon: BookOpen },
-    { name: 'Campanhas', path: '/dashboard/campaigns', icon: Megaphone },
-    { name: 'Automações', path: '/dashboard/automations', icon: Zap },
-    { name: 'Templates (HSM)', path: '/dashboard/templates', icon: MessageSquare },
-    { name: 'Insights & Sentimento', path: '/dashboard/insights', icon: BarChart },
-    { name: 'Equipe', path: '/dashboard/team', icon: Users },
-    { name: 'Assinatura', path: '/dashboard/billing', icon: CreditCard },
-    { name: 'Configurações', path: '/dashboard/settings', icon: Settings },
-  ];
 
   return (
     <div className="flex h-screen bg-zinc-50 flex-col md:flex-row">
