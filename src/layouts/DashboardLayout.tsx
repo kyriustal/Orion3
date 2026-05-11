@@ -44,11 +44,12 @@ export default function DashboardLayout() {
 
   const navItems = [
     { name: 'Dashboard', path: '/dashboard', icon: LayoutDashboard },
+    { name: 'Live Chat', path: '/dashboard/live-chat', icon: MessageSquare, isNew: true },
     { name: 'Simulação', path: '/dashboard/simulation', icon: PlayCircle },
     { name: 'Agentes (Bots)', path: '/dashboard/agent', icon: Bot },
     { name: 'WhatsApp', path: '/dashboard/whatsapp', icon: Smartphone },
+    { name: 'Facebook Messenger', path: '/dashboard/facebook', icon: Smartphone, isNew: true },
     { name: 'Base de Conhecimento', path: '/dashboard/knowledge', icon: BookOpen },
-    { name: 'Live Chat', path: '/dashboard/live-chat', icon: MessageSquare },
     { name: 'Campanhas', path: '/dashboard/campaigns', icon: Megaphone },
     { name: 'Automações', path: '/dashboard/automations', icon: Zap },
     { name: 'Templates (HSM)', path: '/dashboard/templates', icon: MessageSquare },
@@ -143,6 +144,11 @@ export default function DashboardLayout() {
               >
                 <item.icon className={`w-5 h-5 ${isActive ? 'text-emerald-600' : 'text-zinc-400'}`} />
                 {item.name}
+                {item.isNew && (
+                  <span className="ml-auto bg-emerald-500 text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold uppercase tracking-wider">
+                    Novo
+                  </span>
+                )}
               </Link>
             );
           })}
