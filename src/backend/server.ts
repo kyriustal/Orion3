@@ -28,11 +28,14 @@ import templatesRoutes from './api/templates.routes';
 import campaignsRoutes from './api/campaigns.routes';
 import billingRoutes from './api/billing.routes';
 
+import facebookRoutes from './api/facebook.routes';
+
 // Registro das Rotas
 app.use('/api/auth', authRoutes);
 app.use('/api/knowledge', knowledgeRoutes);
 app.use('/api/orion-web', chatRoutes);
 app.use('/api/whatsapp', whatsappRoutes);
+app.use('/api/facebook', facebookRoutes);
 app.use('/api/bookings', bookingsRoutes);
 app.use('/api/automations', automationsRoutes);
 app.use('/api/templates', templatesRoutes);

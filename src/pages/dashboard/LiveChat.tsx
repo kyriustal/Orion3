@@ -27,7 +27,7 @@ export default function LiveChat() {
   // Fetch active chats
   const fetchChats = async () => {
     try {
-      const token = localStorage.getItem('orion_token');
+      const token = localStorage.getItem('token');
       const res = await fetch('/api/whatsapp/chats', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -41,7 +41,7 @@ export default function LiveChat() {
   // Fetch history for active chat
   const fetchHistory = async (phone: string) => {
     try {
-      const token = localStorage.getItem('orion_token');
+      const token = localStorage.getItem('token');
       const res = await fetch(`/api/whatsapp/history/${phone}`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -120,7 +120,7 @@ export default function LiveChat() {
           <CardTitle className="text-lg">Conversas Ativas</CardTitle>
         </CardHeader>
         <CardContent className="flex-1 overflow-y-auto p-0">
-          {chats.length === 0 ? (
+          {!Array.isArray(chats) || chats.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full p-8 text-center text-zinc-500">
               <MessageCircle className="w-12 h-12 mb-3 opacity-20" />
               <p className="text-sm">Nenhuma conversa ativa no momento.</p>
