@@ -122,10 +122,11 @@ async function triggerAIResponse(params: {
   phoneNumberId: string;
   accessToken: string;
   botName: string;
+  message: string; // Adicionado parâmetro de mensagem direta
   media?: { base64: string; mimeType: string };
   referral?: any;
 }) {
-  const { orgId, fromNumber, phoneNumberId, accessToken, botName, media, referral } = params;
+  const { orgId, fromNumber, phoneNumberId, accessToken, botName, message, media, referral } = params;
 
   const historyKey = `${orgId}:${fromNumber}`;
   if (aiPauses.has(historyKey) && aiPauses.get(historyKey)! > Date.now()) {
@@ -136,7 +137,7 @@ async function triggerAIResponse(params: {
   console.log(`[IA PROATIVA] Gerando resposta para ${fromNumber}...`);
 
   try {
-    // 1. Recuperar contexto das últimas 24 horas do banco de dados
+    // 1. Recuperar contexto das últimas 24 horas (apenas histórico passado)
     const last24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
     
     const { data: dbHistory } = await supabaseAdmin
@@ -153,18 +154,17 @@ async function triggerAIResponse(params: {
       text: h.text 
     }));
 
-    // Pegar a última mensagem do usuário para processar
-    const lastUserMsg = [...history].reverse().find(h => h.sender === 'user');
-    const messageToProcess = lastUserMsg?.text || '(Mídia enviada)';
+    // Usar a mensagem passada por parâmetro (garante que não haverá alucinação de mídia)
+    const messageToProcess = message;
 
     const aiResult = await AIService.generateResponse({
       message: messageToProcess,
       orgId,
-      history: history, // Envia o histórico completo (24h) para a IA
+      history: history, 
       botName,
       mode: 'simulation',
       media,
-      referral // Passa o contexto do anúncio
+      referral 
     });
 
     const replyText = aiResult.reply;
@@ -274,7 +274,7 @@ router.post('/webhook', async (req, res) => {
     });
 
     // 4. Resposta Imediata
-    await triggerAIResponse({ orgId, fromNumber, phoneNumberId, accessToken, botName: botName || 'Assistente', media, referral });
+    await triggerAIResponse({ orgId, fromNumber, phoneNumberId, accessToken, botName: botName || 'Assistente', message: dbText, media, referral });
 
   } catch (error: any) {
     console.error('[WEBHOOK] Erro:', error.message);
