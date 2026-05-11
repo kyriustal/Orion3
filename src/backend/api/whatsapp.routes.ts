@@ -290,6 +290,14 @@ router.post('/webhook', async (req, res) => {
       if (vipEntry) isVip = true;
     }
 
+    // Fallback para .env (emails VIPs hardcoded)
+    if (!isVip && orgData?.owner_email) {
+      const vipEmails = (process.env.VIP_EMAILS || '').split(',').map(e => e.trim().toLowerCase());
+      if (vipEmails.includes(orgData.owner_email.toLowerCase())) {
+        isVip = true;
+      }
+    }
+
     const currentPlan = subData?.plan || 'none';
     const isVoiceAllowed = currentPlan === 'pro' || currentPlan === 'enterprise' || isVip;
 
