@@ -29,6 +29,71 @@ router.get('/config', requireAuth, async (req: AuthRequest, res) => {
   }
 });
 
+// /api/whatsapp/chats (GET) - Listar conversas ativas
+router.get('/chats', requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const orgId = req.user?.id;
+    
+    // Buscar os últimos números únicos que falaram com a organização
+    const { data: history, error } = await supabaseAdmin
+      .from('conversation_history')
+      .select('customer_phone, text, created_at, sender')
+      .eq('org_id', orgId)
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+
+    // Agrupar por número de telefone (pegar a última mensagem de cada)
+    const chatsMap = new Map();
+    history?.forEach(item => {
+      if (!chatsMap.has(item.customer_phone)) {
+        chatsMap.set(item.customer_phone, {
+          id: item.customer_phone,
+          phone: item.customer_phone,
+          name: `Cliente (${item.customer_phone})`,
+          lastMessage: item.text,
+          time: new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          timestamp: item.created_at
+        });
+      }
+    });
+
+    res.json(Array.from(chatsMap.values()));
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// /api/whatsapp/history/:phone (GET) - Ver histórico de um chat específico
+router.get('/history/:phone', requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const orgId = req.user?.id;
+    const { phone } = req.params;
+
+    const { data, error } = await supabaseAdmin
+      .from('conversation_history')
+      .select('*')
+      .eq('org_id', orgId)
+      .eq('customer_phone', phone)
+      .order('created_at', { ascending: true })
+      .limit(100);
+
+    if (error) throw error;
+
+    // Formatar para o frontend
+    const formattedMessages = data.map(m => ({
+      id: m.id,
+      sender: m.sender,
+      text: m.text,
+      time: new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    }));
+
+    res.json(formattedMessages);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // /api/whatsapp/config (POST) — Com validação real nas credenciais da Meta
 router.post('/config', requireAuth, async (req: AuthRequest, res) => {
   try {

@@ -20,39 +20,50 @@ export default function LiveChat() {
   const [socket, setSocket] = useState<Socket | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  const [activeChatId, setActiveChatId] = useState(1);
+  const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [chats, setChats] = useState<any[]>([]);
-
   const [messages, setMessages] = useState<Message[]>([]);
 
+  // Fetch active chats
+  const fetchChats = async () => {
+    try {
+      const token = localStorage.getItem('orion_token');
+      const res = await fetch('/api/whatsapp/chats', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const data = await res.json();
+      setChats(data);
+    } catch (err) {
+      console.error("Erro ao buscar chats:", err);
+    }
+  };
+
+  // Fetch history for active chat
+  const fetchHistory = async (phone: string) => {
+    try {
+      const token = localStorage.getItem('orion_token');
+      const res = await fetch(`/api/whatsapp/history/${phone}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const data = await res.json();
+      setMessages(data);
+    } catch (err) {
+      console.error("Erro ao buscar histórico:", err);
+    }
+  };
+
   useEffect(() => {
-    // Connect to Socket.IO server on the same origin
-    const newSocket = io(window.location.origin);
-    setSocket(newSocket);
+    fetchChats();
+    const interval = setInterval(fetchChats, 10000); // Atualizar lista a cada 10s
+    return () => clearInterval(interval);
+  }, []);
 
-    newSocket.on("connect", () => {
-      console.log("Connected to Live Chat server");
-      newSocket.emit("join_chat", activeChatId);
-    });
-
-    newSocket.on("new_message", (data: { chatId: number; message: Message; isTransfer?: boolean }) => {
-      if (data.chatId === activeChatId) {
-        setMessages((prev) => {
-          // Prevent duplicate messages if we already added it locally
-          if (prev.some(m => m.id === data.message.id)) return prev;
-          return [...prev, data.message];
-        });
-
-        if (data.isTransfer) {
-          setIsAiActive(false);
-          toast.warning("A IA transferiu este atendimento para você.");
-        }
-      }
-    });
-
-    return () => {
-      newSocket.disconnect();
-    };
+  useEffect(() => {
+    if (activeChatId) {
+      fetchHistory(activeChatId);
+      const interval = setInterval(() => fetchHistory(activeChatId), 5000); // Atualizar chat a cada 5s
+      return () => clearInterval(interval);
+    }
   }, [activeChatId]);
 
   useEffect(() => {
@@ -119,10 +130,9 @@ export default function LiveChat() {
               <div
                 key={chat.id}
                 onClick={() => {
-                  setActiveChatId(chat.id);
-                  socket?.emit("join_chat", chat.id);
+                  setActiveChatId(chat.phone);
                 }}
-                className={`p-4 border-b border-zinc-100 cursor-pointer transition-colors ${activeChatId === chat.id ? 'bg-zinc-100' : 'hover:bg-zinc-50'}`}
+                className={`p-4 border-b border-zinc-100 cursor-pointer transition-colors ${activeChatId === chat.phone ? 'bg-zinc-100' : 'hover:bg-zinc-50'}`}
               >
                 <div className="flex justify-between items-start mb-1">
                   <h3 className="font-medium text-sm text-zinc-900">{chat.name}</h3>
