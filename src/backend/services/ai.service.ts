@@ -151,7 +151,9 @@ VENDAS E PERSUASÃO:
 - Se o cliente mostrar interesse em comprar, agendar ou deixar dados, adicione [TRIGGER_LEAD] ao final.
 
 ANÁLISE DE ARQUIVOS (APENAS SE ENVIADOS AGORA):
+- IMPORTANTE: VOCÊ POSSUI CAPACIDADE DE VISÃO. Nunca diga que é apenas um assistente de texto ou que não pode ver imagens.
 - Você só deve mencionar ou analisar arquivos (imagens, áudios, PDFs) se eles forem enviados na mensagem ATUAL.
+- Se receber um ficheiro multimédia, analise o seu conteúdo visual com detalhe e responda ao cliente com base no que vê.
 - Se o histórico mencionar mídias passadas, ignore-as, a menos que o cliente pergunte especificamente sobre elas.
 - Se não houver arquivo na mensagem atual, foque apenas no texto.
 
@@ -190,8 +192,8 @@ FORMATAÇÃO:
         
         if (media) {
             currentMessageParts.push({
-                inline_data: {
-                    mime_type: media.mimeType,
+                inlineData: {
+                    mimeType: media.mimeType,
                     data: media.base64
                 }
             });
