@@ -144,43 +144,99 @@ export default function KnowledgeBase() {
         <p className="text-zinc-500">Faça upload de documentos para a IA usar como contexto nas respostas. Quanto mais documentos, mais inteligente e preciso fica o agente.</p>
       </div>
 
-      {/* Upload Card */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Upload de Arquivos</CardTitle>
-          <CardDescription>PDF, TXT, DOCX, CSV — até 10MB por arquivo.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <input
-            type="file"
-            ref={fileInputRef}
-            onChange={handleFileChange}
-            className="hidden"
-            aria-label="Upload de documento para base de conhecimento"
-            accept=".pdf,.txt,.docx,.doc,.csv,.xlsx,.md,application/pdf,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/msword"
-          />
-          <div
-            onClick={!isUploading ? handleUploadClick : undefined}
-            className={`border-2 border-dashed rounded-xl p-12 flex flex-col items-center justify-center text-center transition-all ${
-              isUploading
-                ? 'border-emerald-300 bg-emerald-50 cursor-wait'
-                : 'border-zinc-200 hover:bg-emerald-50 hover:border-emerald-400 cursor-pointer'
-            }`}
-          >
-            <div className="w-14 h-14 rounded-full bg-emerald-50 flex items-center justify-center mb-4 border border-emerald-200">
-              {isUploading ? (
-                <Loader2 className="w-7 h-7 text-emerald-600 animate-spin" />
-              ) : (
-                <Upload className="w-7 h-7 text-emerald-600" />
-              )}
+      {/* Upload & Scrape Cards */}
+      <div className="grid md:grid-cols-2 gap-6">
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2"><Upload className="w-5 h-5" /> Upload de Arquivos</CardTitle>
+            <CardDescription>PDF, TXT, DOCX, CSV — até 10MB.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <input
+              type="file"
+              ref={fileInputRef}
+              onChange={handleFileChange}
+              className="hidden"
+              aria-label="Upload de documento para base de conhecimento"
+              accept=".pdf,.txt,.docx,.doc,.csv,.xlsx,.md"
+            />
+            <div
+              onClick={!isUploading ? handleUploadClick : undefined}
+              className={`border-2 border-dashed rounded-xl p-8 flex flex-col items-center justify-center text-center transition-all h-[180px] ${
+                isUploading
+                  ? 'border-emerald-300 bg-emerald-50 cursor-wait'
+                  : 'border-zinc-200 hover:bg-emerald-50 hover:border-emerald-400 cursor-pointer'
+              }`}
+            >
+              <div className="w-12 h-12 rounded-full bg-emerald-50 flex items-center justify-center mb-3 border border-emerald-200">
+                {isUploading ? (
+                  <Loader2 className="w-6 h-6 text-emerald-600 animate-spin" />
+                ) : (
+                  <Upload className="w-6 h-6 text-emerald-600" />
+                )}
+              </div>
+              <p className="text-sm font-semibold text-zinc-900">
+                {isUploading ? "Enviando..." : "Enviar Arquivo"}
+              </p>
+              <p className="text-xs text-zinc-500 mt-1">PDF, TXT, DOCX (Máx 10MB)</p>
             </div>
-            <p className="text-sm font-semibold text-zinc-900">
-              {isUploading ? "A fazer upload e indexar documento..." : "Clique para enviar ou arraste um ficheiro"}
-            </p>
-            <p className="text-xs text-zinc-500 mt-1">PDF, TXT, DOCX, CSV (Máx 10MB)</p>
-          </div>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2"><RefreshCw className="w-5 h-5" /> Aprender do Site</CardTitle>
+            <CardDescription>A IA lerá o conteúdo do seu site oficial.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              <div className="border-2 border-dashed border-zinc-200 rounded-xl p-8 flex flex-col items-center justify-center text-center h-[180px] bg-zinc-50/30">
+                <div className="w-12 h-12 rounded-full bg-blue-50 flex items-center justify-center mb-3 border border-blue-100 text-blue-600">
+                  <RefreshCw className="w-6 h-6" />
+                </div>
+                <div className="flex gap-2 w-full max-w-xs">
+                  <input 
+                    id="website-url"
+                    type="url" 
+                    placeholder="https://suaempresa.com"
+                    className="flex-1 px-3 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 bg-white"
+                  />
+                  <Button 
+                    size="sm" 
+                    className="bg-emerald-600 hover:bg-emerald-700 h-9"
+                    onClick={async () => {
+                      const url = (document.getElementById('website-url') as HTMLInputElement).value;
+                      if (!url) return toast.error("Insira uma URL válida.");
+                      
+                      setIsLoading(true);
+                      try {
+                        const res = await fetch("/api/knowledge/scrape", {
+                          method: "POST",
+                          headers: { 
+                            "Content-Type": "application/json",
+                            "Authorization": `Bearer ${localStorage.getItem("token")}`
+                          },
+                          body: JSON.stringify({ url })
+                        });
+                        if (!res.ok) throw new Error("Falha ao ler o site");
+                        toast.success("✅ Site aprendido com sucesso!");
+                        loadFiles();
+                      } catch (err: any) {
+                        toast.error(err.message);
+                      } finally {
+                        setIsLoading(false);
+                      }
+                    }}
+                  >
+                    Aprender
+                  </Button>
+                </div>
+                <p className="text-[10px] text-zinc-400 mt-3">A IA indexará os textos principais do seu site.</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
 
       {/* Documents List */}
       <Card>

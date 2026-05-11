@@ -6,6 +6,7 @@ import pdfParse from 'pdf-parse';
 import mammoth from 'mammoth';
 import fs from 'fs';
 import { supabaseAdmin } from '../config/supabase';
+import axios from 'axios';
 
 const router = Router();
 
@@ -128,6 +129,55 @@ router.delete('/:id', requireAuth, async (req: AuthRequest, res) => {
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// /api/knowledge/scrape
+router.post('/scrape', requireAuth, async (req: AuthRequest, res) => {
+    try {
+        const { url, orgId: providedOrgId } = req.body;
+        const orgId = providedOrgId || req.user?.id;
+
+        if (!url) return res.status(400).json({ error: "URL é obrigatória." });
+
+        console.log(`[SCRAPE] Aprendendo com: ${url}`);
+
+        const response = await axios.get(url, {
+            headers: { 'User-Agent': 'Mozilla/5.0 (Orion Bot; AI Agent)' },
+            timeout: 10000
+        });
+
+        // Extração básica de texto do HTML (removendo scripts e styles)
+        let text = response.data
+            .replace(/<script\b[^>]*>([\s\S]*?)<\/script>/gim, "")
+            .replace(/<style\b[^>]*>([\s\S]*?)<\/style>/gim, "")
+            .replace(/<[^>]+>/g, " ")
+            .replace(/\s+/g, " ")
+            .trim();
+
+        if (text.length > 50000) text = text.substring(0, 50000); // Limite de 50k chars
+
+        const { data: dbFile, error } = await supabaseAdmin
+            .from('knowledge_files')
+            .upsert({
+                name: `Website: ${new URL(url).hostname}`,
+                size: text.length,
+                type: 'text/html',
+                path: url,
+                org_id: orgId,
+                processed: true,
+                content_summary: `Conteúdo extraído do site ${url}:\n\n${text}`
+            })
+            .select()
+            .single();
+
+        if (error) throw error;
+
+        res.json({ message: 'Website aprendido com sucesso!', file: dbFile });
+
+    } catch (error: any) {
+        console.error('[SCRAPE] Erro:', error.message);
+        res.status(500).json({ error: 'Falha ao ler o site.', details: error.message });
+    }
 });
 
 export default router;
