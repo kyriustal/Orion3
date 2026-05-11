@@ -3,7 +3,9 @@ import { requireAuth, AuthRequest } from '../middleware/auth';
 import { supabaseAdmin } from '../config/supabase';
 import { AIService } from '../services/ai.service';
 import { WhatsAppService } from '../services/whatsapp.service';
+import { AudioService } from '../services/audio.service';
 import axios from 'axios';
+import fs from 'fs';
 
 const router = Router();
 
@@ -126,8 +128,10 @@ async function triggerAIResponse(params: {
   incomingMessageId: string; // ID da mensagem original para o typing indicator
   media?: { base64: string; mimeType: string };
   referral?: any;
+  isAudio?: boolean; // Se a entrada original foi áudio
+  isVoiceAllowed?: boolean; // Se o plano permite voz
 }) {
-  const { orgId, fromNumber, phoneNumberId, accessToken, botName, message, incomingMessageId, media, referral } = params;
+  const { orgId, fromNumber, phoneNumberId, accessToken, botName, message, incomingMessageId, media, referral, isAudio, isVoiceAllowed } = params;
 
   const historyKey = `${orgId}:${fromNumber}`;
   if (aiPauses.has(historyKey) && aiPauses.get(historyKey)! > Date.now()) {
@@ -187,8 +191,26 @@ async function triggerAIResponse(params: {
       aiPauses.set(historyKey, Date.now() + (24 * 60 * 60 * 1000));
     }
 
-    // Enviar mensagem via WhatsApp
-    await WhatsAppService.sendTextMessage(phoneNumberId, fromNumber, replyText, accessToken);
+    // Se a entrada foi áudio E o plano permite, enviamos áudio de volta
+    if (isAudio && isVoiceAllowed) {
+      console.log(`[IA VOZ] Gerando áudio de resposta...`);
+      const audioPath = await AudioService.textToSpeech(replyText);
+      if (audioPath) {
+        const mediaId = await WhatsAppService.uploadMedia(audioPath, phoneNumberId, accessToken);
+        if (mediaId) {
+          await WhatsAppService.sendAudio(fromNumber, mediaId, phoneNumberId, accessToken);
+          console.log(`[IA VOZ] Áudio enviado com sucesso.`);
+        }
+        // Limpar arquivo temporário
+        if (fs.existsSync(audioPath)) fs.unlinkSync(audioPath);
+      } else {
+        // Fallback para texto se falhar o áudio
+        await WhatsAppService.sendTextMessage(phoneNumberId, fromNumber, replyText, accessToken);
+      }
+    } else {
+      await WhatsAppService.sendTextMessage(phoneNumberId, fromNumber, replyText, accessToken);
+    }
+
     console.log(`[IA PROATIVA] Resposta enviada com sucesso.`);
   } catch (err: any) {
     console.error(`[IA PROATIVA] Erro ao responder:`, err.message);
@@ -236,18 +258,41 @@ router.post('/webhook', async (req, res) => {
       .maybeSingle();
 
     if (dbError) console.error('[WEBHOOK] Erro ao buscar config no banco:', dbError.message);
-
+    
     if (!configData) {
       console.warn(`[WEBHOOK] Nenhuma configuração ativa encontrada para o Phone Number ID: ${phoneNumberId}. Verifique o Dashboard.`);
       return;
     }
     const { org_id: orgId, access_token: accessToken, display_name: botName } = configData;
+
+    // 2. Verificar Plano e Status VIP (Voz disponível no Plano Pro ou para VIPs)
+    const { data: subData } = await supabaseAdmin
+      .from('subscriptions')
+      .select('plan, is_vip, org_id')
+      .eq('org_id', orgId)
+      .maybeSingle();
+    
+    // Buscar email do dono para verificar VIP por email
+    const { data: orgData } = await supabaseAdmin
+      .from('organizations')
+      .select('owner_email')
+      .eq('id', orgId)
+      .maybeSingle();
+
+    const vipEmails = (process.env.VIP_EMAILS || '').split(',').map(e => e.trim().toLowerCase());
+    const isVipEmail = orgData?.owner_email && vipEmails.includes(orgData.owner_email.toLowerCase());
+    
+    const currentPlan = subData?.plan || 'none';
+    const isVip = (subData?.is_vip === true) || isVipEmail;
+    const isVoiceAllowed = currentPlan === 'pro' || currentPlan === 'enterprise' || isVip;
+
     const historyKey = `${orgId}:${fromNumber}`;
 
     // 2. Detectar Mensagem (Simplificado para garantir resposta)
     let userText = "";
     let media = undefined;
 
+    let isAudioMessage = false;
     if (incomingMsg.type === 'text') {
       userText = incomingMsg.text?.body;
     } else if (['image', 'video', 'audio', 'document'].includes(incomingMsg.type)) {
@@ -258,6 +303,20 @@ router.post('/webhook', async (req, res) => {
       const mediaData = await WhatsAppService.getMedia(mediaId, accessToken);
       if (mediaData) {
         media = mediaData;
+        
+        // Se for áudio, transcrever para texto para a IA entender
+        if (incomingMsg.type === 'audio' && isVoiceAllowed) {
+          console.log(`[IA VOZ] Transcrevendo áudio...`);
+          const transcript = await AudioService.speechToTextFromBase64(mediaData.base64, mediaData.mimeType);
+          if (transcript) {
+            userText = transcript;
+            isAudioMessage = true;
+            console.log(`[IA VOZ] Transcrição: ${transcript}`);
+          }
+        } else if (incomingMsg.type === 'audio' && !isVoiceAllowed) {
+          console.log(`[IA VOZ] Cliente tentou usar áudio, mas o plano não permite.`);
+          userText = "(Mensagem de Áudio Ignorada - Upgrade de Plano Necessário)";
+        }
       }
     }
 
@@ -287,7 +346,9 @@ router.post('/webhook', async (req, res) => {
       message: dbText, 
       incomingMessageId: messageId, // Passando o ID para os 3 pontinhos
       media, 
-      referral 
+      referral,
+      isAudio: isAudioMessage,
+      isVoiceAllowed
     });
 
   } catch (error: any) {

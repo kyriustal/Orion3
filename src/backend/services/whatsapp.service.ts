@@ -1,4 +1,5 @@
 import axios from 'axios';
+import fs from 'fs';
 
 /**
  * Serviço para gerenciar comunicação com a API do WhatsApp (Meta)
@@ -96,6 +97,63 @@ export class WhatsAppService {
         } catch (error: any) {
             // Silencioso se falhar, pois é um recurso estético
             console.warn('[WHATSAPP] Falha ao enviar typing indicator:', error.response?.data || error.message);
+        }
+    /**
+     * Faz upload de uma mídia para os servidores da Meta
+     * @returns ID da mídia carregada
+     */
+    static async uploadMedia(filePath: string, phoneNumberId: string, accessToken?: string): Promise<string | null> {
+        const token = accessToken || process.env.META_ACCESS_TOKEN;
+        if (!token) return null;
+
+        try {
+            const formData = new FormData();
+            const fileStream = fs.createReadStream(filePath);
+            // @ts-ignore
+            formData.append('file', fileStream);
+            formData.append('type', 'audio/mpeg');
+            formData.append('messaging_product', 'whatsapp');
+
+            const url = `https://graph.facebook.com/v21.0/${phoneNumberId}/media`;
+            const response = await axios.post(url, formData, {
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'multipart/form-data'
+                }
+            });
+
+            return response.data.id;
+        } catch (error: any) {
+            console.error('[WHATSAPP] Erro no upload de mídia:', error.response?.data || error.message);
+            return null;
+        }
+    }
+
+    /**
+     * Envia uma mensagem de áudio
+     */
+    static async sendAudio(toNumber: string, mediaId: string, phoneNumberId: string, accessToken?: string) {
+        const token = accessToken || process.env.META_ACCESS_TOKEN;
+        if (!token) return;
+
+        try {
+            const url = `https://graph.facebook.com/v21.0/${phoneNumberId}/messages`;
+            await axios.post(url, {
+                messaging_product: "whatsapp",
+                recipient_type: "individual",
+                to: toNumber,
+                type: "audio",
+                audio: {
+                    id: mediaId
+                }
+            }, {
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+        } catch (error: any) {
+            console.error('[WHATSAPP] Erro ao enviar áudio:', error.response?.data || error.message);
         }
     }
 }
