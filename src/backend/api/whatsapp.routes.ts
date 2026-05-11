@@ -253,7 +253,7 @@ async function triggerAIResponse(params: {
     // Se a IA pedir transferência, pausamos por 24h
     if (aiResult.transfer) {
       const historyKey = `${orgId}:${fromNumber}`;
-      aiPauses.set(historyKey, Date.now() + (24 * 60 * 60 * 1000));
+      aiPauses.set(historyKey, Date.now() + (5 * 60 * 1000)); // Pausa de 5 minutos
     }
 
     // Se a entrada foi áudio E o plano permite, enviamos áudio de volta
@@ -300,6 +300,37 @@ router.post('/webhook', async (req, res) => {
 
     const incomingMsg = messages[0];
     const messageId = incomingMsg.id;
+
+    // --- LÓGICA DE COEXISTÊNCIA (ECHO DETECTION) ---
+    // Se a mensagem tem o campo 'from' igual ao nosso número ou se for um echo da Meta
+    // significa que VOCÊ (humano) enviou a mensagem por fora (ex: Meta Business Suite).
+    if (incomingMsg.from === metadata?.display_phone_number || incomingMsg.type === 'echo') {
+      const recipientNumber = incomingMsg.to; // Para quem o humano enviou
+      if (recipientNumber) {
+        // Buscar org_id para este phoneNumberId
+        const { data: config } = await supabaseAdmin
+          .from('whatsapp_config')
+          .select('org_id')
+          .eq('phone_number_id', metadata?.phone_number_id)
+          .maybeSingle();
+
+        if (config) {
+          const historyKey = `${config.org_id}:${recipientNumber}`;
+          aiPauses.set(historyKey, Date.now() + (5 * 60 * 1000)); // Pausa de 5 minutos
+          console.log(`[COEXISTÊNCIA] Humano respondeu para ${recipientNumber}. IA pausada por 5 min.`);
+          
+          // Opcional: Persistir no histórico que foi uma resposta humana
+          await supabaseAdmin.from('conversation_history').insert({
+            org_id: config.org_id,
+            customer_phone: recipientNumber,
+            sender: 'human',
+            text: incomingMsg.text?.body || "(Mídia enviada por humano)"
+          });
+        }
+      }
+      return res.sendStatus(200); // Interrompe aqui, não aciona a IA
+    }
+    // ----------------------------------------------
 
     // Evitar processamento duplicado
     if (processedMessages.has(messageId)) {
