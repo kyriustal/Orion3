@@ -265,25 +265,32 @@ router.post('/webhook', async (req, res) => {
     }
     const { org_id: orgId, access_token: accessToken, display_name: botName } = configData;
 
-    // 2. Verificar Plano e Status VIP (Voz disponível no Plano Pro ou para VIPs)
+    // 2. Verificar Plano e Status VIP (Voz disponível no Plano Pro ou para VIPs na tabela dedicada)
     const { data: subData } = await supabaseAdmin
       .from('subscriptions')
-      .select('plan, is_vip, org_id')
+      .select('plan')
       .eq('org_id', orgId)
       .maybeSingle();
     
-    // Buscar email do dono para verificar VIP por email
     const { data: orgData } = await supabaseAdmin
       .from('organizations')
       .select('owner_email')
       .eq('id', orgId)
       .maybeSingle();
 
-    const vipEmails = (process.env.VIP_EMAILS || '').split(',').map(e => e.trim().toLowerCase());
-    const isVipEmail = orgData?.owner_email && vipEmails.includes(orgData.owner_email.toLowerCase());
-    
+    // Verificação na nova tabela de VIPs
+    let isVip = false;
+    if (orgData?.owner_email) {
+      const { data: vipEntry } = await supabaseAdmin
+        .from('vips')
+        .select('id')
+        .eq('email', orgData.owner_email.toLowerCase())
+        .maybeSingle();
+      
+      if (vipEntry) isVip = true;
+    }
+
     const currentPlan = subData?.plan || 'none';
-    const isVip = (subData?.is_vip === true) || isVipEmail;
     const isVoiceAllowed = currentPlan === 'pro' || currentPlan === 'enterprise' || isVip;
 
     const historyKey = `${orgId}:${fromNumber}`;

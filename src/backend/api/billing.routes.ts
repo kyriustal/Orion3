@@ -194,4 +194,46 @@ router.post('/webhook/proxypay', async (req, res) => {
     }
 });
 
+// GET /api/billing/vips - Listar VIPs (Admin)
+router.get('/vips', requireAuth, async (req: AuthRequest, res) => {
+    try {
+        const { data, error } = await supabaseAdmin.from('vips').select('*').order('created_at', { ascending: false });
+        if (error) throw error;
+        res.json(data);
+    } catch (err: any) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// POST /api/billing/vips - Adicionar VIP
+router.post('/vips', requireAuth, async (req: AuthRequest, res) => {
+    try {
+        const { email, reason } = req.body;
+        if (!email) return res.status(400).json({ error: 'Email é obrigatório.' });
+
+        const { data, error } = await supabaseAdmin
+            .from('vips')
+            .upsert({ email: email.toLowerCase(), reason })
+            .select()
+            .single();
+
+        if (error) throw error;
+        res.json({ message: 'VIP adicionado com sucesso!', vip: data });
+    } catch (err: any) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// DELETE /api/billing/vips/:id - Remover VIP
+router.delete('/vips/:id', requireAuth, async (req: AuthRequest, res) => {
+    try {
+        const { id } = req.params;
+        const { error } = await supabaseAdmin.from('vips').delete().eq('id', id);
+        if (error) throw error;
+        res.json({ message: 'VIP removido com sucesso.' });
+    } catch (err: any) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 export default router;

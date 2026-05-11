@@ -98,6 +98,8 @@ export class WhatsAppService {
             // Silencioso se falhar, pois é um recurso estético
             console.warn('[WHATSAPP] Falha ao enviar typing indicator:', error.response?.data || error.message);
         }
+    }
+
     /**
      * Faz upload de uma mídia para os servidores da Meta
      * @returns ID da mídia carregada

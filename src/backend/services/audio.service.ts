@@ -74,6 +74,8 @@ export class AudioService {
             console.error('[AUDIO SERVICE] Erro na transcrição:', error.response?.data || error.message);
             return null;
         }
+    }
+
     /**
      * Transcreve um áudio a partir de base64
      */
