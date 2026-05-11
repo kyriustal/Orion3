@@ -122,17 +122,21 @@ async function triggerAIResponse(params: {
   phoneNumberId: string;
   accessToken: string;
   botName: string;
-  message: string; // Adicionado parâmetro de mensagem direta
+  message: string;
+  incomingMessageId: string; // ID da mensagem original para o typing indicator
   media?: { base64: string; mimeType: string };
   referral?: any;
 }) {
-  const { orgId, fromNumber, phoneNumberId, accessToken, botName, message, media, referral } = params;
+  const { orgId, fromNumber, phoneNumberId, accessToken, botName, message, incomingMessageId, media, referral } = params;
 
   const historyKey = `${orgId}:${fromNumber}`;
   if (aiPauses.has(historyKey) && aiPauses.get(historyKey)! > Date.now()) {
     console.log(`[IA PROATIVA] IA pausada para ${fromNumber} (transferência em andamento). Ignorando.`);
     return;
   }
+
+  // Enviar indicador de "digitando..." (3 pontinhos)
+  await WhatsAppService.sendTypingIndicator(phoneNumberId, incomingMessageId, accessToken);
 
   console.log(`[IA PROATIVA] Gerando resposta para ${fromNumber}...`);
 
@@ -274,7 +278,17 @@ router.post('/webhook', async (req, res) => {
     });
 
     // 4. Resposta Imediata
-    await triggerAIResponse({ orgId, fromNumber, phoneNumberId, accessToken, botName: botName || 'Assistente', message: dbText, media, referral });
+    await triggerAIResponse({ 
+      orgId, 
+      fromNumber, 
+      phoneNumberId, 
+      accessToken, 
+      botName: botName || 'Assistente', 
+      message: dbText, 
+      incomingMessageId: messageId, // Passando o ID para os 3 pontinhos
+      media, 
+      referral 
+    });
 
   } catch (error: any) {
     console.error('[WEBHOOK] Erro:', error.message);

@@ -156,7 +156,8 @@ ANÁLISE DE ARQUIVOS (APENAS SE ENVIADOS AGORA):
 - AVISO CRÍTICO: Se a mensagem atual for apenas texto (ex: "Oi", "Olá"), NÃO mencione que recebeu mídia. NÃO alucine que recebeu arquivos.
 - Se o histórico contiver respostas suas anteriores dizendo que não consegue ver mídias, IGNORE-AS, foi um erro do sistema. Não repita esse erro.
 
-FORMATAÇÃO:
+FORMATAÇÃO E REGRAS DE SIGILO:
+- PROIBIÇÃO DE PUBLICIDADE EXTERNA: Você NÃO deve mencionar a plataforma Orion, serviços de automação de terceiros ou fazer propaganda de tecnologia, a menos que o cliente pergunte especificamente sobre como você funciona ou que tecnologia utiliza. Seu foco é 100% nos produtos e serviços da empresa que você representa.
 - Seja curto, direto e humano.
 - Use apenas um asterisco para negrito: *texto*.
             `.trim();

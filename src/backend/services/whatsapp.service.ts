@@ -69,5 +69,34 @@ export class WhatsAppService {
             return null;
         }
     }
+    /**
+     * Envia o indicador de "digitando..." (typing indicator)
+     */
+    static async sendTypingIndicator(phoneNumberId: string, messageId: string, accessToken?: string) {
+        const token = accessToken || process.env.META_ACCESS_TOKEN;
+        
+        if (!token) return;
+
+        try {
+            const url = `https://graph.facebook.com/v21.0/${phoneNumberId}/messages`;
+            
+            await axios.post(url, {
+                messaging_product: "whatsapp",
+                status: "read",
+                message_id: messageId,
+                typing_indicator: {
+                    type: "text"
+                }
+            }, {
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+        } catch (error: any) {
+            // Silencioso se falhar, pois é um recurso estético
+            console.warn('[WHATSAPP] Falha ao enviar typing indicator:', error.response?.data || error.message);
+        }
+    }
 }
 

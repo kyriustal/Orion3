@@ -153,15 +153,15 @@ export function OrionWebChat() {
 
             {/* Janela de Chat */}
             {isOpen && (
-                <div className="fixed bottom-0 right-0 sm:bottom-6 sm:right-6 w-full h-[100dvh] sm:w-[380px] sm:h-[600px] bg-white sm:rounded-2xl shadow-2xl flex flex-col z-[110] border-t sm:border border-zinc-200 overflow-hidden animate-in slide-in-from-bottom-5">
+                <div className="fixed inset-0 sm:inset-auto sm:bottom-6 sm:right-6 w-full h-full sm:w-[380px] sm:h-[600px] bg-white sm:rounded-2xl shadow-2xl flex flex-col z-[110] sm:border border-zinc-200 overflow-hidden animate-in slide-in-from-bottom-5">
                     {/* Header */}
-                    <div className="bg-emerald-600 p-4 text-white flex items-center justify-between shrink-0 shadow-sm">
+                    <div className="bg-emerald-600 p-4 text-white flex items-center justify-between shrink-0 shadow-sm pt-safe sm:pt-4">
                         <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center">
+                            <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center shrink-0">
                                 <Bot className="w-6 h-6 text-white" />
                             </div>
-                            <div>
-                                <h3 className="font-bold leading-tight">Orion Assistant</h3>
+                            <div className="min-w-0">
+                                <h3 className="font-bold leading-tight truncate">Orion Assistant</h3>
                                 <div className="flex items-center gap-1.5">
                                     <span className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse"></span>
                                     <span className="text-[11px] text-emerald-100 italic">Disponível agora</span>
@@ -183,7 +183,7 @@ export function OrionWebChat() {
                                     ? 'bg-emerald-600 text-white rounded-tr-sm'
                                     : 'bg-white text-zinc-800 border border-zinc-100 rounded-tl-sm'
                                     }`}>
-                                    <div className="prose prose-sm max-w-none prose-p:leading-relaxed prose-a:text-emerald-600">
+                                    <div className="prose prose-sm max-w-none prose-p:leading-relaxed prose-a:text-emerald-600 break-words">
                                         <ReactMarkdown>{msg.text}</ReactMarkdown>
                                     </div>
                                     <div className={`text-[10px] mt-1 text-right ${msg.sender === 'user' ? 'text-emerald-200' : 'text-zinc-400'}`}>
@@ -206,7 +206,7 @@ export function OrionWebChat() {
                     </div>
 
                     {/* Footer Input */}
-                    <div className="p-4 bg-white border-t border-zinc-100 shrink-0 pb-safe">
+                    <div className="p-4 bg-white border-t border-zinc-100 shrink-0 pb-safe sm:pb-4">
                         <div className="flex gap-2">
                             <Input
                                 value={input}
