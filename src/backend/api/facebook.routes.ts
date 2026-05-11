@@ -99,11 +99,11 @@ router.post('/webhook', async (req, res) => {
         .from('conversation_history')
         .select('sender, text')
         .eq('org_id', orgId)
-        .eq('customer_phone', senderId) // Usamos o senderId como "phone" para unificar o histórico
-        .order('created_at', { ascending: true })
-        .limit(10);
+        .eq('customer_phone', senderId)
+        .order('created_at', { ascending: false })
+        .limit(20);
 
-      const history = (dbHistory || []).map(h => ({ sender: h.sender, text: h.text }));
+      const history = (dbHistory || []).reverse().map(h => ({ sender: h.sender, text: h.text }));
 
       // 3. Persistir msg do usuário
       await supabaseAdmin.from('conversation_history').insert({

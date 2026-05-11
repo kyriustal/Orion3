@@ -219,10 +219,10 @@ async function triggerAIResponse(params: {
       .eq('org_id', orgId)
       .eq('customer_phone', fromNumber)
       .gt('created_at', last24h)
-      .order('created_at', { ascending: true })
+      .order('created_at', { ascending: false })
       .limit(20);
 
-    const history = (dbHistory || []).map(h => ({ 
+    const history = (dbHistory || []).reverse().map(h => ({ 
       sender: h.sender, 
       text: h.text 
     }));

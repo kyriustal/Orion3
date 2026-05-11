@@ -228,7 +228,7 @@ FORMATAÇÃO E REGRAS DE SIGILO:
         while (retries > 0) {
             let apiKey = keys[currentKeyIdx];
             try {
-                const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+                const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
                 const response = await fetch(url, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -274,7 +274,7 @@ FORMATAÇÃO E REGRAS DE SIGILO:
                     console.error('[AI SERVICE] Erro final no Gemini:', error.message);
                     // Tentar OpenAI como última instância (mesmo que possa falhar se não houver saldo)
                     try {
-                        return await this.generateOpenAIFallback(message, systemPrompt, history, media);
+                        return await this.generateOpenAIFallback(message, systemPrompt, cleanHistory, media);
                     } catch (fallbackError: any) {
                         throw new Error(`Ambos os motores falharam. Gemini: ${error.message} | OpenAI: ${fallbackError.message}`);
                     }
