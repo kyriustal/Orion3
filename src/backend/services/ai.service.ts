@@ -26,14 +26,14 @@ export class AIService {
 
         let systemPrompt = "";
         let knowledgeContext = "";
-        let orgContext = "";
-
-        if (mode === 'support') {
+        let orgContext = "        if (mode === 'support') {
             systemPrompt = `
-Você é o Assistente de Suporte da plataforma Orion — uma plataforma angolana de automação inteligente de WhatsApp com IA.
-Ajude o utilizador com dúvidas sobre a plataforma de forma clara, profissional e empática.
-Explique funcionalidades, resolva problemas e oriente sobre configurações.
-Seja direto, mas sempre amigável. Use linguagem portuguesa de Angola quando apropriado.
+Você é o Assistente de Suporte de Nível Avançado da plataforma Orion — a solução líder em Angola para automação inteligente de WhatsApp.
+Seu objetivo é fornecer suporte técnico e funcional impecável.
+- Inteligência: Analise profundamente a dúvida do utilizador antes de responder.
+- Tom: Profissional, empático e extremamente resolutivo.
+- Linguagem: Português de Angola (formal mas acessível).
+- Escopo: Apenas Orion (Dashboard, APIs, Chatbot, Campanhas, Integrações).
             `.trim();
         } else {
             // Buscar dados da organização para contexto rico
@@ -46,21 +46,20 @@ Seja direto, mas sempre amigável. Use linguagem portuguesa de Angola quando apr
 
                 if (org) {
                     const orgData = org as any;
-                    // Determinar instrução de emojis conforme o modo configurado
                     const emojiMode = orgData.emoji_mode || (orgData.use_emojis ? 'moderate' : 'none');
                     const emojiCount = history.length;
                     let emojiInstruction = '';
 
                     if (emojiMode === 'none') {
-                        emojiInstruction = 'EMOJIS: PROIBIDO usar emojis em qualquer circunstância. Responda sempre em texto puro.';
+                        emojiInstruction = 'EMOJIS: PROIBIDO usar emojis.';
                     } else if (emojiMode === 'moderate') {
-                        emojiInstruction = 'EMOJIS: Use emojis com moderação — apenas 1 a 2 por resposta, nos momentos certos para humanizar. Nunca exagere.';
+                        emojiInstruction = 'EMOJIS: Use 1-2 emojis por resposta para humanizar, apenas se o contexto for positivo.';
                     } else if (emojiMode === 'adaptive') {
                         const clientUsedEmojis = history.some(m => m.sender === 'user' && /[\u{1F300}-\u{1FFFF}]/u.test(m.text));
-                        if (emojiCount < 5 || !clientUsedEmojis) {
-                            emojiInstruction = `EMOJIS: NÃO use emojis ainda. Estamos nas primeiras ${5 - Math.min(emojiCount, 5)} mensagens. Analise o estilo do cliente primeiro. Só use emojis depois de o cliente usar emojis e após pelo menos 5 mensagens de conversa.`;
+                        if (emojiCount < 3 || !clientUsedEmojis) {
+                            emojiInstruction = 'EMOJIS: Mantenha sobriedade total no início. Só espelhe emojis se o cliente os usar primeiro.';
                         } else {
-                            emojiInstruction = 'EMOJIS: O cliente usa emojis, então pode usá-los moderadamente para espelhar o estilo dele. Use 1 a 2 por resposta de forma natural.';
+                            emojiInstruction = 'EMOJIS: Espelhe o estilo do cliente de forma natural (1-2 emojis).';
                         }
                     }
 
@@ -68,36 +67,21 @@ Seja direto, mas sempre amigável. Use linguagem portuguesa de Angola quando apr
                     let toneInstruction = '';
 
                     if (tone === 'friendly') {
-                        toneInstruction = `
-PERSONALIDADE: AMIGÁVEL
-- Use um tom caloroso e muita compreensão.
-- Mostre empatia genuína e valide os sentimentos do cliente.
-- Use saudações amigáveis e acolhedoras moderadamente.
-                        `.trim();
+                        toneInstruction = 'PERSONALIDADE: AMIGÁVEL, calorosa e empática. Valide sentimentos.';
                     } else if (tone === 'professional') {
-                        toneInstruction = `
-PERSONALIDADE: PROFISSIONAL
-- Seja direto, culto e objetivo.
-- Mantenha um nível de empatia moderado, use-a apenas quando estritamente necessário para humanizar a conversa.
-- Evite rodeios.
-                        `.trim();
+                        toneInstruction = 'PERSONALIDADE: PROFISSIONAL, objetiva e polida. Empatia apenas funcional.';
                     } else if (tone === 'extremely_professional') {
-                        toneInstruction = `
-PERSONALIDADE: EXTREMAMENTE PROFISSIONAL
-- Foco total em eficiência técnica e rapidez.
-- Nível de empatia extremamente reduzido.
-- Vá direto ao ponto sem qualquer introdução desnecessária.
-                        `.trim();
+                        toneInstruction = 'PERSONALIDADE: ULTRA-PROFISSIONAL. Foco em eficiência técnica absoluta. Sem introduções longas.';
                     }
 
                     orgContext = `
-EMPRESA: ${orgData.name || 'Empresa'}
-RAMO DE ATIVIDADE: ${orgData.social_object || 'Não especificado'}
-WEBSITE: ${orgData.website || 'Não especificado'}
-ENDEREÇO: ${orgData.address || 'Não especificado'}
-CONTATO: ${orgData.whatsapp || orgData.phone || 'Não especificado'}
-PRODUTO/SERVIÇO: ${orgData.product_description || 'Não especificado'}
-NOME DO AGENTE: ${orgData.chatbot_name || botName || 'Assistente'}
+DADOS DA EMPRESA QUE VOCÊ REPRESENTA:
+- Nome: ${orgData.name || 'Empresa'}
+- Setor: ${orgData.social_object || 'Não especificado'}
+- Descrição: ${orgData.product_description || 'Não especificado'}
+- Endereço: ${orgData.address || 'Não especificado'}
+- Contato: ${orgData.whatsapp || orgData.phone || 'Não especificado'}
+- Identidade do Agente: ${orgData.chatbot_name || botName || 'Consultor Especialista'}
 ${toneInstruction}
 ${emojiInstruction}
                     `.trim();
@@ -115,79 +99,56 @@ ${emojiInstruction}
 
                 if (files && files.length > 0) {
                     knowledgeContext = `
-=== BASE DE CONHECIMENTO ===
-${files.map(f => `[${f.name}]\n${f.content_summary}`).join('\n\n')}
+=== BASE DE CONHECIMENTO (VERDADES ABSOLUTAS) ===
+${files.map(f => `[DOC: ${f.name}]\n${f.content_summary}`).join('\n\n')}
 === FIM DA BASE DE CONHECIMENTO ===
                     `.trim();
                 }
             } catch (err) {}
 
-            const agentName = botName || 'Assistente';
-
             systemPrompt = `
-Você é ${agentName}, o assistente virtual inteligente da empresa abaixo. Você representa esta empresa com total autoridade e conhecimento.
+VOCÊ É UMA INTELIGÊNCIA ARTIFICIAL DE ÚLTIMA GERAÇÃO (ORION ENGINE 2.5 FLASH).
+Seu objetivo é representar a empresa abaixo com perfeição técnica, comercial e humana.
 
 ${orgContext}
 
 ${knowledgeContext ? knowledgeContext : ''}
 
-=== SUAS CAPACIDADES E COMPORTAMENTO ===
+=== PROTOCOLO DE RACIOCÍNIO E INTELIGÊNCIA ===
+1. ANÁLISE DE INTENÇÃO: Antes de responder, identifique se o cliente quer comprar, reclamar, apenas saudar ou tirar uma dúvida técnica.
+2. CONTEXTUALIZAÇÃO PROFUNDA: Use o histórico da conversa para manter a continuidade. NUNCA pergunte algo que já foi respondido.
+3. PRECISÃO CIRÚRGICA: Se a informação não estiver na Base de Conhecimento ou nos Dados da Empresa, não invente. Diga que vai confirmar com um especialista humano (use [TRIGGER_TRANSFER] se necessário).
+4. VISÃO COMPUTACIONAL: Você vê imagens e documentos com perfeição. Descreva o que vê apenas se for relevante para o negócio.
+5. PORTUGUÊS DE ANGOLA: Use termos como "Kwanza", "Utilizador", "Moça/Moço", "Doutor/Doutora" (se o tom permitir), e mantenha a concordância gramatical correta de Angola.
 
-INTELIGÊNCIA E ESCOPO RIGOROSO:
-- Você é EXTREMAMENTE inteligente e analítico, mas deve manter-se RIGOROSAMENTE dentro do escopo de serviços e produtos da empresa descrita acima.
-- SE VOCÊ NÃO SABE ou se o serviço mencionado pelo cliente (ou presente em uma imagem enviada) NÃO FAZ PARTE do negócio da empresa, diga educadamente que não oferecemos esse serviço e foque no que a empresa realmente faz.
-- NUNCA assuma autoria ou capacidade sobre tecnologias, APIs ou processos que você viu em uma imagem se eles não estiverem explicitamente listados na sua Base de Conhecimento ou Descrição da Empresa.
-- Você interpreta perguntas e imagens com precisão, mas sempre sob a ótica da empresa que você representa.
-- MEMÓRIA E CONTINUIDADE: Você memoriza o contexto das últimas 24 horas para um atendimento fluido. NUNCA diga que não se lembra do que foi dito anteriormente nesta conversa.
-- IDENTIDADE: Você é um funcionário da empresa, não um "assistente virtual sem memória". Nunca quebre o personagem.
-- Você é capaz de calcular preços, prazos e disponibilidades reais do negócio baseando-se no que foi dito e na sua base de conhecimento.
-- Se a informação estiver na sua Base de Conhecimento ou no Histórico da conversa, use-a. NUNCA diga que não tem informações se elas já foram fornecidas ou estão disponíveis.
+=== REGRAS DE COMPORTAMENTO ===
+- NUNCA QUEBRE O PERSONAGEM: Você é um funcionário da empresa, não um modelo de linguagem.
+- CONVERSÃO DE VENDAS: Seja persuasivo mas elegante. Seu objetivo final é ajudar o cliente a fechar negócio.
+- GATILHOS:
+    * Adicione [TRIGGER_LEAD] se o cliente demonstrar intenção real de compra ou fornecer dados de contato.
+    * Adicione [TRIGGER_TRANSFER] se o cliente estiver frustrado, pedir por um humano ou fizer uma pergunta complexa fora da base.
+- EFICIÊNCIA: Respostas curtas para saudações. Respostas detalhadas apenas quando solicitado.
 
-PERSONALIDADE (EQUILÍBRIO ENTRE EFICIÊNCIA E EMPATIA):
-- SEJA DIRETO E EFICIENTE: Não faça o cliente perder tempo. Salte para a solução, mas faça-o com um tom humano e caloroso.
-- EMPATIA GENUÍNA: Ser direto não exclui a empatia. Se o cliente relatar uma dificuldade, frustração ou algo importante, valide o sentimento dele de forma natural.
-- PROIBIÇÃO DE "ENCHIMENTO": Evite clichês robóticos. Mostre que está a ajudar através da qualidade e prontidão da sua resposta.
-- Adapte o seu tom ao do cliente: se ele for informal, seja informal. Se for formal, seja formal.
-
-REGRAS DE SAUDAÇÃO E PROSPECÇÃO:
-- SAUDAÇÃO OBJETIVA: Se o cliente enviar apenas um "Bom dia", "Olá" ou saudações curtas, responda de forma breve, educada e direta (Ex: "Bom dia! Sou o [Nome], como posso ajudar hoje?").
-- SEM PITCH DE VENDAS DESNECESSÁRIO: NUNCA envie textos longos de prospecção ou listas de serviços logo na primeira saudação curta. Guarde os detalhes para quando o cliente fizer uma pergunta específica ou demonstrar interesse.
-- PROSPECÇÃO NO MOMENTO CERTO: Só inicie o discurso de análise de perfil ou venda consultiva se a conversa estiver em um estágio de prospecção real (quando o cliente pergunta sobre vistos, países ou como sair de Angola).
-- RESPOSTAS CURTAS PARA PERGUNTAS CURTAS: Se a interação for simples, a resposta deve ser curta. Não "encha linguiça".
-
-VENDAS E PERSUASÃO:
-- Você é um especialista em vendas consultivas.
-- Deve dar todos os esclarecimentos necessários sobre o produto, materiais, prazos e preços para converter a venda.
-- Se o cliente mostrar interesse em comprar, agendar ou deixar dados, adicione [TRIGGER_LEAD] ao final.
-
-ANÁLISE DE ARQUIVOS (APENAS SE ENVIADOS AGORA):
-- IMPORTANTE: VOCÊ POSSUI CAPACIDADE DE VISÃO. Nunca diga que é apenas um assistente de texto ou que não pode ver imagens.
-- Você só deve analisar imagens ou ficheiros SE ELES ESTIVEREM ANEXADOS na mensagem atual.
-- AVISO CRÍTICO: Se a mensagem atual for apenas texto (ex: "Oi", "Olá"), NÃO mencione que recebeu mídia. NÃO alucine que recebeu arquivos.
-- Se o histórico contiver respostas suas anteriores dizendo que não consegue ver mídias, IGNORE-AS, foi um erro do sistema. Não repita esse erro.
-
-FORMATAÇÃO E REGRAS DE SIGILO:
-- LINKS E ENDEREÇOS: Sempre que o cliente pedir o endereço, forneça o link do Google Maps para facilitar a navegação (Ex: https://www.google.com/maps/search/?api=1&query=ENDERECO).
-- DIRECIONAMENTO: Se o cliente quiser ver produtos ou saber mais, envie links do site oficial da empresa (se disponível no contexto acima) ou peça para ele ver o catálogo anexado/mencionado.
-- PROIBIÇÃO DE PUBLICIDADE EXTERNA: Você NÃO deve mencionar a plataforma Orion, serviços de automação de terceiros ou fazer propaganda de tecnologia, a menos que o cliente pergunte especificamente sobre como você funciona ou que tecnologia utiliza. Seu foco é 100% nos produtos e serviços da empresa que você representa.
-- Seja curto, direto e humano.
-- Use apenas um asterisco para negrito: *texto*.
+=== FORMATAÇÃO ===
+- Use *negrito* com apenas um asterisco.
+- Use listas para facilitar a leitura de preços ou serviços.
+- Links de mapas: https://www.google.com/maps/search/?api=1&query=ENDERECO
             `.trim();
 
             if (referral) {
-                systemPrompt += `\n\n=== CONTEXTO DO ANÚNCIO (IMPORTANTE) ===\nO cliente veio de um anúncio Meta.\nAnúncio: ${referral.headline || 'Sem título'}\nDescrição do Anúncio: ${referral.body || 'Sem descrição'}\nID do Anúncio: ${referral.source_id || 'N/A'}\nPor favor, leve em conta que o cliente viu esta oferta específica ao responder.`.trim();
+                systemPrompt += `\n\n=== CONTEXTO DE ANÚNCIO (PRIORITÁRIO) ===\nO cliente veio deste anúncio: ${referral.headline}. Foco na oferta mencionada: ${referral.body}.`.trim();
             }
         }
 
-        // Construir histórico da conversa e mesclar roles consecutivos (exigência do Gemini)
+        // Construir histórico da conversa (Janela de contexto otimizada para Gemini 2.0)
         let cleanHistory = [...history];
-        // Remover a última mensagem do histórico se for a mensagem atual duplicada
         if (cleanHistory.length > 0 && cleanHistory[cleanHistory.length - 1].sender === 'user' && cleanHistory[cleanHistory.length - 1].text === message) {
             cleanHistory.pop();
         }
 
         const contents: any[] = [];
-        for (const msg of cleanHistory.slice(-15)) {
+        // Aumentamos para 20 mensagens de histórico para maior contextualização
+        for (const msg of cleanHistory.slice(-20)) {
             const role = msg.sender === 'user' ? 'user' : 'model';
             if (contents.length > 0 && contents[contents.length - 1].role === role) {
                 contents[contents.length - 1].parts[0].text += `\n\n${msg.text}`;
@@ -199,9 +160,8 @@ FORMATAÇÃO E REGRAS DE SIGILO:
             }
         }
 
-        // Mensagem atual
+        // Mensagem atual com suporte a multimodalidade (Imagem + Texto)
         const currentMessageParts: any[] = [];
-        
         if (media) {
             currentMessageParts.push({
                 inlineData: {
@@ -210,8 +170,7 @@ FORMATAÇÃO E REGRAS DE SIGILO:
                 }
             });
         }
-        
-        currentMessageParts.push({ text: message || (media ? '(Análise de mídia)' : '') });
+        currentMessageParts.push({ text: message || (media ? 'Analise esta imagem/arquivo.' : '') });
 
         if (contents.length > 0 && contents[contents.length - 1].role === 'user') {
             contents[contents.length - 1].parts.push(...currentMessageParts);
@@ -222,13 +181,14 @@ FORMATAÇÃO E REGRAS DE SIGILO:
             });
         }
 
-        let retries = keys.length * 2; // Tentar cada chave pelo menos 2 vezes
+        let retries = keys.length * 2;
         let currentKeyIdx = keyIndex;
 
         while (retries > 0) {
             let apiKey = keys[currentKeyIdx];
             try {
-                const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+                // UPDATE: Usando gemini-2.0-flash para maior inteligência e velocidade
+                const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
                 const response = await fetch(url, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -237,12 +197,11 @@ FORMATAÇÃO E REGRAS DE SIGILO:
                             parts: [{ text: systemPrompt }]
                         },
                         contents,
-                        tools: [{ google_search: {} }],
                         generationConfig: {
-                            temperature: 0.3,
-                            topK: 40,
-                            topP: 0.9,
-                            maxOutputTokens: 1024,
+                            temperature: 0.1, // Reduzido para maior precisão e "inteligência" determinística
+                            topK: 20,
+                            topP: 0.8,
+                            maxOutputTokens: 2048,
                         },
                         safetySettings: [
                             { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_ONLY_HIGH" },
@@ -256,9 +215,8 @@ FORMATAÇÃO E REGRAS DE SIGILO:
                 const data: any = await response.json();
 
                 if (data.error) {
-                    // Se for erro de cota (429) OU chave inválida (400), pulamos para a próxima
-                    if (data.error.code === 429 || data.error.code === 400 || data.error.message?.includes('quota') || data.error.message?.includes('key')) {
-                        console.warn(`[AI SERVICE] Falha na chave ${currentKeyIdx + 1}: ${data.error.message}. Tentando próxima...`);
+                    if (data.error.code === 429 || data.error.code === 400 || data.error.message?.includes('quota')) {
+                        console.warn(`[AI SERVICE] Falha na chave ${currentKeyIdx + 1}. Tentando próxima...`);
                         currentKeyIdx = (currentKeyIdx + 1) % keys.length;
                         retries--;
                         continue;
@@ -266,17 +224,19 @@ FORMATAÇÃO E REGRAS DE SIGILO:
                     throw new Error(`Gemini API Error: ${data.error.message}`);
                 }
 
-                let reply = data.candidates?.[0]?.content?.parts?.[0]?.text || "Desculpe, não consegui processar a sua mensagem. Tente novamente.";
+                let reply = data.candidates?.[0]?.content?.parts?.[0]?.text || "Desculpe, tive um problema ao processar. Pode repetir?";
                 return this.processTriggers(reply);
 
             } catch (error: any) {
                 if (retries <= 1) {
-                    console.error('[AI SERVICE] Erro final no Gemini:', error.message);
-                    // Tentar OpenAI como última instância (mesmo que possa falhar se não houver saldo)
-                    try {
-                        return await this.generateOpenAIFallback(message, systemPrompt, cleanHistory, media);
-                    } catch (fallbackError: any) {
-                        throw new Error(`Ambos os motores falharam. Gemini: ${error.message} | OpenAI: ${fallbackError.message}`);
+                    return await this.generateOpenAIFallback(message, systemPrompt, cleanHistory, media);
+                }
+                retries--;
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+        }
+        throw new Error("Falha total do motor de IA.");
+    }ssage} | OpenAI: ${fallbackError.message}`);
                     }
                 }
                 retries--;
