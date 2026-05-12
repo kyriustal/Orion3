@@ -6,7 +6,7 @@ export class FacebookService {
      */
     static async sendMessage(pageId: string, recipientId: string, text: string, accessToken: string) {
         try {
-            const url = `https://graph.facebook.com/v21.0/${pageId}/messages`;
+            const url = `https://graph.facebook.com/v19.0/${pageId}/messages`;
             await axios.post(url, {
                 recipient: { id: recipientId },
                 message: { text: text },
@@ -28,7 +28,7 @@ export class FacebookService {
      */
     static async sendTypingIndicator(pageId: string, recipientId: string, accessToken: string, action: 'typing_on' | 'typing_off' = 'typing_on') {
         try {
-            const url = `https://graph.facebook.com/v21.0/${pageId}/messages`;
+            const url = `https://graph.facebook.com/v19.0/${pageId}/messages`;
             await axios.post(url, {
                 recipient: { id: recipientId },
                 sender_action: action

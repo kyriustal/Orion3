@@ -13,13 +13,13 @@ export class WhatsAppService {
         
         if (!token) {
             console.error('WhatsApp Access Token não configurado.');
-            return;
+            return null;
         }
 
         try {
             const url = `https://graph.facebook.com/v19.0/${phoneNumberId}/messages`;
             
-            await axios.post(url, {
+            const response = await axios.post(url, {
                 messaging_product: "whatsapp",
                 recipient_type: "individual",
                 to: to,
@@ -33,8 +33,10 @@ export class WhatsAppService {
             });
             
             console.log(`Resposta enviada para ${to}`);
+            return response.data?.messages?.[0]?.id || null;
         } catch (error: any) {
             console.error('Erro ao enviar mensagem para Meta:', error.response?.data || error.message);
+            return null;
         }
     }
 
@@ -79,15 +81,12 @@ export class WhatsAppService {
         if (!token) return;
 
         try {
-            const url = `https://graph.facebook.com/v21.0/${phoneNumberId}/messages`;
+            const url = `https://graph.facebook.com/v19.0/${phoneNumberId}/messages`;
             
             await axios.post(url, {
                 messaging_product: "whatsapp",
                 status: "read",
-                message_id: messageId,
-                typing_indicator: {
-                    type: "text"
-                }
+                message_id: messageId
             }, {
                 headers: {
                     'Authorization': `Bearer ${token}`,
@@ -116,7 +115,7 @@ export class WhatsAppService {
             formData.append('type', 'audio/mpeg');
             formData.append('messaging_product', 'whatsapp');
 
-            const url = `https://graph.facebook.com/v21.0/${phoneNumberId}/media`;
+            const url = `https://graph.facebook.com/v19.0/${phoneNumberId}/media`;
             const response = await axios.post(url, formData, {
                 headers: {
                     'Authorization': `Bearer ${token}`,
@@ -136,11 +135,11 @@ export class WhatsAppService {
      */
     static async sendAudio(toNumber: string, mediaId: string, phoneNumberId: string, accessToken?: string) {
         const token = accessToken || process.env.META_ACCESS_TOKEN;
-        if (!token) return;
+        if (!token) return null;
 
         try {
-            const url = `https://graph.facebook.com/v21.0/${phoneNumberId}/messages`;
-            await axios.post(url, {
+            const url = `https://graph.facebook.com/v19.0/${phoneNumberId}/messages`;
+            const response = await axios.post(url, {
                 messaging_product: "whatsapp",
                 recipient_type: "individual",
                 to: toNumber,
@@ -154,9 +153,10 @@ export class WhatsAppService {
                     'Content-Type': 'application/json'
                 }
             });
+            return response.data?.messages?.[0]?.id || null;
         } catch (error: any) {
             console.error('[WHATSAPP] Erro ao enviar áudio:', error.response?.data || error.message);
+            return null;
         }
     }
 }
-

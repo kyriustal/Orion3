@@ -180,6 +180,10 @@ const aiPauses: Map<string, number> = new Map();
 const processedMessages: Set<string> = new Set();
 setInterval(() => processedMessages.clear(), 10 * 60 * 1000); // Limpa a cada 10 min
 
+// Cache de mensagens enviadas pela IA para evitar auto-pausa no echo
+const botSentMessages: Set<string> = new Set();
+setInterval(() => botSentMessages.clear(), 30 * 60 * 1000); // Limpa a cada 30 min
+
 // Controle de timeouts agendados
 const scheduledChecks: Map<string, NodeJS.Timeout> = new Map();
 
@@ -204,7 +208,7 @@ async function triggerAIResponse(params: {
     return;
   }
 
-  // Enviar indicador de "digitando..." (3 pontinhos)
+  // Enviar indicador de leitura (typing indicator simplificado)
   await WhatsAppService.sendTypingIndicator(phoneNumberId, incomingMessageId, accessToken);
 
   console.log(`[IA PROATIVA] Gerando resposta para ${fromNumber}...`);
@@ -257,23 +261,29 @@ async function triggerAIResponse(params: {
     }
 
     // Se a entrada foi áudio E o plano permite, enviamos áudio de volta
+    let sentMsgId: string | null = null;
     if (isAudio && isVoiceAllowed) {
       console.log(`[IA VOZ] Gerando áudio de resposta...`);
       const audioPath = await AudioService.textToSpeech(replyText);
       if (audioPath) {
         const mediaId = await WhatsAppService.uploadMedia(audioPath, phoneNumberId, accessToken);
         if (mediaId) {
-          await WhatsAppService.sendAudio(fromNumber, mediaId, phoneNumberId, accessToken);
+          sentMsgId = await WhatsAppService.sendAudio(fromNumber, mediaId, phoneNumberId, accessToken);
           console.log(`[IA VOZ] Áudio enviado com sucesso.`);
         }
         // Limpar arquivo temporário
         if (fs.existsSync(audioPath)) fs.unlinkSync(audioPath);
       } else {
         // Fallback para texto se falhar o áudio
-        await WhatsAppService.sendTextMessage(phoneNumberId, fromNumber, replyText, accessToken);
+        sentMsgId = await WhatsAppService.sendTextMessage(phoneNumberId, fromNumber, replyText, accessToken);
       }
     } else {
-      await WhatsAppService.sendTextMessage(phoneNumberId, fromNumber, replyText, accessToken);
+      sentMsgId = await WhatsAppService.sendTextMessage(phoneNumberId, fromNumber, replyText, accessToken);
+    }
+
+    // Registrar o ID da mensagem enviada para ignorar o echo depois
+    if (sentMsgId) {
+        botSentMessages.add(sentMsgId);
     }
 
     console.log(`[IA PROATIVA] Resposta enviada com sucesso.`);
@@ -302,6 +312,13 @@ router.post('/webhook', async (req, res) => {
     const messageId = incomingMsg.id;
 
     // --- LÓGICA DE COEXISTÊNCIA (ECHO DETECTION) ---
+    // Se a mensagem for um echo de algo que NÓS (IA) enviamos, ignoramos.
+    if (botSentMessages.has(messageId)) {
+      console.log(`[ECHO] Ignorando echo da própria IA.`);
+      botSentMessages.delete(messageId); // Limpa do cache
+      return res.sendStatus(200);
+    }
+
     // Se a mensagem tem o campo 'from' igual ao nosso número ou se for um echo da Meta
     // significa que VOCÊ (humano) enviou a mensagem por fora (ex: Meta Business Suite).
     if (incomingMsg.from === metadata?.display_phone_number || incomingMsg.type === 'echo') {
