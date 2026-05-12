@@ -22,11 +22,13 @@ export class AIService {
 
         // Usar um índice baseado no timestamp para rodízio simples entre as chaves
         const keyIndex = Math.floor(Date.now() / 1000) % keys.length;
-        let apiKey = keys[keyIndex];
+        const currentKeyIdx_init = keyIndex;
 
         let systemPrompt = "";
         let knowledgeContext = "";
-        let orgContext = "        if (mode === 'support') {
+        let orgContext = "";
+
+        if (mode === 'support') {
             systemPrompt = `
 Você é o Assistente de Suporte de Nível Avançado da plataforma Orion — a solução líder em Angola para automação inteligente de WhatsApp.
 Seu objetivo é fornecer suporte técnico e funcional impecável.
@@ -141,7 +143,7 @@ ${knowledgeContext ? knowledgeContext : ''}
         }
 
         // Construir histórico da conversa (Janela de contexto otimizada para Gemini 2.0)
-        let cleanHistory = [...history];
+        const cleanHistory = [...history];
         if (cleanHistory.length > 0 && cleanHistory[cleanHistory.length - 1].sender === 'user' && cleanHistory[cleanHistory.length - 1].text === message) {
             cleanHistory.pop();
         }
@@ -182,10 +184,10 @@ ${knowledgeContext ? knowledgeContext : ''}
         }
 
         let retries = keys.length * 2;
-        let currentKeyIdx = keyIndex;
+        let currentKeyIdx = currentKeyIdx_init;
 
         while (retries > 0) {
-            let apiKey = keys[currentKeyIdx];
+            const apiKey = keys[currentKeyIdx];
             try {
                 // UPDATE: Usando gemini-2.0-flash para maior inteligência e velocidade
                 const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
@@ -224,7 +226,7 @@ ${knowledgeContext ? knowledgeContext : ''}
                     throw new Error(`Gemini API Error: ${data.error.message}`);
                 }
 
-                let reply = data.candidates?.[0]?.content?.parts?.[0]?.text || "Desculpe, tive um problema ao processar. Pode repetir?";
+                const reply = data.candidates?.[0]?.content?.parts?.[0]?.text || "Desculpe, tive um problema ao processar. Pode repetir?";
                 return this.processTriggers(reply);
 
             } catch (error: any) {
@@ -236,14 +238,6 @@ ${knowledgeContext ? knowledgeContext : ''}
             }
         }
         throw new Error("Falha total do motor de IA.");
-    }ssage} | OpenAI: ${fallbackError.message}`);
-                    }
-                }
-                retries--;
-                await new Promise(resolve => setTimeout(resolve, 1000));
-            }
-        }
-        throw new Error("Falha ao obter resposta após várias tentativas.");
     }
 
     /**
