@@ -194,30 +194,32 @@ async function triggerAIResponse(params: {
   accessToken: string;
   botName: string;
   message: string;
-  incomingMessageId: string; // ID da mensagem original para o typing indicator
+  incomingMessageId: string;
   media?: { base64: string; mimeType: string };
   referral?: any;
-  isAudio?: boolean; // Se a entrada original foi áudio
-  isVoiceAllowed?: boolean; // Se o plano permite voz
+  isAudio?: boolean;
+  isVoiceAllowed?: boolean;
 }) {
   const { orgId, fromNumber, phoneNumberId, accessToken, botName, message, incomingMessageId, media, referral, isAudio, isVoiceAllowed } = params;
 
-  const historyKey = `${orgId}:${fromNumber}`;
-  if (aiPauses.has(historyKey) && aiPauses.get(historyKey)! > Date.now()) {
-    console.log(`[IA PROATIVA] IA pausada para ${fromNumber} (transferência em andamento). Ignorando.`);
-    return;
-  }
-
-  // Enviar indicador de leitura (typing indicator simplificado)
-  await WhatsAppService.sendTypingIndicator(phoneNumberId, incomingMessageId, accessToken);
-
-  console.log(`[IA PROATIVA] Gerando resposta para ${fromNumber}...`);
-
   try {
-    // 1. Recuperar contexto das últimas 24 horas (apenas histórico passado)
+    const historyKey = `${orgId}:${fromNumber}`;
+    if (aiPauses.has(historyKey) && aiPauses.get(historyKey)! > Date.now()) {
+      console.log(`[IA PROATIVA] IA pausada para ${fromNumber}. Ignorando.`);
+      return;
+    }
+
+    // Tenta marcar como lida (não trava se falhar)
+    try {
+        await WhatsAppService.sendTypingIndicator(phoneNumberId, incomingMessageId, accessToken);
+    } catch (e) {}
+
+    console.log(`[IA PROATIVA] Iniciando resposta para ${fromNumber}...`);
+
+    // 1. Recuperar contexto das últimas 24 horas
     const last24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
     
-    const { data: dbHistory } = await supabaseAdmin
+    const { data: dbHistory, error: historyError } = await supabaseAdmin
       .from('conversation_history')
       .select('sender, text, created_at')
       .eq('org_id', orgId)
@@ -226,18 +228,20 @@ async function triggerAIResponse(params: {
       .order('created_at', { ascending: false })
       .limit(20);
 
+    if (historyError) {
+        console.error('[IA] Erro ao buscar histórico:', historyError.message);
+    }
+
     const history = (dbHistory || []).reverse().map(h => ({ 
       sender: h.sender, 
       text: h.text 
     }));
 
-    // Usar a mensagem passada por parâmetro (garante que não haverá alucinação de mídia)
-    const messageToProcess = message;
-
+    // 2. Gerar Resposta IA
     const aiResult = await AIService.generateResponse({
-      message: messageToProcess,
+      message,
       orgId,
-      history: history, 
+      history, 
       botName,
       mode: 'simulation',
       media,
@@ -246,7 +250,7 @@ async function triggerAIResponse(params: {
 
     const replyText = aiResult.reply;
 
-    // 2. Persistir a resposta da IA no histórico
+    // 3. Persistir a resposta
     await supabaseAdmin.from('conversation_history').insert({
       org_id: orgId,
       customer_phone: fromNumber,
@@ -254,41 +258,47 @@ async function triggerAIResponse(params: {
       text: replyText
     });
 
-    // Se a IA pedir transferência, pausamos por 24h
-    if (aiResult.transfer) {
-      const historyKey = `${orgId}:${fromNumber}`;
-      aiPauses.set(historyKey, Date.now() + (5 * 60 * 1000)); // Pausa de 5 minutos
-    }
-
-    // Se a entrada foi áudio E o plano permite, enviamos áudio de volta
+    // 4. Enviar para WhatsApp
     let sentMsgId: string | null = null;
+    
     if (isAudio && isVoiceAllowed) {
-      console.log(`[IA VOZ] Gerando áudio de resposta...`);
+      console.log(`[IA VOZ] Processando voz...`);
       const audioPath = await AudioService.textToSpeech(replyText);
       if (audioPath) {
         const mediaId = await WhatsAppService.uploadMedia(audioPath, phoneNumberId, accessToken);
         if (mediaId) {
           sentMsgId = await WhatsAppService.sendAudio(fromNumber, mediaId, phoneNumberId, accessToken);
-          console.log(`[IA VOZ] Áudio enviado com sucesso.`);
         }
-        // Limpar arquivo temporário
         if (fs.existsSync(audioPath)) fs.unlinkSync(audioPath);
-      } else {
-        // Fallback para texto se falhar o áudio
-        sentMsgId = await WhatsAppService.sendTextMessage(phoneNumberId, fromNumber, replyText, accessToken);
       }
-    } else {
+    } 
+    
+    // Fallback ou envio padrão de texto
+    if (!sentMsgId) {
       sentMsgId = await WhatsAppService.sendTextMessage(phoneNumberId, fromNumber, replyText, accessToken);
     }
 
-    // Registrar o ID da mensagem enviada para ignorar o echo depois
     if (sentMsgId) {
         botSentMessages.add(sentMsgId);
+        console.log(`[IA PROATIVA] Resposta enviada. ID: ${sentMsgId}`);
+    } else {
+        console.error(`[IA PROATIVA] Falha ao enviar mensagem via WhatsApp.`);
     }
 
-    console.log(`[IA PROATIVA] Resposta enviada com sucesso.`);
+    // Se a IA pedir transferência, pausamos
+    if (aiResult.transfer) {
+      aiPauses.set(historyKey, Date.now() + (5 * 60 * 1000));
+    }
+
   } catch (err: any) {
-    console.error(`[IA PROATIVA] Erro ao responder:`, err.message);
+    console.error(`[IA PROATIVA] ERRO FATAL:`, err.message);
+    // Log de erro no histórico para o usuário ver no dashboard
+    await supabaseAdmin.from('conversation_history').insert({
+      org_id: orgId,
+      customer_phone: fromNumber,
+      sender: 'bot',
+      text: `[Erro do Sistema] Desculpe, tive um problema técnico ao processar sua resposta: ${err.message}`
+    });
   }
 }
 
@@ -376,7 +386,8 @@ router.post('/webhook', async (req, res) => {
       console.warn(`[WEBHOOK] Nenhuma configuração ativa encontrada para o Phone Number ID: ${phoneNumberId}. Verifique o Dashboard.`);
       return;
     }
-    const { org_id: orgId, access_token: accessToken, display_name: botName } = configData;
+    const { org_id: orgId, access_token: accessTokenRaw, display_name: botName } = configData;
+    const accessToken = accessTokenRaw?.trim();
 
     // 2. Verificar Plano e Status VIP (Voz disponível no Plano Pro ou para VIPs na tabela dedicada)
     const { data: subData } = await supabaseAdmin
