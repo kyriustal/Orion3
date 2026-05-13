@@ -54,6 +54,7 @@ router.get('/config', requireAuth, async (req: AuthRequest, res) => {
 router.get('/chats', requireAuth, async (req: AuthRequest, res) => {
   try {
     const orgId = req.user?.id;
+    console.log(`[CHATS] Buscando conversas para OrgID: ${orgId}`);
     
     // Buscar os últimos números únicos que falaram com a organização
     const { data: history, error } = await supabaseAdmin
@@ -62,7 +63,12 @@ router.get('/chats', requireAuth, async (req: AuthRequest, res) => {
       .eq('org_id', orgId)
       .order('created_at', { ascending: false });
 
-    if (error) throw error;
+    if (error) {
+      console.error(`[CHATS] Erro ao buscar no banco:`, error.message);
+      throw error;
+    }
+
+    console.log(`[CHATS] Encontrados ${history?.length || 0} registros no histórico.`);
 
     // Agrupar por número de telefone (pegar a última mensagem de cada)
     const chatsMap = new Map();
