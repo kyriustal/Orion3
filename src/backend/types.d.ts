@@ -4,6 +4,7 @@ declare module 'pdf-parse' {
 }
 
 declare module 'mammoth' {
-    export function extractRawText(options: { buffer: Buffer }): Promise<{ value: string; messages: any[] }>;
+    export function extractRawText(options: { buffer?: Buffer; path?: string }): Promise<{ value: string; messages: any[] }>;
 }
+
 
