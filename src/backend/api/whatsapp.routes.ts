@@ -243,17 +243,17 @@ async function triggerAIResponse(params: {
 
     console.log(`[IA PROATIVA] Iniciando resposta para ${fromNumber}...`);
 
-    // 1. Recuperar contexto das últimas 24 horas
-    const last24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    // 1. Recuperar contexto das últimas 48 horas
+    const last48h = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
     
     const { data: dbHistory, error: historyError } = await supabaseAdmin
       .from('conversation_history')
       .select('sender, text, created_at')
       .eq('org_id', orgId)
       .eq('customer_phone', fromNumber)
-      .gt('created_at', last24h)
+      .gte('created_at', last48h)
       .order('created_at', { ascending: false })
-      .limit(20);
+      .limit(50);
 
     if (historyError) {
         console.error('[IA] Erro ao buscar histórico:', historyError.message);
