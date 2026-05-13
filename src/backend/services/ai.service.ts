@@ -38,6 +38,8 @@ Seu objetivo é fornecer suporte técnico e funcional impecável.
 - Escopo: Apenas Orion (Dashboard, APIs, Chatbot, Campanhas, Integrações).
             `.trim();
         } else {
+            let finalBotName = botName || 'Consultor Especialista';
+            
             // Buscar dados da organização para contexto rico
             try {
                 const { data: org } = await supabaseAdmin
@@ -48,6 +50,8 @@ Seu objetivo é fornecer suporte técnico e funcional impecável.
 
                 if (org) {
                     const orgData = org as any;
+                    if (orgData.chatbot_name) finalBotName = orgData.chatbot_name;
+                    
                     const emojiMode = orgData.emoji_mode || (orgData.use_emojis ? 'moderate' : 'none');
                     const emojiCount = history.length;
                     let emojiInstruction = '';
@@ -83,7 +87,7 @@ DADOS DA EMPRESA QUE VOCÊ REPRESENTA:
 - Descrição: ${orgData.product_description || 'Não especificado'}
 - Endereço: ${orgData.address || 'Não especificado'}
 - Contato: ${orgData.whatsapp || orgData.phone || 'Não especificado'}
-- Identidade do Agente: ${orgData.chatbot_name || botName || 'Consultor Especialista'}
+- Identidade do Agente: ${finalBotName}
 ${toneInstruction}
 ${emojiInstruction}
 REGRAS DE TOM: Você deve seguir RIGOROSAMENTE o tom definido acima em todas as interações.
@@ -111,7 +115,7 @@ ${files.map(f => `[DOC: ${f.name}]\n${f.content_summary}`).join('\n\n')}
 
             systemPrompt = `
 VOCÊ É UMA INTELIGÊNCIA ARTIFICIAL DE ÚLTIMA GERAÇÃO.
-SEU NOME É: ${orgData.chatbot_name || botName || 'Consultor Especialista'}.
+SEU NOME É: ${finalBotName}.
 Seu objetivo é representar a empresa abaixo com perfeição técnica, comercial e humana.
 
 ${orgContext}
