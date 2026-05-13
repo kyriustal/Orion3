@@ -189,8 +189,8 @@ ${knowledgeContext ? knowledgeContext : ''}
         while (retries > 0) {
             const apiKey = keys[currentKeyIdx];
             try {
-                // UPDATE: Usando gemini-2.0-flash para maior inteligência e velocidade
-                const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+                // UPDATE: Usando gemini-1.5-flash para maior estabilidade e compatibilidade
+                const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
                 const response = await fetch(url, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -217,8 +217,9 @@ ${knowledgeContext ? knowledgeContext : ''}
                 const data: any = await response.json();
 
                 if (data.error) {
+                    console.error(`[AI SERVICE] Erro na API Gemini (Chave ${currentKeyIdx + 1}):`, data.error);
                     if (data.error.code === 429 || data.error.code === 400 || data.error.message?.includes('quota')) {
-                        console.warn(`[AI SERVICE] Falha na chave ${currentKeyIdx + 1}. Tentando próxima...`);
+                        console.warn(`[AI SERVICE] Limite ou erro na chave ${currentKeyIdx + 1}. Tentando próxima...`);
                         currentKeyIdx = (currentKeyIdx + 1) % keys.length;
                         retries--;
                         continue;

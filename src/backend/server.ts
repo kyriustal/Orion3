@@ -1,10 +1,33 @@
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
+import { createServer } from 'http';
+import { Server } from 'socket.io';
 
 // Inicialização do App
 const app = express();
+const httpServer = createServer(app);
+const io = new Server(httpServer, {
+    cors: {
+        origin: "*",
+        methods: ["GET", "POST"]
+    }
+});
+
 const PORT = process.env.PORT || 3000;
+
+// Socket.io Logic
+io.on('connection', (socket) => {
+    console.log(`[SOCKET] Novo cliente conectado: ${socket.id}`);
+
+    socket.on('send_message', async (data) => {
+        console.log(`[SOCKET] Mensagem recebida para ${data.chatId}:`, data.message.text);
+    });
+
+    socket.on('disconnect', () => {
+        console.log(`[SOCKET] Cliente desconectado: ${socket.id}`);
+    });
+});
 
 // Middleware Global
 app.use(cors());
@@ -58,6 +81,6 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 });
 
 // Start
-app.listen(PORT, () => {
+httpServer.listen(PORT, () => {
     console.log(`🚀 Orion Server pronto na porta ${PORT}`);
 });

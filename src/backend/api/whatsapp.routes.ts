@@ -12,6 +12,27 @@ const router = Router();
 // O histórico agora é persistido no banco de dados (tabela conversation_history)
 // para permitir janelas de contexto de 24h e recuperação de longo prazo.
 
+// /api/whatsapp/ping (GET) - Testar se o serviço está ok
+router.get('/ping', requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const orgId = req.user?.id;
+    const { data: config } = await supabaseAdmin
+      .from('whatsapp_config')
+      .select('is_active, display_name, phone_number_id')
+      .eq('org_id', orgId)
+      .maybeSingle();
+
+    res.json({ 
+      status: 'ok', 
+      config_active: !!config?.is_active,
+      bot_name: config?.display_name || 'Não configurado',
+      phone_id: config?.phone_number_id || 'Não configurado'
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // /api/whatsapp/config (GET)
 router.get('/config', requireAuth, async (req: AuthRequest, res) => {
   try {
@@ -248,21 +269,31 @@ async function triggerAIResponse(params: {
       referral 
     });
 
+    if (!aiResult || !aiResult.reply) {
+      console.error(`[IA PROATIVA] AIService retornou resposta vazia para ${fromNumber}`);
+      throw new Error("Resposta da IA vazia ou inválida.");
+    }
+
     const replyText = aiResult.reply;
+    console.log(`[IA PROATIVA] Resposta gerada para ${fromNumber}: ${replyText.substring(0, 50)}...`);
 
     // 3. Persistir a resposta
-    await supabaseAdmin.from('conversation_history').insert({
+    const { error: insertError } = await supabaseAdmin.from('conversation_history').insert({
       org_id: orgId,
       customer_phone: fromNumber,
       sender: 'bot',
       text: replyText
     });
 
+    if (insertError) {
+      console.error(`[IA PROATIVA] Erro ao persistir histórico para ${fromNumber}:`, insertError.message);
+    }
+
     // 4. Enviar para WhatsApp
     let sentMsgId: string | null = null;
     
     if (isAudio && isVoiceAllowed) {
-      console.log(`[IA VOZ] Processando voz...`);
+      console.log(`[IA VOZ] Processando voz para ${fromNumber}...`);
       const audioPath = await AudioService.textToSpeech(replyText);
       if (audioPath) {
         const mediaId = await WhatsAppService.uploadMedia(audioPath, phoneNumberId, accessToken);
@@ -270,35 +301,44 @@ async function triggerAIResponse(params: {
           sentMsgId = await WhatsAppService.sendAudio(fromNumber, mediaId, phoneNumberId, accessToken);
         }
         if (fs.existsSync(audioPath)) fs.unlinkSync(audioPath);
+      } else {
+        console.warn(`[IA VOZ] Falha ao gerar áudio para ${fromNumber}. Usando texto.`);
       }
     } 
     
     // Fallback ou envio padrão de texto
     if (!sentMsgId) {
+      console.log(`[IA PROATIVA] Enviando texto para ${fromNumber}...`);
       sentMsgId = await WhatsAppService.sendTextMessage(phoneNumberId, fromNumber, replyText, accessToken);
     }
 
     if (sentMsgId) {
         botSentMessages.add(sentMsgId);
-        console.log(`[IA PROATIVA] Resposta enviada. ID: ${sentMsgId}`);
+        console.log(`[IA PROATIVA] Mensagem entregue com sucesso para ${fromNumber}. ID: ${sentMsgId}`);
     } else {
-        console.error(`[IA PROATIVA] Falha ao enviar mensagem via WhatsApp.`);
+        console.error(`[IA PROATIVA] Falha ao entregar mensagem para ${fromNumber} via Meta API.`);
+        throw new Error("Falha no envio da mensagem via WhatsApp (Meta API).");
     }
 
     // Se a IA pedir transferência, pausamos
     if (aiResult.transfer) {
+      console.log(`[IA PROATIVA] Transferência detectada para ${fromNumber}. Pausando IA.`);
       aiPauses.set(historyKey, Date.now() + (5 * 60 * 1000));
     }
 
   } catch (err: any) {
-    console.error(`[IA PROATIVA] ERRO FATAL:`, err.message);
+    console.error(`[IA PROATIVA] ERRO NO FLUXO DE RESPOSTA para ${fromNumber}:`, err.message);
     // Log de erro no histórico para o usuário ver no dashboard
-    await supabaseAdmin.from('conversation_history').insert({
-      org_id: orgId,
-      customer_phone: fromNumber,
-      sender: 'bot',
-      text: `[Erro do Sistema] Desculpe, tive um problema técnico ao processar sua resposta: ${err.message}`
-    });
+    try {
+      await supabaseAdmin.from('conversation_history').insert({
+        org_id: orgId,
+        customer_phone: fromNumber,
+        sender: 'bot',
+        text: `[Erro do Sistema] Desculpe, tive um problema técnico ao processar sua resposta: ${err.message}`
+      });
+    } catch (dbErr) {
+      console.error(`[IA PROATIVA] Erro crítico: Falha ao logar erro no banco para ${fromNumber}`);
+    }
   }
 }
 
