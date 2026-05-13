@@ -185,12 +185,14 @@ ${knowledgeContext ? knowledgeContext : ''}
 
         let retries = keys.length * 2;
         let currentKeyIdx = currentKeyIdx_init;
+        let lastError = "Nenhum erro registrado";
 
         while (retries > 0) {
             const apiKey = keys[currentKeyIdx];
             try {
-                // UPDATE: Usando gemini-1.5-flash para maior estabilidade e compatibilidade
-                const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+                // UPDATE: Usando gemini-2.0-flash conforme solicitado pelo utilizador
+                const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+                
                 const response = await fetch(url, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -200,45 +202,45 @@ ${knowledgeContext ? knowledgeContext : ''}
                         },
                         contents,
                         generationConfig: {
-                            temperature: 0.1, // Reduzido para maior precisão e "inteligência" determinística
+                            temperature: 0.1,
                             topK: 20,
                             topP: 0.8,
                             maxOutputTokens: 2048,
-                        },
-                        safetySettings: [
-                            { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_ONLY_HIGH" },
-                            { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_ONLY_HIGH" },
-                            { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_ONLY_HIGH" },
-                            { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_ONLY_HIGH" },
-                        ]
+                        }
                     })
                 });
 
                 const data: any = await response.json();
 
                 if (data.error) {
-                    console.error(`[AI SERVICE] Erro na API Gemini (Chave ${currentKeyIdx + 1}):`, data.error);
-                    if (data.error.code === 429 || data.error.code === 400 || data.error.message?.includes('quota')) {
-                        console.warn(`[AI SERVICE] Limite ou erro na chave ${currentKeyIdx + 1}. Tentando próxima...`);
+                    lastError = data.error.message || JSON.stringify(data.error);
+                    console.error(`[AI SERVICE] Erro na API Gemini (Chave ${currentKeyIdx + 1}):`, lastError);
+                    
+                    if (data.error.code === 429 || data.error.code === 400 || lastError.includes('quota')) {
                         currentKeyIdx = (currentKeyIdx + 1) % keys.length;
                         retries--;
                         continue;
                     }
-                    throw new Error(`Gemini API Error: ${data.error.message}`);
+                    throw new Error(`Gemini API Error: ${lastError}`);
                 }
 
                 const reply = data.candidates?.[0]?.content?.parts?.[0]?.text || "Desculpe, tive um problema ao processar. Pode repetir?";
                 return this.processTriggers(reply);
 
             } catch (error: any) {
+                lastError = error.message;
                 if (retries <= 1) {
-                    return await this.generateOpenAIFallback(message, systemPrompt, cleanHistory, media);
+                    try {
+                        return await this.generateOpenAIFallback(message, systemPrompt, cleanHistory, media);
+                    } catch (openAiErr: any) {
+                        lastError = `OpenAI Fallback Error: ${openAiErr.message}`;
+                    }
                 }
                 retries--;
                 await new Promise(resolve => setTimeout(resolve, 1000));
             }
         }
-        throw new Error("Falha total do motor de IA.");
+        throw new Error(`Falha total do motor de IA. Último erro: ${lastError}`);
     }
 
     /**
