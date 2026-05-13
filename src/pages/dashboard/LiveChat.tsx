@@ -212,6 +212,16 @@ export default function LiveChat() {
                 </div>
               </div>
             ))}
+
+            {(isAiActive && messages.length > 0 && messages[messages.length - 1].sender === 'user') && (
+              <div className="flex justify-end">
+                <div className="bg-emerald-50 border border-emerald-100 rounded-2xl rounded-tr-sm px-4 py-3 shadow-sm flex gap-1.5 items-center">
+                  <div className="w-1.5 h-1.5 bg-emerald-500/40 rounded-full animate-bounce" style={{ animationDelay: "0ms" }}></div>
+                  <div className="w-1.5 h-1.5 bg-emerald-500/60 rounded-full animate-bounce" style={{ animationDelay: "150ms" }}></div>
+                  <div className="w-1.5 h-1.5 bg-emerald-500/80 rounded-full animate-bounce" style={{ animationDelay: "300ms" }}></div>
+                </div>
+              </div>
+            )}
             <div ref={messagesEndRef} />
           </CardContent>
 

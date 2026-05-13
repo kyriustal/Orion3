@@ -177,11 +177,11 @@ export default function Simulation() {
           ))}
 
           {isTyping && (
-            <div className="flex justify-start">
-              <div className="bg-white rounded-lg rounded-tl-none px-4 py-3 shadow-sm flex gap-1 items-center">
-                <div className="w-2 h-2 bg-zinc-400 rounded-full animate-bounce" style={{ animationDelay: "0ms" }}></div>
-                <div className="w-2 h-2 bg-zinc-400 rounded-full animate-bounce" style={{ animationDelay: "150ms" }}></div>
-                <div className="w-2 h-2 bg-zinc-400 rounded-full animate-bounce" style={{ animationDelay: "300ms" }}></div>
+            <div className="flex justify-start animate-in fade-in">
+              <div className="bg-white border border-zinc-100 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm flex gap-1.5 items-center">
+                <div className="w-1.5 h-1.5 bg-emerald-500/40 rounded-full animate-bounce" style={{ animationDelay: "0ms" }}></div>
+                <div className="w-1.5 h-1.5 bg-emerald-500/60 rounded-full animate-bounce" style={{ animationDelay: "150ms" }}></div>
+                <div className="w-1.5 h-1.5 bg-emerald-500/80 rounded-full animate-bounce" style={{ animationDelay: "300ms" }}></div>
               </div>
             </div>
           )}
