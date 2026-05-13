@@ -476,25 +476,44 @@ router.post('/webhook', async (req, res) => {
       userText = incomingMsg.text?.body;
     } else if (['image', 'video', 'audio', 'document'].includes(incomingMsg.type)) {
       const mediaId = incomingMsg[incomingMsg.type].id;
-      userText = incomingMsg[incomingMsg.type].caption || incomingMsg[incomingMsg.type].filename || "";
+      const caption = incomingMsg[incomingMsg.type].caption || "";
+      const filename = incomingMsg[incomingMsg.type].filename || "arquivo";
       
       console.log(`[WEBHOOK] Mídia detectada (${incomingMsg.type}). Baixando...`);
       const mediaData = await WhatsAppService.getMedia(mediaId, accessToken);
+      
       if (mediaData) {
         media = mediaData;
         
-        // Se for áudio, transcrever para texto para a IA entender
+        // 1. ÁUDIO: Transcrever para texto
         if (incomingMsg.type === 'audio' && isVoiceAllowed) {
           console.log(`[IA VOZ] Transcrevendo áudio...`);
           const transcript = await AudioService.speechToTextFromBase64(mediaData.base64, mediaData.mimeType);
           if (transcript) {
-            userText = transcript;
+            userText = `[Mensagem de Áudio Transcrita]: ${transcript}`;
             isAudioMessage = true;
             console.log(`[IA VOZ] Transcrição: ${transcript}`);
           }
-        } else if (incomingMsg.type === 'audio' && !isVoiceAllowed) {
-          console.log(`[IA VOZ] Cliente tentou usar áudio, mas o plano não permite.`);
-          userText = "(Mensagem de Áudio Ignorada - Upgrade de Plano Necessário)";
+        } 
+        // 2. DOCUMENTO: Extrair texto se for PDF/DOCX
+        else if (incomingMsg.type === 'document') {
+          console.log(`[IA DOC] Extraindo texto do documento: ${filename}`);
+          const { DocumentService } = await import('../services/document.service');
+          const extractedText = await DocumentService.extractTextFromBase64(mediaData.base64, mediaData.mimeType);
+          
+          if (extractedText) {
+            userText = `[Conteúdo do Documento "${filename}"]: \n${extractedText.substring(0, 10000)}`; // Limite de 10k chars para o prompt
+          } else {
+            userText = `(O cliente enviou um documento: ${filename})`;
+          }
+          if (caption) userText = `${caption}\n\n${userText}`;
+        }
+        // 3. IMAGEM: Apenas capturar legenda (a IA verá a imagem via multimodalidade)
+        else if (incomingMsg.type === 'image') {
+          userText = caption || "(Imagem enviada)";
+        }
+        else {
+          userText = caption || `(Mídia: ${incomingMsg.type})`;
         }
       }
     }

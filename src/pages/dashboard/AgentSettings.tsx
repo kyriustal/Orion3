@@ -187,8 +187,9 @@ export default function AgentSettings() {
                 {...register("model")}
                 className="flex h-10 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-950"
               >
-                <option value="gemini-1.5-flash">Gemini 1.5 Flash (Rápido e Eficiente)</option>
-                <option value="gemini-1.5-pro">Gemini 1.5 Pro (Complexo e Preciso)</option>
+                <option value="gemini-2.5-flash">Gemini 2.5 Flash (Recomendado - Ultra Rápido)</option>
+                <option value="gemini-3-flash-preview">Gemini 3 Flash (Experimental - Próxima Geração)</option>
+                <option value="gemini-1.5-flash">Gemini 1.5 Flash (Antigo)</option>
               </select>
             </CardContent>
           </Card>
