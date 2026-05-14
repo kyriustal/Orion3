@@ -27,11 +27,11 @@ export interface GenerateResult {
 // ─────────────────────────────────────────────────────────
 //  Configuração Gemini 2.5 Flash
 // ─────────────────────────────────────────────────────────
-const GEMINI_MODEL = 'gemini-2.5-flash-preview-05-20';
+const GEMINI_MODEL = 'gemini-1.5-flash';
 const GEMINI_BASE  = 'https://generativelanguage.googleapis.com/v1beta/models';
 
 /** Rotação de chaves para distribuir quota */
-export function getApiKey(): string {
+export function getApiKey(attempt = 0): string {
   // Coletar todas as chaves possíveis do .env
   const rawKeys = [
     process.env.GEMINI_API_KEY,
@@ -40,25 +40,27 @@ export function getApiKey(): string {
     process.env.GEMINI_API_KEY_4,
   ].filter(Boolean) as string[];
 
-  // Expandir chaves que venham separadas por vírgula numa única string
+  // Expandir chaves que venham separadas por vírgula numa única string e limpar
   const allKeys: string[] = [];
   rawKeys.forEach(k => {
-    if (k.includes(',')) {
-      allKeys.push(...k.split(',').map(s => s.trim().replace(/["']/g, '')));
-    } else {
-      allKeys.push(k.trim().replace(/["']/g, ''));
-    }
+    const parts = k.split(',').map(s => s.trim().replace(/^["']|["']$/g, ''));
+    allKeys.push(...parts);
   });
 
-  const finalKeys = allKeys.filter(k => k.length > 10);
+  // Remover duplicados e chaves inválidas
+  const uniqueKeys = Array.from(new Set(allKeys.filter(k => k.length > 10)));
 
-  if (finalKeys.length === 0) {
-    throw new Error('[AIService] Nenhuma GEMINI_API_KEY válida encontrada no .env');
+  if (uniqueKeys.length === 0) {
+    console.error('[AIService] ERRO: Nenhuma chave carregada. rawKeys:', rawKeys);
+    throw new Error('[AIService] Nenhuma GEMINI_API_KEY válida no .env');
   }
 
-  // Rotação por minuto para distribuição de carga
-  const idx = Math.floor(Date.now() / 60_000) % finalKeys.length;
-  return finalKeys[idx];
+  // Rotação básica + deslocamento por tentativa
+  const baseIdx = Math.floor(Date.now() / 60_000);
+  const idx = (baseIdx + attempt) % uniqueKeys.length;
+  const key = uniqueKeys[idx];
+  
+  return key;
 }
 
 // ─────────────────────────────────────────────────────────
@@ -191,7 +193,7 @@ export class AIService {
       referral,
     } = options;
 
-    // 1. Carregar perfil da organização (apenas em modo empresa)
+    // 1. Carregar perfil da organização
     let org: OrgProfile | null = null;
     if (mode === 'simulation') {
       const { data } = await supabaseAdmin
@@ -206,7 +208,7 @@ export class AIService {
     const systemPrompt = buildSystemPrompt(mode, org, botName, referral);
     const contents     = buildContents(history, message, media);
 
-    // 3. Payload Gemini 2.5 Flash com Thinking activado
+    // 3. Payload Gemini 2.5 Flash
     const payload = {
       systemInstruction: {
         parts: [{ text: systemPrompt }],
@@ -215,47 +217,73 @@ export class AIService {
       generationConfig: {
         temperature:     0.65,
         maxOutputTokens: 1500,
-        // Nível de raciocínio activado — budget de 1024 tokens de "pensamento"
         thinkingConfig: {
           thinkingBudget: 1024,
         },
       },
     };
 
-    // 4. Chamada à API
-    const apiKey = getApiKey();
-    const url    = `${GEMINI_BASE}/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
+    // 4. Chamada à API com retry em caso de chave inválida/quota
+    let lastError = '';
+    
+    // Tentar até 4 chaves diferentes se houver erro de autenticação ou quota
+    for (let attempt = 0; attempt < 4; attempt++) {
+      try {
+        const apiKey = getApiKey(attempt);
+        const url    = `${GEMINI_BASE}/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
 
-    let rawText = '';
-    try {
-      const response = await axios.post(url, payload, {
-        headers: { 'Content-Type': 'application/json' },
-        timeout: 35_000,
-      });
+        const response = await axios.post(url, payload, {
+          headers: { 'Content-Type': 'application/json' },
+          timeout: 35_000,
+        });
 
-      const parts: any[] = response.data?.candidates?.[0]?.content?.parts ?? [];
+        const parts: any[] = response.data?.candidates?.[0]?.content?.parts ?? [];
 
-      // Filtrar partes de "pensamento" (thought: true) — manter só o output final
-      rawText = parts
-        .filter((p: any) => !p.thought)
-        .map((p: any) => p.text ?? '')
-        .join('')
-        .trim();
+        // Filtrar partes de "pensamento" (thought: true) — manter só o output final
+        const rawText = parts
+          .filter((p: any) => !p.thought)
+          .map((p: any) => p.text ?? '')
+          .join('')
+          .trim();
 
-      if (!rawText) {
-        throw new Error('Gemini retornou resposta vazia após filtrar pensamentos.');
+        if (!rawText) {
+          throw new Error('Gemini retornou resposta vazia.');
+        }
+
+        // 5. Detecção de transferência (sucesso, sair do loop)
+        const transfer   = rawText.includes('[TRANSFERIR_HUMANO]');
+        const cleanReply = rawText.replace('[TRANSFERIR_HUMANO]', '').trim();
+
+        return { reply: cleanReply || rawText, transfer };
+
+      } catch (err: any) {
+        lastError = err.response?.data?.error?.message || err.message;
+        
+        // Log detalhado do erro para diagnóstico
+        console.error(`[AIService] Erro na tentativa ${attempt + 1}:`, {
+          status: err.response?.status,
+          message: lastError,
+          data: err.response?.data
+        });
+        
+        // Se for erro de chave inválida, permissão ou quota, tentar a próxima chave
+        if (
+          lastError.toLowerCase().includes('key') || 
+          lastError.includes('429') || 
+          lastError.includes('401') ||
+          lastError.includes('quota') ||
+          lastError.includes('not found')
+        ) {
+          console.warn(`[AIService] Tentando próxima chave devido a erro recuperável...`);
+          continue;
+        }
+        
+        // Outros erros críticos - parar
+        break;
       }
-
-    } catch (err: any) {
-      const detail = err.response?.data?.error?.message || err.message;
-      console.error(`[AIService] Erro na chamada Gemini: ${detail}`);
-      throw new Error(`Falha ao gerar resposta IA: ${detail}`);
     }
 
-    // 5. Detecção de transferência
-    const transfer   = rawText.includes('[TRANSFERIR_HUMANO]');
-    const cleanReply = rawText.replace('[TRANSFERIR_HUMANO]', '').trim();
-
-    return { reply: cleanReply || rawText, transfer };
+    console.error(`[AIService] Todas as tentativas falharam. Último erro: ${lastError}`);
+    throw new Error(`Falha ao gerar resposta IA: ${lastError}`);
   }
 }
