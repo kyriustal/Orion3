@@ -1,5 +1,5 @@
 import { Outlet, Link, useLocation } from 'react-router-dom';
-import { Bot, Smartphone, LayoutDashboard, BookOpen, MessageSquare, CreditCard, Settings, Megaphone, Users, BarChart, LogOut, UserCircle, PlayCircle, Menu, X, Zap } from 'lucide-react';
+import { Bot, Smartphone, LayoutDashboard, BookOpen, MessageSquare, CreditCard, Settings, Megaphone, Users, BarChart, LogOut, UserCircle, PlayCircle, Menu, X, Zap, Instagram } from 'lucide-react';
 import { PageTransition } from '@/src/components/ui/PageTransition';
 import { useState, useEffect } from 'react';
 import TrialExpiredGate from '@/src/components/TrialExpiredGate';
@@ -12,12 +12,16 @@ import {
   DropdownMenuTrigger,
 } from "@/src/components/ui/dropdown-menu";
 const navItems = [
-  { name: 'Dashboard', path: '/dashboard', icon: LayoutDashboard },
-  { name: 'Live Chat', path: '/dashboard/live-chat', icon: MessageSquare, isNew: true },
-  { name: 'WhatsApp', path: '/dashboard/whatsapp', icon: Smartphone },
-  { name: 'Facebook Messenger', path: '/dashboard/facebook', icon: Smartphone, isNew: true },
-  { name: 'Campanhas', path: '/dashboard/campaigns', icon: Megaphone },
-  { name: 'Automações', path: '/dashboard/automations', icon: Zap },
+  { name: 'Dashboard',            path: '/dashboard',             icon: LayoutDashboard },
+  { name: 'Live Chat',            path: '/dashboard/live-chat',   icon: MessageSquare, isNew: true },
+  { name: 'Simulação',            path: '/dashboard/simulation',  icon: PlayCircle },
+  { name: 'Agentes (Bots)',       path: '/dashboard/agent',       icon: Bot },
+  { name: 'WhatsApp',             path: '/dashboard/whatsapp',    icon: Smartphone },
+  { name: 'Facebook Messenger',   path: '/dashboard/facebook',    icon: Smartphone },
+  { name: 'Instagram Direct',     path: '/dashboard/instagram',   icon: Instagram },
+  { name: 'Base de Conhecimento', path: '/dashboard/knowledge',   icon: BookOpen },
+  { name: 'Campanhas',            path: '/dashboard/campaigns',   icon: Megaphone },
+  { name: 'Automações',           path: '/dashboard/automations', icon: Zap },
   { name: 'Templates (HSM)', path: '/dashboard/templates', icon: MessageSquare },
   { name: 'Insights & Sentimento', path: '/dashboard/insights', icon: BarChart },
   { name: 'Equipe', path: '/dashboard/team', icon: Users },

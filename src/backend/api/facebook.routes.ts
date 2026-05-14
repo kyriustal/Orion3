@@ -1,12 +1,17 @@
 import { Router } from 'express';
 import { supabaseAdmin } from '../config/supabase';
+import { AIService } from '../services/ai.service';
 import { FacebookService } from '../services/facebook.service';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 
 const router = Router();
 const VERIFY_TOKEN = process.env.META_VERIFY_TOKEN || 'orion_secure_token_123';
 
-// /api/facebook/config (GET)
+// Dedup de mensagens Facebook processadas
+const processedFbMessages = new Set<string>();
+setInterval(() => processedFbMessages.clear(), 10 * 60 * 1000);
+
+// ─── GET /api/facebook/config ─────────────────────────────────────────────────
 router.get('/config', requireAuth, async (req: AuthRequest, res) => {
   try {
     const orgId = req.user?.id;
@@ -23,7 +28,7 @@ router.get('/config', requireAuth, async (req: AuthRequest, res) => {
   }
 });
 
-// /api/facebook/config (POST)
+// ─── POST /api/facebook/config ────────────────────────────────────────────────
 router.post('/config', requireAuth, async (req: AuthRequest, res) => {
   try {
     const orgId = req.user?.id;
@@ -37,7 +42,7 @@ router.post('/config', requireAuth, async (req: AuthRequest, res) => {
         access_token,
         display_name,
         is_active: true,
-        updated_at: new Date().toISOString()
+        updated_at: new Date().toISOString(),
       })
       .select()
       .single();
@@ -49,10 +54,10 @@ router.post('/config', requireAuth, async (req: AuthRequest, res) => {
   }
 });
 
-// Webhook — Verificação (GET)
+// ─── GET /api/facebook/webhook — Verificação Meta ────────────────────────────
 router.get('/webhook', (req, res) => {
-  const mode = req.query['hub.mode'];
-  const token = req.query['hub.verify_token'];
+  const mode      = req.query['hub.mode'];
+  const token     = req.query['hub.verify_token'];
   const challenge = req.query['hub.challenge'];
 
   if (mode === 'subscribe' && token === VERIFY_TOKEN) {
@@ -63,9 +68,9 @@ router.get('/webhook', (req, res) => {
   }
 });
 
-// Webhook — Recepção (POST)
+// ─── POST /api/facebook/webhook — Recepção de mensagens ──────────────────────
 router.post('/webhook', async (req, res) => {
-  res.sendStatus(200);
+  res.sendStatus(200); // Responder imediatamente à Meta
 
   try {
     const body = req.body;
@@ -75,13 +80,20 @@ router.post('/webhook', async (req, res) => {
       const messaging = entry.messaging?.[0];
       if (!messaging || !messaging.message || messaging.message.is_echo) continue;
 
+      const messageId = messaging.message.mid;
+      if (!messageId) continue;
+
+      // Dedup
+      if (processedFbMessages.has(messageId)) continue;
+      processedFbMessages.add(messageId);
+
       const senderId = messaging.sender.id;
-      const pageId = entry.id;
+      const pageId   = entry.id;
       const userText = messaging.message.text;
 
-      if (!userText) continue;
+      if (!userText?.trim()) continue;
 
-      // 1. Buscar config
+      // 1. Buscar configuração da página
       const { data: config } = await supabaseAdmin
         .from('facebook_config')
         .select('org_id, access_token, display_name')
@@ -89,36 +101,63 @@ router.post('/webhook', async (req, res) => {
         .eq('is_active', true)
         .maybeSingle();
 
-      if (!config) continue;
+      if (!config) {
+        console.warn(`[FB WEBHOOK] Nenhuma config activa para page_id: ${pageId}`);
+        continue;
+      }
 
       const { org_id: orgId, access_token: accessToken, display_name: botName } = config;
 
-      // 2. Histórico
+      // 2. Buscar histórico (últimas 50 mensagens)
+      const last24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
       const { data: dbHistory } = await supabaseAdmin
         .from('conversation_history')
         .select('sender, text')
         .eq('org_id', orgId)
         .eq('customer_phone', senderId)
+        .gte('created_at', last24h)
         .order('created_at', { ascending: false })
-        .limit(20);
+        .limit(50);
 
       const history = (dbHistory || []).reverse().map(h => ({ sender: h.sender, text: h.text }));
 
-      // 3. Persistir msg do usuário
+      // 3. Persistir mensagem do utilizador
       await supabaseAdmin.from('conversation_history').insert({
         org_id: orgId,
         customer_phone: senderId,
         sender: 'user',
         text: userText,
-        metadata: { platform: 'facebook' }
+        metadata: { platform: 'facebook' },
       });
 
-      // 4. Typing
+      // 4. Indicador de digitação
       await FacebookService.sendTypingIndicator(pageId, senderId, accessToken, 'typing_on');
 
-      // AI logic removed
-  } catch (error: any) {
-    console.error('[FB WEBHOOK] Erro:', error.message);
+      // 5. Gerar resposta com IA
+      const aiResult = await AIService.generateResponse({
+        message: userText,
+        orgId,
+        history,
+        botName: botName || 'Assistente',
+        mode: 'simulation',
+      });
+
+      // 6. Enviar resposta
+      await FacebookService.sendMessage(pageId, senderId, aiResult.reply, accessToken);
+
+      // 7. Persistir resposta do bot
+      await supabaseAdmin.from('conversation_history').insert({
+        org_id: orgId,
+        customer_phone: senderId,
+        sender: 'bot',
+        text: aiResult.reply,
+        metadata: { platform: 'facebook' },
+      });
+
+      console.log(`[FB WEBHOOK] Resposta enviada para ${senderId}.`);
+    }
+  } catch (err: any) {
+    console.error('[FB WEBHOOK] Erro:', err.message);
   }
 });
 

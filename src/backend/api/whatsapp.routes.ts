@@ -1,15 +1,30 @@
 import { Router } from 'express';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import { supabaseAdmin } from '../config/supabase';
+import { AIService } from '../services/ai.service';
 import { WhatsAppService } from '../services/whatsapp.service';
+import { AudioService } from '../services/audio.service';
+import { DocumentService } from '../services/document.service';
+import { getIo } from '../socket';
 import axios from 'axios';
+import fs from 'fs';
 
 const router = Router();
 
-// O histórico agora é persistido no banco de dados (tabela conversation_history)
-// para permitir janelas de contexto de 24h e recuperação de longo prazo.
+// ─── Controlo de estado em memória ────────────────────────────────────────────
 
-// /api/whatsapp/ping (GET) - Testar se o serviço está ok
+/** Dedup — IDs de mensagens já processadas (limpa a cada 10 min) */
+const processedMessages = new Set<string>();
+setInterval(() => processedMessages.clear(), 10 * 60 * 1000);
+
+/** Echo detection — IDs de mensagens enviadas pela nossa IA (limpa a cada 30 min) */
+const botSentMessages = new Set<string>();
+setInterval(() => botSentMessages.clear(), 30 * 60 * 1000);
+
+/** Coexistência — timestamp de quando o humano respondeu por último (limpa automaticamente) */
+const aiPauses = new Map<string, number>();
+
+// ─── GET /api/whatsapp/ping ───────────────────────────────────────────────────
 router.get('/ping', requireAuth, async (req: AuthRequest, res) => {
   try {
     const orgId = req.user?.id;
@@ -19,18 +34,18 @@ router.get('/ping', requireAuth, async (req: AuthRequest, res) => {
       .eq('org_id', orgId)
       .maybeSingle();
 
-    res.json({ 
-      status: 'ok', 
+    res.json({
+      status: 'ok',
       config_active: !!config?.is_active,
       bot_name: config?.display_name || 'Não configurado',
-      phone_id: config?.phone_number_id || 'Não configurado'
+      phone_id: config?.phone_number_id || 'Não configurado',
     });
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
   }
 });
 
-// /api/whatsapp/config (GET)
+// ─── GET /api/whatsapp/config ─────────────────────────────────────────────────
 router.get('/config', requireAuth, async (req: AuthRequest, res) => {
   try {
     const orgId = req.user?.id;
@@ -42,34 +57,26 @@ router.get('/config', requireAuth, async (req: AuthRequest, res) => {
 
     if (error) throw error;
     res.json(data || null);
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
   }
 });
 
-// /api/whatsapp/chats (GET) - Listar conversas ativas
+// ─── GET /api/whatsapp/chats — Listar conversas ───────────────────────────────
 router.get('/chats', requireAuth, async (req: AuthRequest, res) => {
   try {
     const orgId = req.user?.id;
-    console.log(`[CHATS] Buscando conversas para OrgID: ${orgId}`);
-    
-    // Buscar os últimos números únicos que falaram com a organização
+
     const { data: history, error } = await supabaseAdmin
       .from('conversation_history')
       .select('customer_phone, text, created_at, sender')
       .eq('org_id', orgId)
       .order('created_at', { ascending: false });
 
-    if (error) {
-      console.error(`[CHATS] Erro ao buscar no banco:`, error.message);
-      throw error;
-    }
+    if (error) throw error;
 
-    console.log(`[CHATS] Encontrados ${history?.length || 0} registros no histórico.`);
-
-    // Agrupar por número de telefone (pegar a última mensagem de cada)
-    const chatsMap = new Map();
-    history?.forEach(item => {
+    const chatsMap = new Map<string, any>();
+    (history || []).forEach(item => {
       if (!chatsMap.has(item.customer_phone)) {
         chatsMap.set(item.customer_phone, {
           id: item.customer_phone,
@@ -77,7 +84,8 @@ router.get('/chats', requireAuth, async (req: AuthRequest, res) => {
           name: `Cliente (${item.customer_phone})`,
           lastMessage: item.text,
           time: new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          timestamp: item.created_at
+          timestamp: item.created_at,
+          lastSender: item.sender,
         });
       }
     });
@@ -88,7 +96,7 @@ router.get('/chats', requireAuth, async (req: AuthRequest, res) => {
   }
 });
 
-// /api/whatsapp/history/:phone (GET) - Ver histórico de um chat específico
+// ─── GET /api/whatsapp/history/:phone ─────────────────────────────────────────
 router.get('/history/:phone', requireAuth, async (req: AuthRequest, res) => {
   try {
     const orgId = req.user?.id;
@@ -104,138 +112,329 @@ router.get('/history/:phone', requireAuth, async (req: AuthRequest, res) => {
 
     if (error) throw error;
 
-    // Formatar para o frontend
-    const formattedMessages = data.map(m => ({
+    const messages = (data || []).map(m => ({
       id: m.id,
       sender: m.sender,
       text: m.text,
-      time: new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      time: new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     }));
 
-    res.json(formattedMessages);
+    res.json(messages);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// /api/whatsapp/config (POST) — Com validação real nas credenciais da Meta
+// ─── POST /api/whatsapp/send — Envio manual pelo agente humano ────────────────
+router.post('/send', requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const orgId = req.user?.id;
+    const { phone, message } = req.body;
+
+    if (!phone || !message) {
+      return res.status(400).json({ error: 'phone e message são obrigatórios.' });
+    }
+
+    const { data: config } = await supabaseAdmin
+      .from('whatsapp_config')
+      .select('phone_number_id, access_token')
+      .eq('org_id', orgId)
+      .eq('is_active', true)
+      .maybeSingle();
+
+    if (!config) return res.status(404).json({ error: 'Nenhuma configuração WhatsApp activa.' });
+
+    // Pausar a IA por 5 minutos quando o agente humano envia
+    const historyKey = `${orgId}:${phone}`;
+    aiPauses.set(historyKey, Date.now() + 5 * 60 * 1000);
+
+    const sentId = await WhatsAppService.sendTextMessage(
+      config.phone_number_id,
+      phone,
+      message,
+      config.access_token
+    );
+
+    if (sentId) botSentMessages.add(sentId);
+
+    // Persistir no histórico
+    await supabaseAdmin.from('conversation_history').insert({
+      org_id: orgId,
+      customer_phone: phone,
+      sender: 'human',
+      text: message,
+    });
+
+    res.json({ message: 'Mensagem enviada com sucesso.', id: sentId });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── POST /api/whatsapp/config — Guardar configuração com validação Meta ──────
 router.post('/config', requireAuth, async (req: AuthRequest, res) => {
   try {
     const orgId = req.user?.id;
     const { phone_number_id, waba_id, access_token } = req.body;
 
     if (!phone_number_id || !access_token) {
-      return res.status(400).json({ error: 'Campos obrigatórios em falta: phone_number_id e access_token.' });
+      return res.status(400).json({ error: 'phone_number_id e access_token são obrigatórios.' });
     }
 
-    // ===== VALIDAÇÃO REAL NAS CREDENCIAIS DA META =====
     try {
-      const metaValidationUrl = `https://graph.facebook.com/v19.0/${phone_number_id}?fields=display_phone_number,verified_name,quality_rating&access_token=${access_token}`;
-      const metaResponse = await axios.get(metaValidationUrl);
+      // Validar credenciais na Meta
+      const metaUrl = `https://graph.facebook.com/v19.0/${phone_number_id}?fields=display_phone_number,verified_name,quality_rating&access_token=${access_token}`;
+      const metaResponse = await axios.get(metaUrl);
 
-      // Se chegou aqui, as credenciais são válidas. Extraímos o nome verificado.
-      const verifiedName = metaResponse.data?.verified_name || null;
-      const displayPhone = metaResponse.data?.display_phone_number || null;
+      const verifiedName  = metaResponse.data?.verified_name || null;
+      const displayPhone  = metaResponse.data?.display_phone_number || null;
 
       console.log(`[WHATSAPP] Credenciais válidas para: ${verifiedName} (${displayPhone})`);
 
-      // Salvar no banco com dados verificados
-      const configData = {
-        org_id: orgId,
-        phone_number_id,
-        waba_id: waba_id || null,
-        access_token,
-        display_name: verifiedName,
-        is_active: true
-      };
-
       const { data, error } = await supabaseAdmin
         .from('whatsapp_config')
-        .upsert(configData, { onConflict: 'org_id' })
+        .upsert({
+          org_id: orgId,
+          phone_number_id,
+          waba_id: waba_id || null,
+          access_token,
+          display_name: verifiedName,
+          is_active: true,
+        }, { onConflict: 'org_id' })
         .select()
         .single();
 
-      if (error) {
-        console.error('[WHATSAPP] Erro ao salvar:', error.message);
-        return res.status(400).json({ error: 'Erro no Banco de Dados', details: error.message });
-      }
+      if (error) throw error;
 
       return res.json({ message: `WhatsApp Conectado! Número verificado: ${verifiedName}`, data });
 
     } catch (metaError: any) {
-      // A Meta rejeitou as credenciais
-      const metaErrorMsg = metaError.response?.data?.error?.message || metaError.message;
-      const metaErrorCode = metaError.response?.data?.error?.code;
+      const msg  = metaError.response?.data?.error?.message || metaError.message;
+      const code = metaError.response?.data?.error?.code;
 
-      console.error(`[WHATSAPP] Credenciais rejeitadas pela Meta. Código: ${metaErrorCode}. Mensagem: ${metaErrorMsg}`);
-
-      return res.status(400).json({
-        error: 'Credenciais inválidas rejeitadas pela Meta',
-        details: metaErrorMsg,
-        code: metaErrorCode
-      });
+      console.error(`[WHATSAPP] Meta rejeitou credenciais. Código: ${code}. Msg: ${msg}`);
+      return res.status(400).json({ error: 'Credenciais inválidas rejeitadas pela Meta', details: msg, code });
     }
-
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
   }
 });
 
-// Webhook — Verificação (GET)
+// ─── GET /api/whatsapp/webhook — Verificação Meta ─────────────────────────────
 router.get('/webhook', (req, res) => {
   const VERIFY_TOKEN = process.env.META_VERIFY_TOKEN || 'orion_webhook_token';
-  const mode = req.query['hub.mode'];
-  const token = req.query['hub.verify_token'];
+  const mode      = req.query['hub.mode'];
+  const token     = req.query['hub.verify_token'];
   const challenge = req.query['hub.challenge'];
 
   if (mode === 'subscribe' && token === VERIFY_TOKEN) {
-    console.log('[WEBHOOK] Webhook verificado com sucesso pela Meta.');
+    console.log('[WEBHOOK] Verificado com sucesso pela Meta.');
     res.status(200).send(challenge);
   } else {
-    console.warn('[WEBHOOK] Verificação do webhook falhou. Token inválido.');
+    console.warn('[WEBHOOK] Falha na verificação. Token inválido.');
     res.sendStatus(403);
   }
 });
 
-// Controle de deduplicação de mensagens (IDs da Meta)
-const processedMessages: Set<string> = new Set();
-setInterval(() => processedMessages.clear(), 10 * 60 * 1000); // Limpa a cada 10 min
+// ─────────────────────────────────────────────────────────────────────────────
+//  Função principal de resposta da IA
+// ─────────────────────────────────────────────────────────────────────────────
+async function triggerAIResponse(params: {
+  orgId: string;
+  fromNumber: string;
+  phoneNumberId: string;
+  accessToken: string;
+  botName: string;
+  message: string;
+  incomingMessageId: string;
+  media?: { base64: string; mimeType: string };
+  referral?: any;
+  isAudio?: boolean;
+  isVoiceAllowed?: boolean;
+}) {
+  const {
+    orgId, fromNumber, phoneNumberId, accessToken, botName,
+    message, incomingMessageId, media, referral, isAudio, isVoiceAllowed,
+  } = params;
 
-// triggerAIResponse removed
+  // Verificar se a IA está pausada (coexistência com humano)
+  const historyKey = `${orgId}:${fromNumber}`;
+  if (aiPauses.has(historyKey) && aiPauses.get(historyKey)! > Date.now()) {
+    console.log(`[IA] Pausada para ${fromNumber}. Mensagem recebida mas não respondida (humano no controlo).`);
+    return;
+  }
 
-// Webhook — Recepção de Mensagens (POST)
+  try {
+    // Indicador de "digitando..."
+    try {
+      await WhatsAppService.sendTypingIndicator(phoneNumberId, incomingMessageId, accessToken);
+    } catch (_) { /* silencioso */ }
+
+    // Buscar histórico das últimas 24h (máx 50 mensagens)
+    const last24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const { data: dbHistory } = await supabaseAdmin
+      .from('conversation_history')
+      .select('sender, text, created_at')
+      .eq('org_id', orgId)
+      .eq('customer_phone', fromNumber)
+      .gte('created_at', last24h)
+      .order('created_at', { ascending: false })
+      .limit(50);
+
+    const history = (dbHistory || []).reverse().map(h => ({ sender: h.sender, text: h.text }));
+
+    // Gerar resposta com IA (Gemini 2.5 Flash + Thinking)
+    const aiResult = await AIService.generateResponse({
+      message,
+      orgId,
+      history,
+      botName,
+      mode: 'simulation',
+      media,
+      referral,
+    });
+
+    if (!aiResult?.reply) {
+      throw new Error('Resposta da IA vazia.');
+    }
+
+    const replyText = aiResult.reply;
+    console.log(`[IA] Resposta gerada para ${fromNumber}: "${replyText.substring(0, 60)}..."`);
+
+    // Persistir resposta no histórico
+    await supabaseAdmin.from('conversation_history').insert({
+      org_id: orgId,
+      customer_phone: fromNumber,
+      sender: 'bot',
+      text: replyText,
+    });
+
+    // Emitir resposta da IA para o Live Chat em tempo real
+    try {
+      getIo().to(`org:${orgId}`).emit('new_message', {
+        phone:     fromNumber,
+        sender:    'bot',
+        text:      replyText,
+        time:      new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        timestamp: new Date().toISOString(),
+        platform:  'whatsapp',
+      });
+    } catch (_) { /* silencioso */ }
+
+    // Enviar mensagem
+    let sentMsgId: string | null = null;
+
+    // Se for áudio e a voz estiver autorizada, tentar TTS
+    if (isAudio && isVoiceAllowed) {
+      const audioPath = await AudioService.textToSpeech(replyText);
+      if (audioPath && fs.existsSync(audioPath)) {
+        const mediaId = await WhatsAppService.uploadMedia(audioPath, phoneNumberId, accessToken);
+        if (mediaId) {
+          sentMsgId = await WhatsAppService.sendAudio(fromNumber, mediaId, phoneNumberId, accessToken);
+        }
+        fs.unlinkSync(audioPath);
+      }
+    }
+
+    // Fallback: texto
+    if (!sentMsgId) {
+      sentMsgId = await WhatsAppService.sendTextMessage(phoneNumberId, fromNumber, replyText, accessToken);
+    }
+
+    if (sentMsgId) {
+      botSentMessages.add(sentMsgId);
+      console.log(`[IA] Mensagem entregue para ${fromNumber}. ID: ${sentMsgId}`);
+    } else {
+      throw new Error('Falha ao enviar mensagem via WhatsApp (Meta API).');
+    }
+
+    // Se a IA detectou pedido de transferência, pausar por 30 minutos
+    if (aiResult.transfer) {
+      aiPauses.set(historyKey, Date.now() + 30 * 60 * 1000);
+      console.log(`[IA] Transferência para humano solicitada para ${fromNumber}. IA pausada por 30 min.`);
+    }
+
+  } catch (err: any) {
+    console.error(`[IA] ERRO no fluxo para ${fromNumber}:`, err.message);
+
+    // Logar erro no histórico para visibilidade no dashboard
+    try {
+      await supabaseAdmin.from('conversation_history').insert({
+        org_id: orgId,
+        customer_phone: fromNumber,
+        sender: 'bot',
+        text: `[Erro do sistema] Desculpe, tive um problema técnico temporário. Por favor tente novamente em breve.`,
+      });
+    } catch (_) { /* silencioso */ }
+  }
+}
+
+// ─── POST /api/whatsapp/webhook — Recepção de mensagens ──────────────────────
 router.post('/webhook', async (req, res) => {
-  res.sendStatus(200);
+  res.sendStatus(200); // Responder 200 à Meta imediatamente
 
   try {
     const body = req.body;
     if (body.object !== 'whatsapp_business_account') return;
 
-    const entry = body.entry?.[0];
-    const changes = entry?.changes?.[0];
-    const value = changes?.value;
+    const entry    = body.entry?.[0];
+    const changes  = entry?.changes?.[0];
+    const value    = changes?.value;
     const messages = value?.messages;
     const metadata = value?.metadata;
 
     if (!messages || messages.length === 0) return;
 
     const incomingMsg = messages[0];
-    const messageId = incomingMsg.id;
+    const messageId   = incomingMsg.id;
 
-    // Evitar processamento duplicado
+    // ── 1. Echo detection — ignorar mensagens enviadas pela nossa IA ──────────
+    if (botSentMessages.has(messageId)) {
+      console.log(`[WEBHOOK] Echo ignorado: ${messageId}`);
+      botSentMessages.delete(messageId);
+      return;
+    }
+
+    // ── 2. Coexistência — detectar humano a responder por fora (Meta Business Suite) ──
+    if (incomingMsg.from === metadata?.display_phone_number || incomingMsg.type === 'echo') {
+      const recipientNumber = incomingMsg.to;
+      if (recipientNumber) {
+        const { data: config } = await supabaseAdmin
+          .from('whatsapp_config')
+          .select('org_id')
+          .eq('phone_number_id', metadata?.phone_number_id)
+          .maybeSingle();
+
+        if (config) {
+          const key = `${config.org_id}:${recipientNumber}`;
+          aiPauses.set(key, Date.now() + 5 * 60 * 1000); // Pausa 5 minutos
+          console.log(`[COEXISTÊNCIA] Humano respondeu para ${recipientNumber}. IA pausada por 5 min.`);
+
+          await supabaseAdmin.from('conversation_history').insert({
+            org_id: config.org_id,
+            customer_phone: recipientNumber,
+            sender: 'human',
+            text: incomingMsg.text?.body || '(Mídia enviada por humano)',
+          });
+        }
+      }
+      return;
+    }
+
+    // ── 3. Dedup — evitar processamento duplicado ─────────────────────────────
     if (processedMessages.has(messageId)) {
       console.log(`[WEBHOOK] Mensagem ${messageId} já processada. Ignorando.`);
       return;
     }
     processedMessages.add(messageId);
 
-    const fromNumber = incomingMsg.from;
+    const fromNumber   = incomingMsg.from;
     const phoneNumberId = metadata?.phone_number_id;
-    const referral = incomingMsg.referral; // Captura o anúncio
+    const referral     = incomingMsg.referral;
 
-    console.log(`[WEBHOOK] Mensagem recebida de ${fromNumber} para o ID ${phoneNumberId}`);
+    console.log(`[WEBHOOK] Nova mensagem de ${fromNumber} → phone_id ${phoneNumberId}`);
 
-    // 1. Buscar organização e configuração
+    // ── 4. Buscar configuração da organização ─────────────────────────────────
     const { data: configData, error: dbError } = await supabaseAdmin
       .from('whatsapp_config')
       .select('org_id, access_token, display_name')
@@ -243,49 +442,174 @@ router.post('/webhook', async (req, res) => {
       .eq('is_active', true)
       .maybeSingle();
 
-    if (dbError) console.error('[WEBHOOK] Erro ao buscar config no banco:', dbError.message);
-    
+    if (dbError) console.error('[WEBHOOK] Erro DB:', dbError.message);
+
     if (!configData) {
-      console.warn(`[WEBHOOK] Nenhuma configuração ativa encontrada para o Phone Number ID: ${phoneNumberId}. Verifique o Dashboard.`);
+      console.warn(`[WEBHOOK] Nenhuma config activa para phone_number_id: ${phoneNumberId}`);
       return;
     }
+
     const { org_id: orgId, access_token: accessTokenRaw, display_name: botName } = configData;
     const accessToken = accessTokenRaw?.trim();
 
-    // Captura da mensagem básica
-    let userText = "";
-    let media = undefined;
+    // ── 5. Verificar plano (voz disponível em Pro/Enterprise/VIP) ─────────────
+    const { data: subData } = await supabaseAdmin
+      .from('subscriptions')
+      .select('plan')
+      .eq('org_id', orgId)
+      .maybeSingle();
 
-    if (incomingMsg.type === 'text') {
-      userText = incomingMsg.text?.body;
-    } else if (['image', 'video', 'audio', 'document'].includes(incomingMsg.type)) {
-      const caption = incomingMsg[incomingMsg.type].caption || "";
-      userText = caption || `(Mídia: ${incomingMsg.type})`;
+    const { data: orgData } = await supabaseAdmin
+      .from('organizations')
+      .select('owner_email')
+      .eq('id', orgId)
+      .maybeSingle();
+
+    let isVip = false;
+    if (orgData?.owner_email) {
+      const { data: vipEntry } = await supabaseAdmin
+        .from('vips')
+        .select('id')
+        .eq('email', orgData.owner_email.toLowerCase())
+        .maybeSingle();
+      if (vipEntry) isVip = true;
+
+      if (!isVip) {
+        const vipEmails = (process.env.VIP_EMAILS || '').split(',').map(e => e.trim().toLowerCase());
+        if (vipEmails.includes(orgData.owner_email.toLowerCase())) isVip = true;
+      }
     }
 
-    if (!userText && !media) return;
+    const currentPlan   = subData?.plan || 'trial';
+    const isVoiceAllowed = currentPlan === 'pro' || currentPlan === 'enterprise' || isVip;
 
-    // 3. Persistir Mensagem do Cliente no Histórico (Banco de Dados)
+    // ── 6. Extrair conteúdo da mensagem ──────────────────────────────────────
+    let userText = '';
+    let media: { base64: string; mimeType: string } | undefined;
+    let isAudioMessage = false;
+
+    if (incomingMsg.type === 'text') {
+      userText = incomingMsg.text?.body || '';
+
+    } else if (['image', 'video', 'audio', 'document'].includes(incomingMsg.type)) {
+      const mediaObj = incomingMsg[incomingMsg.type];
+      const mediaId  = mediaObj?.id;
+      const caption  = mediaObj?.caption || '';
+      const filename = mediaObj?.filename || 'ficheiro';
+
+      if (mediaId) {
+        console.log(`[WEBHOOK] Mídia (${incomingMsg.type}) detectada. A descarregar...`);
+        const mediaData = await WhatsAppService.getMedia(mediaId, accessToken);
+
+        if (mediaData) {
+          media = mediaData;
+
+          if (incomingMsg.type === 'audio') {
+            // Transcrição de áudio via Gemini
+            if (isVoiceAllowed) {
+              const transcript = await AudioService.speechToTextFromBase64(mediaData.base64, mediaData.mimeType);
+              if (transcript) {
+                userText = `[Mensagem de Áudio]: ${transcript}`;
+                isAudioMessage = true;
+                console.log(`[WEBHOOK] Áudio transcrito: "${transcript.substring(0, 80)}"`);
+              } else {
+                userText = '(Mensagem de áudio não transcrita)';
+              }
+            } else {
+              userText = '(Áudio recebido — plano Pro necessário para transcrição)';
+            }
+          } else if (incomingMsg.type === 'document') {
+            // Extracção de texto de documentos
+            const extractedText = await DocumentService.extractTextFromBase64(mediaData.base64, mediaData.mimeType);
+            if (extractedText) {
+              userText = `[Documento "${filename}"]:\n${extractedText.substring(0, 10_000)}`;
+            } else {
+              userText = `(Documento recebido: ${filename})`;
+            }
+            if (caption) userText = `${caption}\n\n${userText}`;
+
+          } else if (incomingMsg.type === 'image') {
+            userText = caption || '(Imagem enviada)';
+            // media é passado para o AIService que usa multimodalidade
+
+          } else {
+            userText = caption || `(Ficheiro de ${incomingMsg.type} enviado)`;
+          }
+        }
+      }
+    }
+
+    if (!userText && !media) {
+      console.warn(`[WEBHOOK] Mensagem de ${fromNumber} sem conteúdo reconhecido. Ignorando.`);
+      return;
+    }
+
+    // ── 7. Enriquecer texto com contexto de anúncio ───────────────────────────
     let dbText = userText || `(Mídia: ${incomingMsg.type})`;
-    if (referral) {
-      dbText = `[Vindo do Anúncio: ${referral.headline || 'Sem título'}] ${dbText}`;
+    if (referral?.headline) {
+      dbText = `[Vindo do Anúncio: "${referral.headline}"] ${dbText}`;
       console.log(`[WEBHOOK] Cliente vindo de anúncio: ${referral.headline}`);
     }
 
+    // ── 8. Persistir mensagem do cliente ─────────────────────────────────────
     await supabaseAdmin.from('conversation_history').insert({
       org_id: orgId,
       customer_phone: fromNumber,
       sender: 'user',
-      text: dbText
+      text: dbText,
     });
 
-    // Resposta Imediata removida - apenas live chat agora
+    // ── 8b. Emitir evento em tempo real para o Live Chat ──────────────────────
+    try {
+      getIo().to(`org:${orgId}`).emit('new_message', {
+        phone:     fromNumber,
+        sender:    'user',
+        text:      dbText,
+        time:      new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        timestamp: new Date().toISOString(),
+        platform:  'whatsapp',
+      });
+    } catch (_) { /* sem clientes conectados */ }
 
-  } catch (error: any) {
-    console.error('[WEBHOOK] Erro:', error.message);
+
+    // ── 9. Gerar e enviar resposta da IA ─────────────────────────────────────
+    await triggerAIResponse({
+      orgId,
+      fromNumber,
+      phoneNumberId,
+      accessToken,
+      botName: botName || 'Assistente',
+      message: dbText,
+      incomingMessageId: messageId,
+      media,
+      referral,
+      isAudio: isAudioMessage,
+      isVoiceAllowed,
+    });
+
+  } catch (err: any) {
+    console.error('[WEBHOOK] Erro fatal:', err.message);
+  }
+});
+
+// ─── POST /api/whatsapp/ai-pause — Pausar/Retomar IA manualmente ──────────────
+router.post('/ai-pause', requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const orgId = req.user?.id;
+    const { phone, pause } = req.body; // pause: true = pausar, false = retomar
+
+    const key = `${orgId}:${phone}`;
+
+    if (pause) {
+      aiPauses.set(key, Date.now() + 24 * 60 * 60 * 1000); // 24h
+      res.json({ message: 'IA pausada para este contacto.' });
+    } else {
+      aiPauses.delete(key);
+      res.json({ message: 'IA retomada para este contacto.' });
+    }
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
   }
 });
 
 export default router;
-
-
