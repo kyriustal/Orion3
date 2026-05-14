@@ -1,6 +1,5 @@
 import { Router } from 'express';
 import { supabaseAdmin } from '../config/supabase';
-import { AIService } from '../services/ai.service';
 import { FacebookService } from '../services/facebook.service';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 
@@ -117,27 +116,7 @@ router.post('/webhook', async (req, res) => {
       // 4. Typing
       await FacebookService.sendTypingIndicator(pageId, senderId, accessToken, 'typing_on');
 
-      // 5. IA
-      const aiResult = await AIService.generateResponse({
-        message: userText,
-        orgId,
-        history,
-        botName: botName || 'Assistente',
-        mode: 'simulation'
-      });
-
-      // 6. Enviar Resposta
-      await FacebookService.sendMessage(pageId, senderId, aiResult.reply, accessToken);
-
-      // 7. Persistir msg do bot
-      await supabaseAdmin.from('conversation_history').insert({
-        org_id: orgId,
-        customer_phone: senderId,
-        sender: 'bot',
-        text: aiResult.reply,
-        metadata: { platform: 'facebook' }
-      });
-    }
+      // AI logic removed
   } catch (error: any) {
     console.error('[FB WEBHOOK] Erro:', error.message);
   }

@@ -1,11 +1,8 @@
 import { Router } from 'express';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import { supabaseAdmin } from '../config/supabase';
-import { AIService } from '../services/ai.service';
 import { WhatsAppService } from '../services/whatsapp.service';
-import { AudioService } from '../services/audio.service';
 import axios from 'axios';
-import fs from 'fs';
 
 const router = Router();
 
@@ -200,153 +197,11 @@ router.get('/webhook', (req, res) => {
   }
 });
 
-// Cache para Pausas de IA (Modo Híbrido)
-const aiPauses: Map<string, number> = new Map();
-
 // Controle de deduplicação de mensagens (IDs da Meta)
 const processedMessages: Set<string> = new Set();
 setInterval(() => processedMessages.clear(), 10 * 60 * 1000); // Limpa a cada 10 min
 
-// Cache de mensagens enviadas pela IA para evitar auto-pausa no echo
-const botSentMessages: Set<string> = new Set();
-setInterval(() => botSentMessages.clear(), 30 * 60 * 1000); // Limpa a cada 30 min
-
-// Controle de timeouts agendados
-const scheduledChecks: Map<string, NodeJS.Timeout> = new Map();
-
-async function triggerAIResponse(params: {
-  orgId: string;
-  fromNumber: string;
-  phoneNumberId: string;
-  accessToken: string;
-  botName: string;
-  message: string;
-  incomingMessageId: string;
-  media?: { base64: string; mimeType: string };
-  referral?: any;
-  isAudio?: boolean;
-  isVoiceAllowed?: boolean;
-}) {
-  const { orgId, fromNumber, phoneNumberId, accessToken, botName, message, incomingMessageId, media, referral, isAudio, isVoiceAllowed } = params;
-
-  try {
-    const historyKey = `${orgId}:${fromNumber}`;
-    if (aiPauses.has(historyKey) && aiPauses.get(historyKey)! > Date.now()) {
-      console.log(`[IA PROATIVA] IA pausada para ${fromNumber}. Ignorando.`);
-      return;
-    }
-
-    // Tenta marcar como lida (não trava se falhar)
-    try {
-        await WhatsAppService.sendTypingIndicator(phoneNumberId, incomingMessageId, accessToken);
-    } catch (e) {}
-
-    console.log(`[IA PROATIVA] Iniciando resposta para ${fromNumber}...`);
-
-    // 1. Recuperar contexto das últimas 24 horas
-    const last24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    
-    const { data: dbHistory, error: historyError } = await supabaseAdmin
-      .from('conversation_history')
-      .select('sender, text, created_at')
-      .eq('org_id', orgId)
-      .eq('customer_phone', fromNumber)
-      .gte('created_at', last24h)
-      .order('created_at', { ascending: false })
-      .limit(50);
-
-    if (historyError) {
-        console.error('[IA] Erro ao buscar histórico:', historyError.message);
-    }
-
-    const history = (dbHistory || []).reverse().map(h => ({ 
-      sender: h.sender, 
-      text: h.text 
-    }));
-
-    // 2. Gerar Resposta IA
-    const aiResult = await AIService.generateResponse({
-      message,
-      orgId,
-      history, 
-      botName,
-      mode: 'simulation',
-      media,
-      referral 
-    });
-
-    if (!aiResult || !aiResult.reply) {
-      console.error(`[IA PROATIVA] AIService retornou resposta vazia para ${fromNumber}`);
-      throw new Error("Resposta da IA vazia ou inválida.");
-    }
-
-    const replyText = aiResult.reply;
-    console.log(`[IA PROATIVA] Resposta gerada para ${fromNumber}: ${replyText.substring(0, 50)}...`);
-
-    // 3. Persistir a resposta
-    const { error: insertError } = await supabaseAdmin.from('conversation_history').insert({
-      org_id: orgId,
-      customer_phone: fromNumber,
-      sender: 'bot',
-      text: replyText
-    });
-
-    if (insertError) {
-      console.error(`[IA PROATIVA] Erro ao persistir histórico para ${fromNumber}:`, insertError.message);
-    }
-
-    // 4. Enviar para WhatsApp
-    let sentMsgId: string | null = null;
-    
-    if (isAudio && isVoiceAllowed) {
-      console.log(`[IA VOZ] Processando voz para ${fromNumber}...`);
-      const audioPath = await AudioService.textToSpeech(replyText);
-      if (audioPath) {
-        const mediaId = await WhatsAppService.uploadMedia(audioPath, phoneNumberId, accessToken);
-        if (mediaId) {
-          sentMsgId = await WhatsAppService.sendAudio(fromNumber, mediaId, phoneNumberId, accessToken);
-        }
-        if (fs.existsSync(audioPath)) fs.unlinkSync(audioPath);
-      } else {
-        console.warn(`[IA VOZ] Falha ao gerar áudio para ${fromNumber}. Usando texto.`);
-      }
-    } 
-    
-    // Fallback ou envio padrão de texto
-    if (!sentMsgId) {
-      console.log(`[IA PROATIVA] Enviando texto para ${fromNumber}...`);
-      sentMsgId = await WhatsAppService.sendTextMessage(phoneNumberId, fromNumber, replyText, accessToken);
-    }
-
-    if (sentMsgId) {
-        botSentMessages.add(sentMsgId);
-        console.log(`[IA PROATIVA] Mensagem entregue com sucesso para ${fromNumber}. ID: ${sentMsgId}`);
-    } else {
-        console.error(`[IA PROATIVA] Falha ao entregar mensagem para ${fromNumber} via Meta API.`);
-        throw new Error("Falha no envio da mensagem via WhatsApp (Meta API).");
-    }
-
-    // Se a IA pedir transferência, pausamos
-    if (aiResult.transfer) {
-      console.log(`[IA PROATIVA] Transferência detectada para ${fromNumber}. Pausando IA.`);
-      aiPauses.set(historyKey, Date.now() + (5 * 60 * 1000));
-    }
-
-  } catch (err: any) {
-    console.error(`[IA PROATIVA] ERRO NO FLUXO DE RESPOSTA para ${fromNumber}:`, err.message);
-    // Log de erro no histórico para o usuário ver no dashboard
-    try {
-      await supabaseAdmin.from('conversation_history').insert({
-        org_id: orgId,
-        customer_phone: fromNumber,
-        sender: 'bot',
-        text: `[Erro do Sistema] Desculpe, tive um problema técnico ao processar sua resposta: ${err.message}`
-      });
-    } catch (dbErr) {
-      console.error(`[IA PROATIVA] Erro crítico: Falha ao logar erro no banco para ${fromNumber}`);
-    }
-  }
-}
+// triggerAIResponse removed
 
 // Webhook — Recepção de Mensagens (POST)
 router.post('/webhook', async (req, res) => {
@@ -366,44 +221,6 @@ router.post('/webhook', async (req, res) => {
 
     const incomingMsg = messages[0];
     const messageId = incomingMsg.id;
-
-    // --- LÓGICA DE COEXISTÊNCIA (ECHO DETECTION) ---
-    // Se a mensagem for um echo de algo que NÓS (IA) enviamos, ignoramos.
-    if (botSentMessages.has(messageId)) {
-      console.log(`[ECHO] Ignorando echo da própria IA.`);
-      botSentMessages.delete(messageId); // Limpa do cache
-      return res.sendStatus(200);
-    }
-
-    // Se a mensagem tem o campo 'from' igual ao nosso número ou se for um echo da Meta
-    // significa que VOCÊ (humano) enviou a mensagem por fora (ex: Meta Business Suite).
-    if (incomingMsg.from === metadata?.display_phone_number || incomingMsg.type === 'echo') {
-      const recipientNumber = incomingMsg.to; // Para quem o humano enviou
-      if (recipientNumber) {
-        // Buscar org_id para este phoneNumberId
-        const { data: config } = await supabaseAdmin
-          .from('whatsapp_config')
-          .select('org_id')
-          .eq('phone_number_id', metadata?.phone_number_id)
-          .maybeSingle();
-
-        if (config) {
-          const historyKey = `${config.org_id}:${recipientNumber}`;
-          aiPauses.set(historyKey, Date.now() + (5 * 60 * 1000)); // Pausa de 5 minutos
-          console.log(`[COEXISTÊNCIA] Humano respondeu para ${recipientNumber}. IA pausada por 5 min.`);
-          
-          // Opcional: Persistir no histórico que foi uma resposta humana
-          await supabaseAdmin.from('conversation_history').insert({
-            org_id: config.org_id,
-            customer_phone: recipientNumber,
-            sender: 'human',
-            text: incomingMsg.text?.body || "(Mídia enviada por humano)"
-          });
-        }
-      }
-      return res.sendStatus(200); // Interrompe aqui, não aciona a IA
-    }
-    // ----------------------------------------------
 
     // Evitar processamento duplicado
     if (processedMessages.has(messageId)) {
@@ -435,93 +252,15 @@ router.post('/webhook', async (req, res) => {
     const { org_id: orgId, access_token: accessTokenRaw, display_name: botName } = configData;
     const accessToken = accessTokenRaw?.trim();
 
-    // 2. Verificar Plano e Status VIP (Voz disponível no Plano Pro ou para VIPs na tabela dedicada)
-    const { data: subData } = await supabaseAdmin
-      .from('subscriptions')
-      .select('plan')
-      .eq('org_id', orgId)
-      .maybeSingle();
-    
-    const { data: orgData } = await supabaseAdmin
-      .from('organizations')
-      .select('owner_email')
-      .eq('id', orgId)
-      .maybeSingle();
-
-    // Verificação na nova tabela de VIPs
-    let isVip = false;
-    if (orgData?.owner_email) {
-      const { data: vipEntry } = await supabaseAdmin
-        .from('vips')
-        .select('id')
-        .eq('email', orgData.owner_email.toLowerCase())
-        .maybeSingle();
-      
-      if (vipEntry) isVip = true;
-    }
-
-    // Fallback para .env (emails VIPs hardcoded)
-    if (!isVip && orgData?.owner_email) {
-      const vipEmails = (process.env.VIP_EMAILS || '').split(',').map(e => e.trim().toLowerCase());
-      if (vipEmails.includes(orgData.owner_email.toLowerCase())) {
-        isVip = true;
-      }
-    }
-
-    const currentPlan = subData?.plan || 'none';
-    const isVoiceAllowed = currentPlan === 'pro' || currentPlan === 'enterprise' || isVip;
-
-    const historyKey = `${orgId}:${fromNumber}`;
-
-    // 2. Detectar Mensagem (Simplificado para garantir resposta)
+    // Captura da mensagem básica
     let userText = "";
     let media = undefined;
 
-    let isAudioMessage = false;
     if (incomingMsg.type === 'text') {
       userText = incomingMsg.text?.body;
     } else if (['image', 'video', 'audio', 'document'].includes(incomingMsg.type)) {
-      const mediaId = incomingMsg[incomingMsg.type].id;
       const caption = incomingMsg[incomingMsg.type].caption || "";
-      const filename = incomingMsg[incomingMsg.type].filename || "arquivo";
-      
-      console.log(`[WEBHOOK] Mídia detectada (${incomingMsg.type}). Baixando...`);
-      const mediaData = await WhatsAppService.getMedia(mediaId, accessToken);
-      
-      if (mediaData) {
-        media = mediaData;
-        
-        // 1. ÁUDIO: Transcrever para texto
-        if (incomingMsg.type === 'audio' && isVoiceAllowed) {
-          console.log(`[IA VOZ] Transcrevendo áudio...`);
-          const transcript = await AudioService.speechToTextFromBase64(mediaData.base64, mediaData.mimeType);
-          if (transcript) {
-            userText = `[Mensagem de Áudio Transcrita]: ${transcript}`;
-            isAudioMessage = true;
-            console.log(`[IA VOZ] Transcrição: ${transcript}`);
-          }
-        } 
-        // 2. DOCUMENTO: Extrair texto se for PDF/DOCX
-        else if (incomingMsg.type === 'document') {
-          console.log(`[IA DOC] Extraindo texto do documento: ${filename}`);
-          const { DocumentService } = await import('../services/document.service');
-          const extractedText = await DocumentService.extractTextFromBase64(mediaData.base64, mediaData.mimeType);
-          
-          if (extractedText) {
-            userText = `[Conteúdo do Documento "${filename}"]: \n${extractedText.substring(0, 10000)}`; // Limite de 10k chars para o prompt
-          } else {
-            userText = `(O cliente enviou um documento: ${filename})`;
-          }
-          if (caption) userText = `${caption}\n\n${userText}`;
-        }
-        // 3. IMAGEM: Apenas capturar legenda (a IA verá a imagem via multimodalidade)
-        else if (incomingMsg.type === 'image') {
-          userText = caption || "(Imagem enviada)";
-        }
-        else {
-          userText = caption || `(Mídia: ${incomingMsg.type})`;
-        }
-      }
+      userText = caption || `(Mídia: ${incomingMsg.type})`;
     }
 
     if (!userText && !media) return;
@@ -540,20 +279,7 @@ router.post('/webhook', async (req, res) => {
       text: dbText
     });
 
-    // 4. Resposta Imediata
-    await triggerAIResponse({ 
-      orgId, 
-      fromNumber, 
-      phoneNumberId, 
-      accessToken, 
-      botName: botName || 'Assistente', 
-      message: dbText, 
-      incomingMessageId: messageId, // Passando o ID para os 3 pontinhos
-      media, 
-      referral,
-      isAudio: isAudioMessage,
-      isVoiceAllowed
-    });
+    // Resposta Imediata removida - apenas live chat agora
 
   } catch (error: any) {
     console.error('[WEBHOOK] Erro:', error.message);
