@@ -332,9 +332,26 @@ async function triggerAIResponse(params: {
       }
     }
 
-    console.log(`[IA] Resposta gerada para ${fromNumber}: "${replyText.substring(0, 60)}..."`);
-    
-    // ... (resto do histórico e emissão Socket.io)
+    // Persistir resposta no histórico
+    await supabaseAdmin.from('conversation_history').insert({
+      org_id: orgId,
+      customer_phone: fromNumber,
+      sender: 'bot',
+      text: replyText,
+    });
+
+    // Emitir resposta da IA para o Live Chat em tempo real
+    try {
+      getIo().to(`org:${orgId}`).emit('new_message', {
+        phone:     fromNumber,
+        sender:    'bot',
+        text:      replyText,
+        botName:   botName,
+        time:      new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        timestamp: new Date().toISOString(),
+        platform:  'whatsapp',
+      });
+    } catch (_) { /* silencioso */ }
 
     // Enviar mensagem
     let sentMsgId: string | null = null;
@@ -569,10 +586,9 @@ router.post('/webhook', async (req, res) => {
     // ── 8. Persistir mensagem do cliente ─────────────────────────────────────
     await supabaseAdmin.from('conversation_history').insert({
       org_id: orgId,
-      customer_phone: fromNumber,
-      sender: 'user',
-      text: dbText,
-    });
+        sender: 'user',
+        text: dbText,
+      });
 
     // ── 8b. Emitir evento em tempo real para o Live Chat ──────────────────────
     try {
@@ -588,6 +604,11 @@ router.post('/webhook', async (req, res) => {
 
 
     // ── 9. Gerar e enviar resposta da IA ─────────────────────────────────────
+    // Emitir sinal de digitação para o Live Chat
+    try {
+      getIo().to(`org:${orgId}`).emit('bot_typing', { phone: fromNumber, typing: true });
+    } catch (_) {}
+
     await triggerAIResponse({
       orgId,
       fromNumber,
@@ -601,6 +622,11 @@ router.post('/webhook', async (req, res) => {
       isAudio: isAudioMessage,
       isVoiceAllowed,
     });
+
+    // Desativar sinal de digitação
+    try {
+      getIo().to(`org:${orgId}`).emit('bot_typing', { phone: fromNumber, typing: false });
+    } catch (_) {}
 
   } catch (err: any) {
     console.error('[WEBHOOK] Erro fatal:', err.message);

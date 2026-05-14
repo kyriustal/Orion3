@@ -6,7 +6,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { io, Socket } from "socket.io-client";
 import { toast } from "sonner";
 
-type Message = { id: number; sender: "user" | "bot" | "human"; text: string; time: string; };
+type Message = { id: number; sender: "user" | "bot" | "human"; text: string; time: string; botName?: string; };
 type Chat = { id: string; phone: string; name: string; lastMessage: string; time: string; timestamp: string; platform?: string; unread?: number; };
 
 export default function LiveChat() {
@@ -34,7 +34,7 @@ export default function LiveChat() {
 
     sock.on("disconnect", () => setIsConnected(false));
 
-    sock.on("new_message", (data: { phone: string; sender: string; text: string; time: string; timestamp: string; platform?: string; }) => {
+    sock.on("new_message", (data: { phone: string; sender: string; text: string; time: string; timestamp: string; platform?: string; botName?: string; }) => {
       setChats(prev => {
         const exists = prev.find(c => c.id === data.phone);
         if (exists) return prev.map(c => c.id === data.phone ? { ...c, lastMessage: data.text, time: data.time, unread: (c.unread || 0) + 1 } : c);
@@ -43,9 +43,18 @@ export default function LiveChat() {
 
       setActiveChatId(activeId => {
         if (activeId === data.phone) {
-          setMessages(prev => [...prev, { id: Date.now() + Math.random(), sender: data.sender as any, text: data.text, time: data.time }]);
+          setMessages(prev => [...prev, { id: Date.now() + Math.random(), sender: data.sender as any, text: data.text, time: data.time, botName: data.botName }]);
         }
         return activeId;
+      });
+    });
+
+    sock.on("bot_typing", (data: { phone: string; typing: boolean }) => {
+      setTypingChatIds(prev => {
+        const next = new Set(prev);
+        if (data.typing) next.add(data.phone);
+        else next.delete(data.phone);
+        return next;
       });
     });
 
@@ -159,13 +168,26 @@ export default function LiveChat() {
                 <div className={`max-w-[72%] rounded-2xl px-4 py-2.5 text-sm shadow-sm ${msg.sender === "user" ? "bg-white border border-zinc-100 text-zinc-900 rounded-tl-sm" : msg.sender === "bot" ? "bg-emerald-50 border border-emerald-100 text-emerald-900 rounded-tr-sm" : "bg-zinc-800 text-white rounded-tr-sm"}`}>
                   <div className="flex items-center gap-1.5 mb-1 opacity-60">
                     {msg.sender === "user" ? <User className="w-3 h-3" /> : <Bot className="w-3 h-3" />}
-                    <span className="text-[10px] font-semibold uppercase tracking-wider">{msg.sender === "user" ? "Cliente" : msg.sender === "bot" ? "IA (Gemini)" : "Você"}</span>
+                    <span className="text-[10px] font-semibold uppercase tracking-wider">
+                      {msg.sender === "user" ? "Cliente" : msg.sender === "bot" ? (msg.botName || "IA") : "Você"}
+                    </span>
                   </div>
                   <p className="whitespace-pre-wrap leading-relaxed">{msg.text}</p>
                   <p className="text-[10px] text-right mt-1 opacity-40">{msg.time}</p>
                 </div>
               </div>
             ))}
+            {activeChatId && typingChatIds.has(activeChatId) && (
+              <div className="flex justify-end animate-in fade-in slide-in-from-bottom-2 duration-300">
+                <div className="bg-emerald-50 border border-emerald-100 rounded-2xl rounded-tr-sm px-4 py-3 shadow-sm">
+                  <div className="flex gap-1">
+                    <div className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
+                    <div className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
+                    <div className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-bounce"></div>
+                  </div>
+                </div>
+              </div>
+            )}
             <div ref={messagesEndRef} />
           </CardContent>
 
