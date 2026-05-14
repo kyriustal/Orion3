@@ -21,6 +21,13 @@ export default function KnowledgeBase() {
 
   const token = () => localStorage.getItem('token') || '';
 
+  const [isImportingSite, setIsImportingSite] = useState(false);
+  const [siteUrl, setSiteUrl] = useState('');
+  const [assets, setAssets] = useState<any[]>([]);
+  const [isUploadingAsset, setIsUploadingAsset] = useState(false);
+  const [assetDesc, setAssetDesc] = useState('');
+  const assetInputRef = useRef<HTMLInputElement>(null);
+
   const fetchDocs = async () => {
     try {
       const res = await fetch('/api/knowledge', { headers: { Authorization: `Bearer ${token()}` } });
@@ -33,7 +40,20 @@ export default function KnowledgeBase() {
     }
   };
 
-  useEffect(() => { fetchDocs(); }, []);
+  const fetchAssets = async () => {
+    try {
+      const res = await fetch('/api/assets', { headers: { Authorization: `Bearer ${token()}` } });
+      const data = await res.json();
+      setAssets(Array.isArray(data) ? data : []);
+    } catch {
+      console.error('Erro ao carregar assets.');
+    }
+  };
+
+  useEffect(() => { 
+    fetchDocs(); 
+    fetchAssets(); 
+  }, []);
 
   const uploadFile = async (file: File) => {
     const allowed = ['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'text/plain'];
@@ -78,13 +98,6 @@ export default function KnowledgeBase() {
     e.target.value = '';
   };
 
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setDragActive(false);
-    const file = e.dataTransfer.files?.[0];
-    if (file) uploadFile(file);
-  };
-
   const handleDelete = async (id: string, filename: string) => {
     if (!confirm(`Remover "${filename}" da base de conhecimento?`)) return;
     try {
@@ -100,21 +113,12 @@ export default function KnowledgeBase() {
     }
   };
 
-  const formatSize = (bytes: number) => {
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  };
-
   const getIcon = (filename: string) => {
     const ext = filename.split('.').pop()?.toLowerCase();
     if (ext === 'pdf') return <FileType className="w-5 h-5 text-red-500" />;
     if (ext === 'docx' || ext === 'doc') return <FileType className="w-5 h-5 text-blue-500" />;
     return <FileText className="w-5 h-5 text-zinc-500" />;
   };
-
-  const [isImportingSite, setIsImportingSite] = useState(false);
-  const [siteUrl, setSiteUrl] = useState('');
 
   const handleImportSite = async () => {
     if (!siteUrl.startsWith('http')) {
@@ -145,69 +149,6 @@ export default function KnowledgeBase() {
       setIsImportingSite(false);
     }
   };
-
-  return (
-    <div className="space-y-6 max-w-4xl pb-12">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-bold tracking-tight text-zinc-900">Base de Conhecimento</h2>
-          <p className="text-zinc-500 text-sm mt-1">
-            Carregue documentos ou adicione sites que a IA usará para responder.
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <div className="hidden md:flex items-center border rounded-lg px-2 bg-white focus-within:ring-2 focus-within:ring-emerald-500">
-            <input 
-              type="text" 
-              placeholder="https://oseusite.com" 
-              className="text-xs p-2 outline-none w-48"
-              value={siteUrl}
-              onChange={e => setSiteUrl(e.target.value)}
-            />
-            <Button 
-              variant="ghost" 
-              size="sm" 
-              className="h-7 text-emerald-600 hover:text-emerald-700"
-              onClick={handleImportSite}
-              disabled={isImportingSite || !siteUrl}
-            >
-              {isImportingSite ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Importar'}
-            </Button>
-          </div>
-          <Button onClick={() => fileInputRef.current?.click()} disabled={isUploading} className="bg-emerald-600 hover:bg-emerald-700 gap-2">
-            {isUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-            Ficheiro
-          </Button>
-        </div>
-        <input ref={fileInputRef} type="file" className="hidden" accept=".pdf,.docx,.doc,.txt" onChange={handleFileInput} />
-      </div>
-
-      {/* Info */}
-      <div className="flex items-start gap-3 bg-blue-50 border border-blue-200 rounded-xl p-4 text-sm text-blue-800">
-        <AlertCircle className="w-4 h-4 mt-0.5 shrink-0 text-blue-500" />
-        <div>
-          O texto extraído dos documentos é automaticamente incorporado no prompt da IA.
-          Ficheiros suportados: <strong>PDF, DOCX, TXT</strong> (máx. 20MB por ficheiro).
-          O texto é limitado a <strong>15 000 caracteres</strong> por documento.
-        </div>
-      </div>
-
-  const [assets, setAssets] = useState<any[]>([]);
-  const [isUploadingAsset, setIsUploadingAsset] = useState(false);
-  const [assetDesc, setAssetDesc] = useState('');
-  const assetInputRef = useRef<HTMLInputElement>(null);
-
-  const fetchAssets = async () => {
-    try {
-      const res = await fetch('/api/assets', { headers: { Authorization: `Bearer ${token()}` } });
-      const data = await res.json();
-      setAssets(Array.isArray(data) ? data : []);
-    } catch {
-      toast.error('Erro ao carregar assets.');
-    }
-  };
-
-  useEffect(() => { fetchDocs(); fetchAssets(); }, []);
 
   const handleAssetUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -331,9 +272,10 @@ export default function KnowledgeBase() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-2">
-                <Label className="text-xs">Descrição para a IA</Label>
-                <Input 
-                  placeholder="Ex: Catálogo de Verão 2026, Tabela de Preços..."
+                <label className="text-xs font-medium">Descrição para a IA</label>
+                <input 
+                  className="flex h-9 w-full rounded-md border border-zinc-200 bg-white px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-500"
+                  placeholder="Ex: Catálogo de Verão 2026..."
                   value={assetDesc}
                   onChange={e => setAssetDesc(e.target.value)}
                 />
@@ -375,9 +317,6 @@ export default function KnowledgeBase() {
           </Card>
         </div>
       </div>
-    </div>
-  );
-}
     </div>
   );
 }
