@@ -5,6 +5,8 @@ import path from 'path';
 import { createServer } from 'http';
 import { initSocket } from './socket';
 
+console.log(`[BOOT] Carregando .env de: ${path.join(process.cwd(), '.env')}`);
+
 // Inicialização
 const app        = express();
 const httpServer = createServer(app);

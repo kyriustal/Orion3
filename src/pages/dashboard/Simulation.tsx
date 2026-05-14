@@ -79,8 +79,7 @@ export default function Simulation() {
       });
 
       const data = await res.json();
-
-      if (!res.ok) throw new Error(data.error || 'Erro na simulação');
+      if (!res.ok) throw new Error(data.details || data.error || 'Erro na simulação');
 
       const botMsg: Message = {
         id: Date.now() + 1,

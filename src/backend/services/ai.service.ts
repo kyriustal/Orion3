@@ -1,5 +1,10 @@
 import axios from 'axios';
+import { createClient } from '@supabase/supabase-js';
+import dotenv from 'dotenv';
+import path from 'path';
 import { supabaseAdmin } from '../config/supabase';
+
+dotenv.config({ path: path.join(process.cwd(), '.env') });
 
 // ─────────────────────────────────────────────────────────
 //  Tipos
@@ -28,7 +33,7 @@ export interface GenerateResult {
 //  Configuração Gemini 2.5 Flash
 // ─────────────────────────────────────────────────────────
 const GEMINI_MODEL = 'gemini-1.5-flash';
-const GEMINI_BASE  = 'https://generativelanguage.googleapis.com/v1beta/models';
+const GEMINI_BASE  = 'https://generativelanguage.googleapis.com/v1/models';
 
 /** Rotação de chaves para distribuir quota */
 export function getApiKey(attempt = 0): string {
