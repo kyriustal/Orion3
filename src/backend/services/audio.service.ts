@@ -1,8 +1,8 @@
 import axios from 'axios';
 import { getApiKey } from './ai.service';
 
-const GEMINI_MODEL = 'gemini-1.5-flash';
-const GEMINI_BASE  = 'https://generativelanguage.googleapis.com/v1/models';
+const GEMINI_MODEL = 'gemini-2.5-flash';
+const GEMINI_BASE  = 'https://generativelanguage.googleapis.com/v1beta/models';
 
 /**
  * Serviço de processamento de áudio.
