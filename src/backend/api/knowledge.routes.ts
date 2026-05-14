@@ -128,4 +128,65 @@ router.get('/context', requireAuth, async (req: AuthRequest, res) => {
   }
 });
 
+// ─── POST /api/knowledge/site — Adicionar conteúdo de um site ───────────────
+router.post('/site', requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const orgId = req.user?.id;
+    const { url } = req.body;
+
+    if (!url || !url.startsWith('http')) {
+      return res.status(400).json({ error: 'URL inválida. Deve começar com http:// ou https://' });
+    }
+
+    // 1. Fetch HTML
+    const response = await axios.get(url, { 
+      headers: { 'User-Agent': 'OrionBot/1.0' },
+      timeout: 15000 
+    });
+    
+    let html = response.data;
+    if (typeof html !== 'string') html = JSON.stringify(html);
+
+    // 2. Limpeza básica (remover scripts, estilos e tags)
+    let text = html
+      .replace(/<script\b[^>]*>([\s\S]*?)<\/script>/gim, '')
+      .replace(/<style\b[^>]*>([\s\S]*?)<\/style>/gim, '')
+      .replace(/<[^>]+>/gm, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    if (text.length < 50) {
+      return res.status(400).json({ error: 'Não foi possível extrair conteúdo relevante deste site.' });
+    }
+
+    // Limitar a 20 000 caracteres
+    const finalContent = text.substring(0, 20_000);
+
+    // 3. Guardar no banco
+    const { data, error } = await supabaseAdmin
+      .from('knowledge_docs')
+      .insert({
+        org_id: orgId,
+        filename: url.replace(/^https?:\/\//, '').substring(0, 50),
+        file_size: finalContent.length,
+        mime_type: 'text/html',
+        content: finalContent,
+        content_preview: `Site: ${url}\n\n` + finalContent.substring(0, 150) + '...',
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    res.json({
+      message: 'Conteúdo do site importado com sucesso!',
+      doc: data,
+    });
+  } catch (err: any) {
+    console.error('[KNOWLEDGE] Erro ao importar site:', err.message);
+    res.status(500).json({ error: `Erro ao aceder ao site: ${err.message}` });
+  }
+});
+
+import axios from 'axios';
 export default router;

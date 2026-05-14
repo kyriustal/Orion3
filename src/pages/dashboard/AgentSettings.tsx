@@ -5,7 +5,7 @@ import { Input } from '@/src/components/ui/input';
 import { Label } from '@/src/components/ui/label';
 import {
   Bot, Save, Loader2, Sparkles, MessageSquare, Zap, Users,
-  UploadCloud, RefreshCw
+  UploadCloud, RefreshCw, Trash2, Plus
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -22,8 +22,25 @@ export default function AgentSettings() {
     social_object:       '',
   });
 
+  const [instructions, setInstructions] = useState<any[]>([]);
+  const [newContent,   setNewContent]   = useState('');
+  const [editingId,    setEditingId]    = useState<string | null>(null);
+
+  const fetchInstructions = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch('/api/instructions', { headers: { Authorization: `Bearer ${token}` } });
+      const data = await res.json();
+      setInstructions(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error('Erro ao buscar instruções:', err);
+    }
+  };
+
   useEffect(() => {
     const token = localStorage.getItem('token');
+    
+    // Carregar configurações básicas
     fetch('/api/settings/org', { headers: { Authorization: `Bearer ${token}` } })
       .then(r => r.json())
       .then(d => {
@@ -39,6 +56,9 @@ export default function AgentSettings() {
       })
       .catch(() => toast.error('Erro ao carregar configurações.'))
       .finally(() => setIsLoading(false));
+
+    // Carregar instruções/fragmentos
+    fetchInstructions();
   }, []);
 
   const handleSave = async () => {
@@ -129,7 +149,6 @@ export default function AgentSettings() {
         </Button>
       </div>
 
-      {/* Modelo Badge */}
       <div className="flex items-center gap-2 bg-gradient-to-r from-violet-50 to-emerald-50 border border-emerald-200 rounded-xl px-4 py-3">
         <Sparkles className="w-4 h-4 text-violet-500" />
         <span className="text-sm font-medium text-zinc-700">Motor IA:</span>
@@ -138,7 +157,6 @@ export default function AgentSettings() {
         <span className="ml-auto text-xs bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-medium">Memória: 50 mensagens</span>
       </div>
 
-      {/* Identidade do Bot */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base"><Bot className="w-4 h-4" /> Identidade do Bot</CardTitle>
@@ -168,33 +186,68 @@ export default function AgentSettings() {
         </CardContent>
       </Card>
 
-      {/* Base de Conhecimento Rápida */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base"><MessageSquare className="w-4 h-4" /> Base de Conhecimento</CardTitle>
-          <CardDescription>Descreva os seus produtos, serviços, preços e políticas. A IA usa esta informação para responder.</CardDescription>
+          <CardTitle className="flex items-center gap-2 text-base"><MessageSquare className="w-4 h-4" /> Conhecimento do Bot</CardTitle>
+          <CardDescription>Adicione diversos fragmentos de informação sobre os seus produtos, serviços e políticas.</CardDescription>
         </CardHeader>
-        <CardContent>
-          <textarea
-            rows={8}
-            className="flex w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 resize-y"
-            value={settings.product_description}
-            onChange={e => set('product_description', e.target.value)}
-            placeholder={`Exemplos:
-• Horário de funcionamento: Segunda a Sexta, 8h-18h
-• Entrega disponível em Luanda e Benguela, prazo 2-3 dias úteis
-• Produto principal: Smartphones novos e recondicionados
-• Política de devolução: 7 dias após a compra com recibo
-• Pagamento: Multicaixa, transferência bancária, dinheiro`}
-          />
-          <p className="text-xs text-zinc-400 mt-2">
-            💡 Para documentos completos (PDF, DOCX), use a{' '}
-            <a href="/dashboard/knowledge" className="text-emerald-600 underline">Base de Conhecimento</a>.
-          </p>
+        <CardContent className="space-y-4">
+          <div className="space-y-2 max-h-64 overflow-y-auto pr-2">
+            {instructions.map(instr => (
+              <div key={instr.id} className="group flex items-start gap-3 p-3 rounded-xl border border-zinc-100 bg-zinc-50/50 hover:border-emerald-200 hover:bg-emerald-50/30 transition-all">
+                <div className="flex-1 text-sm text-zinc-700 line-clamp-3">
+                  {instr.content}
+                </div>
+                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <Button variant="ghost" size="sm" onClick={() => startEdit(instr)} className="h-7 w-7 p-0 text-zinc-400 hover:text-emerald-600">
+                    <RefreshCw className="w-3.5 h-3.5" />
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => handleDeleteInstr(instr.id)} className="h-7 w-7 p-0 text-zinc-400 hover:text-red-500">
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
+              </div>
+            ))}
+            {instructions.length === 0 && (
+              <div className="text-center py-6 text-zinc-400 text-sm italic">
+                Nenhum fragmento de texto adicionado ainda.
+              </div>
+            )}
+          </div>
+
+          <hr className="border-zinc-100" />
+
+          <div className="space-y-3">
+            <Label className="text-xs font-bold uppercase tracking-wider text-zinc-500">
+              {editingId ? 'Editar Fragmento' : 'Adicionar Novo Fragmento'}
+            </Label>
+            <textarea
+              rows={4}
+              className="flex w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-within:border-emerald-500 focus-visible:ring-emerald-500/20 resize-none transition-all"
+              value={newContent}
+              onChange={e => setNewContent(e.target.value)}
+              placeholder="Ex: O nosso horário de atendimento é de 2ª a 6ª das 8h às 18h..."
+            />
+            <div className="flex justify-between items-center">
+              <p className="text-[10px] text-zinc-400">
+                Pode adicionar múltiplos fragmentos de até 2000 caracteres cada.
+              </p>
+              <div className="flex gap-2">
+                {editingId && (
+                  <Button variant="ghost" size="sm" onClick={() => { setEditingId(null); setNewContent(''); }} className="text-xs h-8">
+                    Cancelar
+                  </Button>
+                )}
+                <Button size="sm" onClick={handleAddOrEdit} disabled={!newContent.trim()} className="bg-emerald-600 hover:bg-emerald-700 text-xs h-8 gap-1.5">
+                  <Plus className="w-3.5 h-3.5" />
+                  {editingId ? 'Actualizar' : 'Adicionar ao Bot'}
+                </Button>
+              </div>
+            </div>
+          </div>
         </CardContent>
       </Card>
 
-      {/* Tom da IA */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base"><Zap className="w-4 h-4" /> Tom de Comunicação</CardTitle>

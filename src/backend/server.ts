@@ -38,9 +38,13 @@ import automationsRoutes from './api/automations.routes';
 import templatesRoutes   from './api/templates.routes';
 import campaignsRoutes   from './api/campaigns.routes';
 import billingRoutes     from './api/billing.routes';
+import instructionsRoutes from './api/instructions.routes';
+import assetsRoutes from './api/assets.routes';
 
 app.use('/api/auth',        authRoutes);
 app.use('/api/knowledge',   knowledgeRoutes);
+app.use('/api/instructions', instructionsRoutes);
+app.use('/api/assets',       assetsRoutes);
 app.use('/api/orion-web',   chatRoutes);
 app.use('/api/whatsapp',    whatsappRoutes);
 app.use('/api/facebook',    facebookRoutes);

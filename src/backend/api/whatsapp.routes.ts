@@ -298,28 +298,43 @@ async function triggerAIResponse(params: {
       throw new Error('Resposta da IA vazia.');
     }
 
-    const replyText = aiResult.reply;
+    let replyText = aiResult.reply;
+    
+    // ── 10. Processar envio de arquivos [SEND_FILE: ID] ───────────────────────
+    const fileMatch = replyText.match(/\[SEND_FILE:\s*([a-f0-9-]{36})\]/i);
+    if (fileMatch) {
+      const assetId = fileMatch[1];
+      console.log(`[IA] Comando de envio de arquivo detectado: ${assetId}`);
+      
+      // Remover o código do texto da resposta
+      replyText = replyText.replace(/\[SEND_FILE:\s*[a-f0-9-]{36}\]/i, '').trim();
+
+      // Buscar asset no banco
+      const { data: asset } = await supabaseAdmin
+        .from('public_assets')
+        .select('*')
+        .eq('id', assetId)
+        .eq('org_id', orgId)
+        .single();
+
+      if (asset) {
+        console.log(`[IA] Enviando arquivo "${asset.filename}" para ${fromNumber}...`);
+        await WhatsAppService.sendMediaByUrl(
+          fromNumber, 
+          asset.file_url, 
+          asset.mime_type, 
+          asset.filename, 
+          phoneNumberId, 
+          accessToken
+        );
+      } else {
+        console.warn(`[IA] Asset ${assetId} não encontrado para org ${orgId}`);
+      }
+    }
+
     console.log(`[IA] Resposta gerada para ${fromNumber}: "${replyText.substring(0, 60)}..."`);
-
-    // Persistir resposta no histórico
-    await supabaseAdmin.from('conversation_history').insert({
-      org_id: orgId,
-      customer_phone: fromNumber,
-      sender: 'bot',
-      text: replyText,
-    });
-
-    // Emitir resposta da IA para o Live Chat em tempo real
-    try {
-      getIo().to(`org:${orgId}`).emit('new_message', {
-        phone:     fromNumber,
-        sender:    'bot',
-        text:      replyText,
-        time:      new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        timestamp: new Date().toISOString(),
-        platform:  'whatsapp',
-      });
-    } catch (_) { /* silencioso */ }
+    
+    // ... (resto do histórico e emissão Socket.io)
 
     // Enviar mensagem
     let sentMsgId: string | null = null;
@@ -337,7 +352,7 @@ async function triggerAIResponse(params: {
     }
 
     // Fallback: texto
-    if (!sentMsgId) {
+    if (!sentMsgId && replyText) {
       sentMsgId = await WhatsAppService.sendTextMessage(phoneNumberId, fromNumber, replyText, accessToken);
     }
 

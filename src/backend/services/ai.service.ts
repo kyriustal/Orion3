@@ -119,7 +119,7 @@ REGRAS:
     ? `- Este cliente chegou através do anúncio: "${referral.headline}". Adapte a primeira saudação a esse contexto.`
     : '';
 
-  return `Você é ${botName}, assistente virtual da empresa "${companyName}".
+  return `Você é ${botName}, assistente virtual oficial da empresa "${companyName}".
 ${sector ? `Sector de actividade: ${sector}.` : ''}
 
 ${knowledge
@@ -127,6 +127,7 @@ ${knowledge
   : ''}
 
 REGRAS OBRIGATÓRIAS:
+- No início da conversa (se ainda não o fez), apresente-se pelo seu nome: "${botName}".
 - Responda SEMPRE em português (angolano/europeu), de forma concisa e directa.
 - ${emojiRules[emojiMode] || emojiRules.moderate}
 - Seja prestável e resolva os problemas do cliente com eficiência.
@@ -195,19 +196,59 @@ export class AIService {
       referral,
     } = options;
 
-    // 1. Carregar perfil da organização
+    // 1. Carregar perfil da organização, Base de Conhecimento (RAG) e Assets
     let org: OrgProfile | null = null;
-    if (mode === 'simulation') {
-      const { data } = await supabaseAdmin
+    let externalKnowledge = '';
+    let availableAssets = '';
+
+    if (orgId && mode !== 'support') {
+      // Perfil básico
+      const { data: orgData } = await supabaseAdmin
         .from('organizations')
         .select('name, social_object, product_description, chatbot_name, emoji_mode, handover_mode')
         .eq('id', orgId)
         .maybeSingle();
-      org = data;
+      org = orgData;
+
+      // Documentos e Sites (Base de Conhecimento)
+      const { data: docs } = await supabaseAdmin
+        .from('knowledge_docs')
+        .select('filename, content')
+        .eq('org_id', orgId);
+
+      if (docs && docs.length > 0) {
+        externalKnowledge = docs
+          .map(d => `--- DOCUMENTO: ${d.filename} ---\n${d.content}`)
+          .join('\n\n');
+      }
+
+      // Instruções (Snippets)
+      const { data: snippets } = await supabaseAdmin
+        .from('bot_instructions')
+        .select('content')
+        .eq('org_id', orgId);
+
+      const snippetsText = (snippets || []).map(s => s.content).join('\n');
+
+      // Assets Públicos (Arquivos para enviar)
+      const { data: assets } = await supabaseAdmin
+        .from('public_assets')
+        .select('id, filename, description')
+        .eq('org_id', orgId);
+
+      if (assets && assets.length > 0) {
+        availableAssets = '\n═══ ARQUIVOS QUE VOCÊ PODE ENVIAR AO CLIENTE ═══\n' +
+          assets.map(a => `- ID: ${a.id} | Descrição: ${a.description} | Arquivo: ${a.filename}`).join('\n') +
+          '\nPara enviar um arquivo, responda exatamente com o código: [SEND_FILE: ID] no final da sua resposta.';
+      }
+
+      externalKnowledge = `${snippetsText}\n\n${externalKnowledge}`;
     }
 
     // 2. Construir sistema e conteúdos
-    const systemPrompt = buildSystemPrompt(mode, org, botName, referral);
+    const fullKnowledge = `${org?.product_description || ''}\n\n${externalKnowledge}\n\n${availableAssets}`.trim();
+    
+    const systemPrompt = buildSystemPrompt(mode, { ...org, product_description: fullKnowledge } as any, botName, referral);
     const contents     = buildContents(history, message, media);
 
     // 3. Payload Gemini 2.5 Flash

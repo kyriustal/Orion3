@@ -159,4 +159,49 @@ export class WhatsAppService {
             return null;
         }
     }
+    /**
+     * Envia media (imagem ou documento) a partir de uma URL pública
+     */
+    static async sendMediaByUrl(
+        toNumber: string, 
+        mediaUrl: string, 
+        mimeType: string, 
+        fileName: string,
+        phoneNumberId: string, 
+        accessToken?: string
+    ) {
+        const token = accessToken || process.env.META_ACCESS_TOKEN;
+        if (!token) return null;
+
+        try {
+            const isImage = mimeType.startsWith('image/');
+            const type = isImage ? 'image' : 'document';
+            
+            const url = `https://graph.facebook.com/v19.0/${phoneNumberId}/messages`;
+            const payload: any = {
+                messaging_product: "whatsapp",
+                recipient_type: "individual",
+                to: toNumber,
+                type: type,
+            };
+
+            if (isImage) {
+                payload.image = { link: mediaUrl };
+            } else {
+                payload.document = { link: mediaUrl, filename: fileName };
+            }
+
+            const response = await axios.post(url, payload, {
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            return response.data?.messages?.[0]?.id || null;
+        } catch (error: any) {
+            console.error(`[WHATSAPP] Erro ao enviar media por URL (${fileName}):`, error.response?.data || error.message);
+            return null;
+        }
+    }
 }
