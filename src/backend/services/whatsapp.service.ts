@@ -204,4 +204,19 @@ export class WhatsAppService {
             return null;
         }
     }
+    /**
+     * Busca os templates da Meta
+     */
+    static async getTemplates(wabaId: string, accessToken: string) {
+        try {
+            const url = `https://graph.facebook.com/v19.0/${wabaId}/message_templates`;
+            const response = await axios.get(url, {
+                headers: { 'Authorization': `Bearer ${accessToken}` }
+            });
+            return response.data?.data || [];
+        } catch (error: any) {
+            console.error('[WHATSAPP] Erro ao buscar templates:', error.response?.data || error.message);
+            return [];
+        }
+    }
 }

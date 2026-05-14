@@ -21,6 +21,7 @@ import Settings from './pages/dashboard/Settings';
 import Simulation from './pages/dashboard/Simulation';
 import Automations from './pages/dashboard/Automations';
 import InstagramConfig from './pages/dashboard/InstagramConfig';
+import FacebookConfig from './pages/dashboard/FacebookConfig';
 import Login from './pages/auth/Login';
 import Register from './pages/auth/Register';
 
@@ -90,6 +91,7 @@ export default function App() {
             <Route path="settings"         element={<Settings />} />
             <Route path="automations"      element={<Automations />} />
             <Route path="instagram"        element={<InstagramConfig />} />
+            <Route path="facebook"         element={<FacebookConfig />} />
           </Route>
         </Route>
       </Routes>

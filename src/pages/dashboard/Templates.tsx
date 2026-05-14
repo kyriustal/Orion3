@@ -71,6 +71,26 @@ export default function Templates() {
     }
   };
 
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  const handleSync = async () => {
+    setIsSyncing(true);
+    try {
+      const response = await fetch("/api/templates/sync", {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${localStorage.getItem("token")}` }
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Erro ao sincronizar");
+      toast.success(data.message);
+      fetchTemplates();
+    } catch (error: any) {
+      toast.error(error.message);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="flex h-[400px] items-center justify-center">
@@ -86,9 +106,15 @@ export default function Templates() {
           <h2 className="text-2xl font-bold tracking-tight text-zinc-900">Gestor de Templates (HSM)</h2>
           <p className="text-zinc-500">Crie e gerencie mensagens proativas aprovadas pela Meta.</p>
         </div>
-        <Button onClick={() => setIsModalOpen(true)} className="gap-2 bg-emerald-600 hover:bg-emerald-700">
-          <Plus className="w-4 h-4" /> Novo Template
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={handleSync} disabled={isSyncing} className="gap-2">
+            {isSyncing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+            Sincronizar
+          </Button>
+          <Button onClick={() => setIsModalOpen(true)} className="gap-2 bg-emerald-600 hover:bg-emerald-700">
+            <Plus className="w-4 h-4" /> Novo Template
+          </Button>
+        </div>
       </div>
 
       <Card>
