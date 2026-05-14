@@ -31,20 +31,34 @@ const GEMINI_MODEL = 'gemini-2.5-flash-preview-05-20';
 const GEMINI_BASE  = 'https://generativelanguage.googleapis.com/v1beta/models';
 
 /** Rotação de chaves para distribuir quota */
-function getApiKey(): string {
-  const keys = [
+export function getApiKey(): string {
+  // Coletar todas as chaves possíveis do .env
+  const rawKeys = [
     process.env.GEMINI_API_KEY,
     process.env.GEMINI_API_KEY_2,
     process.env.GEMINI_API_KEY_3,
+    process.env.GEMINI_API_KEY_4,
   ].filter(Boolean) as string[];
 
-  if (keys.length === 0) {
-    throw new Error('[AIService] Nenhuma GEMINI_API_KEY encontrada no .env');
+  // Expandir chaves que venham separadas por vírgula numa única string
+  const allKeys: string[] = [];
+  rawKeys.forEach(k => {
+    if (k.includes(',')) {
+      allKeys.push(...k.split(',').map(s => s.trim().replace(/["']/g, '')));
+    } else {
+      allKeys.push(k.trim().replace(/["']/g, ''));
+    }
+  });
+
+  const finalKeys = allKeys.filter(k => k.length > 10);
+
+  if (finalKeys.length === 0) {
+    throw new Error('[AIService] Nenhuma GEMINI_API_KEY válida encontrada no .env');
   }
 
   // Rotação por minuto para distribuição de carga
-  const idx = Math.floor(Date.now() / 60_000) % keys.length;
-  return keys[idx];
+  const idx = Math.floor(Date.now() / 60_000) % finalKeys.length;
+  return finalKeys[idx];
 }
 
 // ─────────────────────────────────────────────────────────

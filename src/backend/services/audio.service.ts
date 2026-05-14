@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { getApiKey } from './ai.service';
 
 const GEMINI_MODEL = 'gemini-2.5-flash-preview-05-20';
 const GEMINI_BASE  = 'https://generativelanguage.googleapis.com/v1beta/models';
@@ -17,9 +18,11 @@ export class AudioService {
     base64: string,
     mimeType: string
   ): Promise<string | null> {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      console.warn('[AudioService] GEMINI_API_KEY não configurada. Transcrição desativada.');
+    let apiKey: string;
+    try {
+      apiKey = getApiKey();
+    } catch (err) {
+      console.warn('[AudioService] Nenhuma chave válida:', err);
       return null;
     }
 
