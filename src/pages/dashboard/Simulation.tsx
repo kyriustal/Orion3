@@ -91,11 +91,13 @@ export default function Simulation() {
 
       setMessages(prev => [...prev, botMsg]);
     } catch (err: any) {
-      toast.error(err.message);
+      const errorDetail = err.message || 'Erro desconhecido';
+      toast.error(errorDetail);
+      
       setMessages(prev => [...prev, {
         id: Date.now() + 1,
         sender: 'bot',
-        text: '⚠️ Erro ao gerar resposta. Verifique a sua GEMINI_API_KEY.',
+        text: `❌ **Falha na Simulação**\n\n**Erro:** ${errorDetail}\n\n*Verifique os logs do servidor para mais detalhes.*`,
         time: now(),
       }]);
     } finally {
