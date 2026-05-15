@@ -81,6 +81,51 @@ export default function AgentSettings() {
 
   const set = (key: string, val: string) => setSettings(prev => ({ ...prev, [key]: val }));
 
+  const handleAddOrEdit = async () => {
+    if (!newContent.trim()) return;
+    try {
+      const token = localStorage.getItem('token');
+      const method = editingId ? 'PUT' : 'POST';
+      const url = editingId ? `/api/instructions/${editingId}` : '/api/instructions';
+
+      const res = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ content: newContent }),
+      });
+
+      if (!res.ok) throw new Error('Erro ao salvar instrução');
+      
+      toast.success(editingId ? 'Fragmento atualizado!' : 'Novo fragmento adicionado!');
+      setNewContent('');
+      setEditingId(null);
+      fetchInstructions();
+    } catch (err: any) {
+      toast.error(err.message);
+    }
+  };
+
+  const startEdit = (instr: any) => {
+    setEditingId(instr.id);
+    setNewContent(instr.content);
+    window.scrollTo({ top: 400, behavior: 'smooth' });
+  };
+
+  const handleDeleteInstr = async (id: string) => {
+    if (!confirm('Deseja eliminar este fragmento?')) return;
+    try {
+      const token = localStorage.getItem('token');
+      await fetch(`/api/instructions/${id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      toast.success('Fragmento removido.');
+      fetchInstructions();
+    } catch {
+      toast.error('Erro ao eliminar.');
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="flex h-64 items-center justify-center">
