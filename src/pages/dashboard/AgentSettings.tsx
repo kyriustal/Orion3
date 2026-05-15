@@ -70,7 +70,10 @@ export default function AgentSettings() {
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify(settings),
       });
-      if (!res.ok) throw new Error('Erro ao guardar');
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Falha ao comunicar com o servidor.');
+      }
       toast.success('Configurações do agente guardadas com sucesso!');
     } catch (err: any) {
       toast.error(err.message);
