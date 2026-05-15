@@ -481,8 +481,7 @@ router.post('/webhook', async (req, res) => {
       return;
     }
 
-    const { org_id: orgId, access_token: accessTokenRaw, display_name: botName } = configData;
-    const accessToken = accessTokenRaw?.trim();
+    const { org_id: orgId, access_token: accessTokenRaw } = configData;
 
     // ── 5. Verificar plano (voz disponível em Pro/Enterprise/VIP) ─────────────
     const { data: subData } = await supabaseAdmin
