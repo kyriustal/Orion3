@@ -272,7 +272,7 @@ export class AIService {
       },
       contents,
       tools: [
-        { googleSearchRetrieval: {} }
+        { google_search: {} }
       ],
       generationConfig: {
         temperature:     0.4, // Reduzido para maior precisão factual
