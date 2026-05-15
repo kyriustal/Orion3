@@ -157,7 +157,16 @@ router.post('/webhook', async (req, res) => {
         continue;
       }
 
-      const { org_id: orgId, access_token: accessToken, display_name: botName, instagram_user_id: igUserId } = config;
+      const { org_id: orgId, access_token: accessToken, instagram_user_id: igUserId } = config;
+
+      // Buscar nome personalizado (chatbot_name)
+      const { data: org } = await supabaseAdmin
+        .from('organizations')
+        .select('chatbot_name')
+        .eq('id', orgId)
+        .maybeSingle();
+
+      const botName = org?.chatbot_name || config.display_name || 'Assistente';
 
       // 2. Determinar o texto da mensagem
       let messageText = userText;

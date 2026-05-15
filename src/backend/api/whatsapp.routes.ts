@@ -493,9 +493,12 @@ router.post('/webhook', async (req, res) => {
 
     const { data: orgData } = await supabaseAdmin
       .from('organizations')
-      .select('owner_email')
+      .select('owner_email, chatbot_name')
       .eq('id', orgId)
       .maybeSingle();
+
+    const botName = orgData?.chatbot_name || configData.display_name || 'Assistente';
+    const accessToken = accessTokenRaw?.trim();
 
     let isVip = false;
     if (orgData?.owner_email) {

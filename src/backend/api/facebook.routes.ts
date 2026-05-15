@@ -106,7 +106,16 @@ router.post('/webhook', async (req, res) => {
         continue;
       }
 
-      const { org_id: orgId, access_token: accessToken, display_name: botName } = config;
+      const { org_id: orgId, access_token: accessToken } = config;
+
+      // Buscar nome personalizado (chatbot_name)
+      const { data: org } = await supabaseAdmin
+        .from('organizations')
+        .select('chatbot_name')
+        .eq('id', orgId)
+        .maybeSingle();
+
+      const botName = org?.chatbot_name || config.display_name || 'Assistente';
 
       // 2. Buscar histórico (últimas 50 mensagens)
       const last24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();

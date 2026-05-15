@@ -15,11 +15,18 @@ router.post('/agent/simulate', requireAuth, async (req: AuthRequest, res: Respon
       return res.status(400).json({ error: 'Mensagem não pode estar vazia.' });
     }
 
+    const { data: org } = await supabaseAdmin
+      .from('organizations')
+      .select('chatbot_name')
+      .eq('id', orgId)
+      .maybeSingle();
+
     const result = await AIService.generateResponse({
       message: message.trim(),
       orgId,
       history: (history || []).slice(-50),
       mode: 'simulation',
+      botName: org?.chatbot_name || 'Assistente',
     });
 
     res.json(result);
