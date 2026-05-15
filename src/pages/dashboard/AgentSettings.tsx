@@ -85,16 +85,17 @@ export default function AgentSettings() {
     if (!newContent.trim()) return;
     try {
       const token = localStorage.getItem('token');
-      const method = editingId ? 'PUT' : 'POST';
-      const url = editingId ? `/api/instructions/${editingId}` : '/api/instructions';
-
-      const res = await fetch(url, {
-        method,
+      // O backend usa POST para ambos (criar e editar) e identifica pelo 'id' no body
+      const res = await fetch('/api/instructions', {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ content: newContent }),
+        body: JSON.stringify({ 
+          id: editingId, // Se for null, o backend cria novo. Se tiver ID, edita.
+          content: newContent 
+        }),
       });
 
-      if (!res.ok) throw new Error('Erro ao salvar instrução');
+      if (!res.ok) throw new Error('Erro ao salvar instrução no servidor');
       
       toast.success(editingId ? 'Fragmento atualizado!' : 'Novo fragmento adicionado!');
       setNewContent('');
