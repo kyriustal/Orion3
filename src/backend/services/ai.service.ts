@@ -296,9 +296,9 @@ export class AIService {
 
         const parts: any[] = response.data?.candidates?.[0]?.content?.parts ?? [];
 
-        // Filtrar partes de "pensamento" (thought: true) — manter só o output final
-        const rawText = parts
-          .filter((p: any) => !p.thought)
+        // Filtrar partes de "pensamento" oficiais da API e juntar o texto
+        let rawText = parts
+          .filter((p: any) => !p.thought && !p.executableCode && !p.codeExecutionResult)
           .map((p: any) => p.text ?? '')
           .join('')
           .trim();
@@ -306,6 +306,13 @@ export class AIService {
         if (!rawText) {
           throw new Error('Gemini retornou resposta vazia.');
         }
+
+        // Limpeza Regex agressiva para remover "vazamentos" de raciocínio no texto final
+        rawText = rawText.replace(/tool_code\s*[\s\S]*?(?:thought|$)/ig, ''); // Remove blocos de tool_code
+        rawText = rawText.replace(/thought\s*[\s\S]*?(?=\n\n|$)/ig, ''); // Remove blocos de thought residuais
+        rawText = rawText.replace(/print\(.*?\)/ig, ''); // Remove prints de python
+        rawText = rawText.replace(/```python[\s\S]*?```/ig, ''); // Remove blocos de código
+        rawText = rawText.trim();
 
         // 5. Detecção de transferência (sucesso, sair do loop)
         const transfer   = rawText.includes('[TRANSFERIR_HUMANO]');
