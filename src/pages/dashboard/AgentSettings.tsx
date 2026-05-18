@@ -19,6 +19,7 @@ export default function AgentSettings() {
     emoji_mode:          'moderate',
     handover_mode:       'hybrid',
     ai_tone:             'friendly',
+    ai_prompt:           '',
     social_object:       '',
   });
 
@@ -51,6 +52,7 @@ export default function AgentSettings() {
           emoji_mode:          d.emoji_mode          || 'moderate',
           handover_mode:       d.handover_mode       || 'hybrid',
           ai_tone:             d.ai_tone             || 'friendly',
+          ai_prompt:           d.ai_prompt           || '',
           social_object:       d.social_object       || '',
         }));
       })
@@ -302,8 +304,20 @@ export default function AgentSettings() {
           <CardTitle className="flex items-center gap-2 text-base"><Zap className="w-4 h-4" /> Tom de Comunicação</CardTitle>
           <CardDescription>Define o estilo geral das respostas do agente.</CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-6">
           <OptionGrid options={toneOptions} value={settings.ai_tone} onChange={v => set('ai_tone', v)} />
+          
+          <div className="space-y-2 pt-4 border-t border-zinc-100">
+            <Label>Comportamento Personalizado / Prompt (Opcional)</Label>
+            <textarea
+              rows={4}
+              className="flex w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-within:border-emerald-500 focus-visible:ring-emerald-500/20 resize-none transition-all"
+              value={settings.ai_prompt}
+              onChange={e => set('ai_prompt', e.target.value)}
+              placeholder="Ex: Responda sempre com muito entusiasmo, usando girias locais..."
+            />
+            <p className="text-xs text-zinc-400">Instruções diretas para a IA sobre como ela deve se portar.</p>
+          </div>
         </CardContent>
       </Card>
 

@@ -281,6 +281,14 @@ async function triggerAIResponse(params: {
       .order('created_at', { ascending: false })
       .limit(50);
 
+    let timeSinceLastMessageHours = 0;
+    if (dbHistory && dbHistory.length > 1) {
+      // dbHistory[0] is the message we just inserted. dbHistory[1] is the previous one.
+      const currentMsgTime = new Date(dbHistory[0].created_at).getTime();
+      const prevMsgTime = new Date(dbHistory[1].created_at).getTime();
+      timeSinceLastMessageHours = (currentMsgTime - prevMsgTime) / (1000 * 60 * 60);
+    }
+
     const history = (dbHistory || []).reverse().map(h => ({ sender: h.sender, text: h.text }));
 
     // Gerar resposta com IA (Gemini 2.5 Flash + Thinking)
@@ -292,6 +300,7 @@ async function triggerAIResponse(params: {
       mode: 'simulation',
       media,
       referral,
+      timeSinceLastMessageHours,
     });
 
     if (!aiResult?.reply) {

@@ -19,6 +19,7 @@ export interface GenerateOptions {
   mode?: 'simulation' | 'support';
   media?: { base64: string; mimeType: string };
   referral?: any;
+  timeSinceLastMessageHours?: number;
 }
 
 export interface GenerateResult {
@@ -75,13 +76,15 @@ interface OrgProfile {
   chatbot_name?: string;
   emoji_mode?: string;
   handover_mode?: string;
+  ai_prompt?: string;
 }
 
 function buildSystemPrompt(
   mode: 'simulation' | 'support',
   org: OrgProfile | null,
   botNameOverride?: string,
-  referral?: any
+  referral?: any,
+  timeSinceLastMessageHours?: number
 ): string {
   // ── Modo Suporte Orion (widget do site) ────────────────
   if (mode === 'support') {
@@ -104,6 +107,7 @@ REGRAS:
   const knowledge   = org?.product_description || '';
   const emojiMode   = org?.emoji_mode || 'moderate';
   const handover    = org?.handover_mode || 'hybrid';
+  const customPrompt= org?.ai_prompt ? `\n═══ INSTRUÇÕES DE COMPORTAMENTO (PROMPT PERSONALIZADO) ═══\n${org.ai_prompt}\n` : '';
 
   const emojiRules: Record<string, string> = {
     none:     'NÃO use emojis em nenhuma circunstância. Seja puramente textual e formal.',
@@ -119,6 +123,11 @@ REGRAS:
     ? `- Este cliente chegou através do anúncio: "${referral.headline}". Adapte a primeira saudação a esse contexto.`
     : '';
 
+  let returnGreetingRule = '';
+  if (timeSinceLastMessageHours !== undefined && timeSinceLastMessageHours >= 1) {
+    returnGreetingRule = `- O cliente esteve inativo por mais de 1 hora. Se a nova mensagem dele for uma saudação (ex: "Olá", "Bom dia"), dê uma saudação MUITO BREVE, pergunte como pode ajudar e retome o assunto anterior se necessário. NÃO despeje um longo texto sobre o seu perfil ou a empresa.`;
+  }
+
   return `Você é ${botName}, assistente virtual oficial da empresa "${companyName}".
 ${sector ? `Sector de actividade: ${sector}.` : ''}
 
@@ -128,17 +137,17 @@ ${knowledge ? knowledge : 'Você deve agir como um assistente cordial e prestati
 ═══ FERRAMENTAS EXTERNAS (GROUNDING) ═══
 - Você tem acesso à PESQUISA GOOGLE em tempo real.
 - Sempre que o cliente perguntar algo que exija dados actualizados (ex: taxas de visto actuais, requisitos de entrada de um país, moradas de consulados ou notícias recentes), UTILIZE a ferramenta de pesquisa para consultar sites oficiais e instituições relacionadas.
-
+${customPrompt}
 ═══ REGRAS DE COMPORTAMENTO (DRÁSTICAS) ═══
-- PROIBIDO INICIAR COM SAUDAÇÕES: Não comece suas mensagens com "Olá", "Oi", "Tudo bem?" ou apresentações se você já falou com este cliente antes.
-- Se o histórico de conversa acima mostra que você já enviou pelo menos uma mensagem, ignore saudações e vá DIRETO à resposta.
-- ZERO REPETIÇÃO: Se o cliente fizer uma pergunta de acompanhamento (ex: "Fale mais disso"), responda apenas sobre o assunto solicitado sem introduções.
-- BREVIDADE EXTREMA: Use o mínimo de palavras possível para ser claro e útil.
-- Fale como se você já estivesse conversando com a pessoa há horas. Sem formalidades desnecessárias de início de contacto.
+- SAUDAÇÃO LEVE E CURTA: A primeira mensagem de saudação deve ser extremamente leve e curta. PROIBIDO fazer despejo de textos longos lendo o perfil da empresa.
+- PROIBIDO REPETIR SAUDAÇÕES: Se o histórico de conversa acima mostra que você já enviou pelo menos uma mensagem e a conversa está em andamento, vá DIRETO à resposta, sem saudar novamente.
+- ZERO REPETIÇÃO: Se o cliente fizer uma pergunta de acompanhamento (ex: "Fale mais disso"), responda apenas sobre o assunto solicitado.
+- BREVIDADE: Use o mínimo de palavras possível para ser claro e útil.
+${returnGreetingRule}
 
 ═══ REGRAS DE IDENTIDADE ═══
 - Seu NOME é "${botName}". Use-o apenas se perguntarem quem você é.
-- NUNCA se identifique pelo nome da empresa "${companyName}". Você é Mayra.
+- NUNCA se identifique pelo nome da empresa "${companyName}". Você é o assistente.
 
 REGRAS OBRIGATÓRIAS:
 - Responda SEMPRE em português (angolano/europeu).
@@ -205,6 +214,7 @@ export class AIService {
       mode = 'simulation',
       media,
       referral,
+      timeSinceLastMessageHours,
     } = options;
 
     // 1. Carregar perfil da organização, Base de Conhecimento (RAG) e Assets
@@ -216,7 +226,7 @@ export class AIService {
       // Perfil básico
       const { data: orgData } = await supabaseAdmin
         .from('organizations')
-        .select('name, social_object, product_description, chatbot_name, emoji_mode, handover_mode')
+        .select('name, social_object, product_description, chatbot_name, emoji_mode, handover_mode, ai_prompt')
         .eq('id', orgId)
         .maybeSingle();
       org = orgData;
@@ -259,7 +269,7 @@ export class AIService {
     // 2. Construir sistema e conteúdos
     const fullKnowledge = `${org?.product_description || ''}\n\n${externalKnowledge}\n\n${availableAssets}`.trim();
     
-    const systemPrompt = buildSystemPrompt(mode, { ...org, product_description: fullKnowledge } as any, botName, referral);
+    const systemPrompt = buildSystemPrompt(mode, { ...org, product_description: fullKnowledge } as any, botName, referral, timeSinceLastMessageHours);
     const contents     = buildContents(history, message, media);
 
     // 3. Payload Gemini 2.5 Flash com Grounding (Google Search)
