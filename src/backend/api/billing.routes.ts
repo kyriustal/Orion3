@@ -24,7 +24,7 @@ const PLAN_LABELS: Record<string, string> = {
 // GET /api/billing/status - Estado da subscrição atual
 router.get('/status', requireAuth, async (req: AuthRequest, res) => {
     try {
-        const orgId = req.user?.id;
+        const orgId = req.user?.orgId;
         const email = req.user?.email;
 
         const { data: sub, error } = await supabaseAdmin
@@ -65,7 +65,7 @@ router.get('/status', requireAuth, async (req: AuthRequest, res) => {
 // POST /api/billing/payment/create - Gerar referência Multicaixa
 router.post('/payment/create', requireAuth, async (req: AuthRequest, res) => {
     try {
-        const orgId = req.user?.id;
+        const orgId = req.user?.orgId;
         const { plan } = req.body;
 
         if (!PLAN_PRICES[plan]) {

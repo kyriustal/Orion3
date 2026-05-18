@@ -7,7 +7,7 @@ const router = Router();
 // Iniciar disparo de campanha
 router.post('/send', requireAuth, async (req: any, res) => {
   try {
-    const orgId = req.user.id;
+    const orgId = req.user!.orgId;
     const { name, template, audience, filters, delay_seconds } = req.body;
 
     // 1. Registra a campanha no histórico
@@ -42,7 +42,7 @@ router.post('/send', requireAuth, async (req: any, res) => {
 // Listar histórico de campanhas
 router.get('/', requireAuth, async (req: any, res) => {
   try {
-    const orgId = req.user.id;
+    const orgId = req.user!.orgId;
     const { data, error } = await supabaseAdmin
       .from('campaigns')
       .select('*')

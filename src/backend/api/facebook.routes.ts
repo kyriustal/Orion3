@@ -14,7 +14,7 @@ setInterval(() => processedFbMessages.clear(), 10 * 60 * 1000);
 // ─── GET /api/facebook/config ─────────────────────────────────────────────────
 router.get('/config', requireAuth, async (req: AuthRequest, res) => {
   try {
-    const orgId = req.user?.id;
+    const orgId = req.user?.orgId;
     const { data, error } = await supabaseAdmin
       .from('facebook_config')
       .select('*')
@@ -31,7 +31,7 @@ router.get('/config', requireAuth, async (req: AuthRequest, res) => {
 // ─── POST /api/facebook/config ────────────────────────────────────────────────
 router.post('/config', requireAuth, async (req: AuthRequest, res) => {
   try {
-    const orgId = req.user?.id;
+    const orgId = req.user?.orgId;
     const { page_id, access_token, display_name } = req.body;
 
     const { data, error } = await supabaseAdmin

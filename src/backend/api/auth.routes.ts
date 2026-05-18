@@ -32,6 +32,23 @@ router.post('/login', async (req, res) => {
 
         const user = authData.user;
 
+        let orgId = user.id;
+        let role = 'OWNER';
+
+        // Check if user is an owner
+        const { data: org } = await supabaseAdmin.from('organizations').select('id').eq('id', user.id).maybeSingle();
+
+        if (!org && !VIP_EMAILS.includes(email.toLowerCase())) {
+            // Check if user is a team member
+            const { data: member } = await supabaseAdmin.from('team_members').select('org_id, role').eq('user_id', user.id).maybeSingle();
+            if (member) {
+                orgId = member.org_id;
+                role = member.role;
+            } else {
+                return res.status(401).json({ error: 'Conta não tem nenhuma organização associada.' });
+            }
+        }
+
         // Verificar subscrição (exceto VIPs)
         let subscriptionStatus = 'active';
         let subscriptionPlan = 'vip';
@@ -41,7 +58,7 @@ router.post('/login', async (req, res) => {
             const { data: sub } = await supabaseAdmin
                 .from('subscriptions')
                 .select('*')
-                .eq('org_id', user.id)
+                .eq('org_id', orgId)
                 .maybeSingle();
 
             if (sub) {
@@ -66,7 +83,9 @@ router.post('/login', async (req, res) => {
         const token = jwt.sign(
             {
                 id: user.id,
+                orgId: orgId,
                 email: user.email,
+                role: role,
                 subscription: { status: subscriptionStatus, plan: subscriptionPlan }
             },
             JWT_SECRET,
@@ -76,7 +95,7 @@ router.post('/login', async (req, res) => {
         res.json({
             message: 'Login realizado com sucesso',
             token,
-            user: { id: user.id, email: user.email },
+            user: { id: user.id, orgId: orgId, email: user.email, role: role },
             subscription: { status: subscriptionStatus, plan: subscriptionPlan, daysLeft },
         });
     } catch (error: any) {

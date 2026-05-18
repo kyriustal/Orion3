@@ -32,7 +32,7 @@ const navItems = [
 export default function DashboardLayout() {
   const location = useLocation();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const [user, setUser] = useState({ name: 'Carregando...', email: '' });
+  const [user, setUser] = useState({ name: 'Carregando...', email: '', role: 'OWNER' });
   const [subStatus, setSubStatus] = useState<{ status: string; plan: string; daysLeft: number } | null>(null);
 
   useEffect(() => {
@@ -45,7 +45,8 @@ export default function DashboardLayout() {
         if (data.user) {
           setUser({
             name: data.user.name || data.user.email?.split('@')[0] || "Usuário",
-            email: data.user.email
+            email: data.user.email,
+            role: data.user.role || 'OWNER'
           });
         }
       })
@@ -59,6 +60,22 @@ export default function DashboardLayout() {
       .then(data => setSubStatus(data))
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (user.role === 'AGENT' && (location.pathname === '/dashboard' || location.pathname === '/dashboard/')) {
+      window.location.href = '/dashboard/live-chat';
+    }
+  }, [user.role, location.pathname]);
+
+  const filteredNavItems = navItems.filter(item => {
+    if (user.role === 'AGENT') {
+      return ['Live Chat', 'Configurações'].includes(item.name);
+    }
+    if (user.role === 'VIEWER') {
+      return ['Dashboard', 'Insights & Sentimento'].includes(item.name);
+    }
+    return true;
+  });
 
   return (
     <div className="flex h-screen bg-zinc-50 flex-col md:flex-row">
@@ -86,7 +103,7 @@ export default function DashboardLayout() {
           </div>
 
           <nav className="flex-1 overflow-y-auto p-4 space-y-2">
-            {navItems.map((item) => {
+            {filteredNavItems.map((item) => {
               const isActive = location.pathname === item.path || (item.path !== '/dashboard' && location.pathname.startsWith(item.path));
               return (
                 <Link
@@ -114,7 +131,7 @@ export default function DashboardLayout() {
               </div>
             </div>
             <button
-              onClick={() => window.location.href = '/login'}
+              onClick={() => { localStorage.removeItem('token'); window.location.href = '/login'; }}
               className="flex items-center gap-3 w-full px-4 py-3 rounded-lg text-base font-medium text-red-400 hover:bg-red-500/10 transition-colors"
             >
               <LogOut className="w-6 h-6" />
@@ -132,7 +149,7 @@ export default function DashboardLayout() {
           </Link>
         </div>
         <nav className="flex-1 overflow-y-auto p-4 space-y-1">
-          {navItems.map((item) => {
+          {filteredNavItems.map((item) => {
             const isActive = location.pathname === item.path || (item.path !== '/dashboard' && location.pathname.startsWith(item.path));
             return (
               <Link
@@ -181,16 +198,18 @@ export default function DashboardLayout() {
                   <span>Configurações da Conta</span>
                 </Link>
               </DropdownMenuItem>
-              <DropdownMenuItem asChild>
-                <Link to="/dashboard/billing" className="cursor-pointer">
-                  <CreditCard className="mr-2 h-4 w-4" />
-                  <span>Faturamento</span>
-                </Link>
-              </DropdownMenuItem>
+              {user.role !== 'AGENT' && user.role !== 'VIEWER' && (
+                <DropdownMenuItem asChild>
+                  <Link to="/dashboard/billing" className="cursor-pointer">
+                    <CreditCard className="mr-2 h-4 w-4" />
+                    <span>Faturamento</span>
+                  </Link>
+                </DropdownMenuItem>
+              )}
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 className="text-red-600 focus:bg-red-50 focus:text-red-700 cursor-pointer"
-                onClick={() => window.location.href = '/login'}
+                onClick={() => { localStorage.removeItem('token'); window.location.href = '/login'; }}
               >
                 <LogOut className="mr-2 h-4 w-4" />
                 <span>Sair da Conta</span>

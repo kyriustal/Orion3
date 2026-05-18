@@ -39,7 +39,7 @@ router.post('/agent/simulate', requireAuth, async (req: AuthRequest, res: Respon
 // ─── GET /api/settings/org — Carregar configurações da organização ────────────
 router.get('/settings/org', requireAuth, async (req: AuthRequest, res) => {
   try {
-    const orgId = req.user?.id;
+    const orgId = req.user?.orgId;
     const { data, error } = await supabaseAdmin
       .from('organizations')
       .select('*')
@@ -56,7 +56,7 @@ router.get('/settings/org', requireAuth, async (req: AuthRequest, res) => {
 // ─── POST /api/settings/org — Guardar configurações da organização ────────────
 router.post('/settings/org', requireAuth, async (req: AuthRequest, res) => {
   try {
-    const orgId = req.user?.id;
+    const orgId = req.user?.orgId;
     const body = req.body;
 
     const { error } = await supabaseAdmin

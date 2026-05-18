@@ -14,7 +14,7 @@ setInterval(() => processedIgMessages.clear(), 10 * 60 * 1000);
 // ─── GET /api/instagram/config ────────────────────────────────────────────────
 router.get('/config', requireAuth, async (req: AuthRequest, res) => {
   try {
-    const orgId = req.user?.id;
+    const orgId = req.user?.orgId;
     const { data, error } = await supabaseAdmin
       .from('instagram_config')
       .select('id, instagram_user_id, page_id, display_name, username, is_active, created_at')
@@ -31,7 +31,7 @@ router.get('/config', requireAuth, async (req: AuthRequest, res) => {
 // ─── POST /api/instagram/config — Guardar com validação automática ─────────────
 router.post('/config', requireAuth, async (req: AuthRequest, res) => {
   try {
-    const orgId = req.user?.id;
+    const orgId = req.user?.orgId;
     const { access_token, display_name } = req.body;
 
     if (!access_token) {
@@ -78,7 +78,7 @@ router.post('/config', requireAuth, async (req: AuthRequest, res) => {
 // ─── DELETE /api/instagram/config — Desconectar Instagram ─────────────────────
 router.delete('/config', requireAuth, async (req: AuthRequest, res) => {
   try {
-    const orgId = req.user?.id;
+    const orgId = req.user?.orgId;
     const { error } = await supabaseAdmin
       .from('instagram_config')
       .update({ is_active: false })

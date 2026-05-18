@@ -9,7 +9,7 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 
 // ─── GET /api/assets — Listar assets ─────────────────────────────────────────
 router.get('/', requireAuth, async (req: AuthRequest, res) => {
   try {
-    const orgId = req.user?.id;
+    const orgId = req.user?.orgId;
     const { data, error } = await supabaseAdmin
       .from('public_assets')
       .select('*')
@@ -26,7 +26,7 @@ router.get('/', requireAuth, async (req: AuthRequest, res) => {
 // ─── POST /api/assets — Upload de asset ──────────────────────────────────────
 router.post('/', requireAuth, upload.single('file'), async (req: AuthRequest, res) => {
   try {
-    const orgId = req.user?.id;
+    const orgId = req.user?.orgId;
     const { description } = req.body;
     const file = req.file;
 
@@ -72,7 +72,7 @@ router.post('/', requireAuth, upload.single('file'), async (req: AuthRequest, re
 // ─── DELETE /api/assets/:id ──────────────────────────────────────────────────
 router.delete('/:id', requireAuth, async (req: AuthRequest, res) => {
   try {
-    const orgId = req.user?.id;
+    const orgId = req.user?.orgId;
     const { id } = req.params;
 
     // 1. Buscar info do ficheiro

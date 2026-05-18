@@ -7,7 +7,7 @@ const router = Router();
 // Listar automações
 router.get('/', requireAuth, async (req: any, res) => {
   try {
-    const orgId = req.user.id;
+    const orgId = req.user!.orgId;
     const { data, error } = await supabaseAdmin
       .from('automations')
       .select('*')
@@ -23,7 +23,7 @@ router.get('/', requireAuth, async (req: any, res) => {
 // Criar automação
 router.post('/', requireAuth, async (req: any, res) => {
   try {
-    const orgId = req.user.id;
+    const orgId = req.user!.orgId;
     const { name, type, config } = req.body;
 
     const { data, error } = await supabaseAdmin

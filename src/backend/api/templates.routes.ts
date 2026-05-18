@@ -7,7 +7,7 @@ const router = Router();
 // Listar templates
 router.get('/', requireAuth, async (req: any, res) => {
   try {
-    const orgId = req.user.id;
+    const orgId = req.user!.orgId;
     const { data, error } = await supabaseAdmin
       .from('templates')
       .select('*')
@@ -23,7 +23,7 @@ router.get('/', requireAuth, async (req: any, res) => {
 // Criar template (Envia para "Análise")
 router.post('/', requireAuth, async (req: any, res) => {
   try {
-    const orgId = req.user.id;
+    const orgId = req.user!.orgId;
     const { name, category, language, content } = req.body;
 
     const { data, error } = await supabaseAdmin
@@ -51,7 +51,7 @@ import { WhatsAppService } from '../services/whatsapp.service';
 // Sincronizar templates com a Meta
 router.post('/sync', requireAuth, async (req: any, res) => {
   try {
-    const orgId = req.user.id;
+    const orgId = req.user!.orgId;
 
     // 1. Buscar config do WhatsApp para pegar WABA ID e Token
     const { data: config } = await supabaseAdmin

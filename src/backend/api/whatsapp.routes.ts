@@ -27,7 +27,7 @@ const aiPauses = new Map<string, number>();
 // ─── GET /api/whatsapp/ping ───────────────────────────────────────────────────
 router.get('/ping', requireAuth, async (req: AuthRequest, res) => {
   try {
-    const orgId = req.user?.id;
+    const orgId = req.user?.orgId;
     const { data: config } = await supabaseAdmin
       .from('whatsapp_config')
       .select('is_active, display_name, phone_number_id')
@@ -48,7 +48,7 @@ router.get('/ping', requireAuth, async (req: AuthRequest, res) => {
 // ─── GET /api/whatsapp/config ─────────────────────────────────────────────────
 router.get('/config', requireAuth, async (req: AuthRequest, res) => {
   try {
-    const orgId = req.user?.id;
+    const orgId = req.user?.orgId;
     const { data, error } = await supabaseAdmin
       .from('whatsapp_config')
       .select('*')
@@ -65,7 +65,7 @@ router.get('/config', requireAuth, async (req: AuthRequest, res) => {
 // ─── GET /api/whatsapp/chats — Listar conversas ───────────────────────────────
 router.get('/chats', requireAuth, async (req: AuthRequest, res) => {
   try {
-    const orgId = req.user?.id;
+    const orgId = req.user?.orgId;
 
     const { data: history, error } = await supabaseAdmin
       .from('conversation_history')
@@ -99,7 +99,7 @@ router.get('/chats', requireAuth, async (req: AuthRequest, res) => {
 // ─── GET /api/whatsapp/history/:phone ─────────────────────────────────────────
 router.get('/history/:phone', requireAuth, async (req: AuthRequest, res) => {
   try {
-    const orgId = req.user?.id;
+    const orgId = req.user?.orgId;
     const { phone } = req.params;
 
     const { data, error } = await supabaseAdmin
@@ -128,7 +128,7 @@ router.get('/history/:phone', requireAuth, async (req: AuthRequest, res) => {
 // ─── POST /api/whatsapp/send — Envio manual pelo agente humano ────────────────
 router.post('/send', requireAuth, async (req: AuthRequest, res) => {
   try {
-    const orgId = req.user?.id;
+    const orgId = req.user?.orgId;
     const { phone, message } = req.body;
 
     if (!phone || !message) {
@@ -174,7 +174,7 @@ router.post('/send', requireAuth, async (req: AuthRequest, res) => {
 // ─── POST /api/whatsapp/config — Guardar configuração com validação Meta ──────
 router.post('/config', requireAuth, async (req: AuthRequest, res) => {
   try {
-    const orgId = req.user?.id;
+    const orgId = req.user?.orgId;
     const { phone_number_id, waba_id, access_token } = req.body;
 
     if (!phone_number_id || !access_token) {
@@ -597,9 +597,10 @@ router.post('/webhook', async (req, res) => {
     // ── 8. Persistir mensagem do cliente ─────────────────────────────────────
     await supabaseAdmin.from('conversation_history').insert({
       org_id: orgId,
-        sender: 'user',
-        text: dbText,
-      });
+      customer_phone: fromNumber,
+      sender: 'user',
+      text: dbText,
+    });
 
     // ── 8b. Emitir evento em tempo real para o Live Chat ──────────────────────
     try {
@@ -647,7 +648,7 @@ router.post('/webhook', async (req, res) => {
 // ─── POST /api/whatsapp/ai-pause — Pausar/Retomar IA manualmente ──────────────
 router.post('/ai-pause', requireAuth, async (req: AuthRequest, res) => {
   try {
-    const orgId = req.user?.id;
+    const orgId = req.user?.orgId;
     const { phone, pause } = req.body; // pause: true = pausar, false = retomar
 
     const key = `${orgId}:${phone}`;

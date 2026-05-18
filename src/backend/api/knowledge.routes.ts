@@ -10,7 +10,7 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 
 // ─── GET /api/knowledge — Listar documentos da base de conhecimento ──────────
 router.get('/', requireAuth, async (req: AuthRequest, res) => {
   try {
-    const orgId = req.user?.id;
+    const orgId = req.user?.orgId;
 
     const { data, error } = await supabaseAdmin
       .from('knowledge_docs')
@@ -29,7 +29,7 @@ router.get('/', requireAuth, async (req: AuthRequest, res) => {
 // ─── POST /api/knowledge — Upload de documento ───────────────────────────────
 router.post('/', requireAuth, upload.single('file'), async (req: AuthRequest, res) => {
   try {
-    const orgId = req.user?.id;
+    const orgId = req.user?.orgId;
     const file = req.file;
 
     if (!file) {
@@ -87,7 +87,7 @@ router.post('/', requireAuth, upload.single('file'), async (req: AuthRequest, re
 // ─── DELETE /api/knowledge/:id — Remover documento ──────────────────────────
 router.delete('/:id', requireAuth, async (req: AuthRequest, res) => {
   try {
-    const orgId = req.user?.id;
+    const orgId = req.user?.orgId;
     const { id } = req.params;
 
     const { error } = await supabaseAdmin
@@ -108,7 +108,7 @@ router.delete('/:id', requireAuth, async (req: AuthRequest, res) => {
 // (uso interno pelo AI service via import directo, mas pode ser útil via HTTP)
 router.get('/context', requireAuth, async (req: AuthRequest, res) => {
   try {
-    const orgId = req.user?.id;
+    const orgId = req.user?.orgId;
 
     const { data, error } = await supabaseAdmin
       .from('knowledge_docs')
@@ -131,7 +131,7 @@ router.get('/context', requireAuth, async (req: AuthRequest, res) => {
 // ─── POST /api/knowledge/site — Adicionar conteúdo de um site ───────────────
 router.post('/site', requireAuth, async (req: AuthRequest, res) => {
   try {
-    const orgId = req.user?.id;
+    const orgId = req.user?.orgId;
     const { url } = req.body;
 
     if (!url || !url.startsWith('http')) {

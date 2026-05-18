@@ -7,7 +7,7 @@ const router = Router();
 // ─── GET /api/instructions — Listar instruções ──────────────────────────────
 router.get('/', requireAuth, async (req: AuthRequest, res) => {
   try {
-    const orgId = req.user?.id;
+    const orgId = req.user?.orgId;
     const { data, error } = await supabaseAdmin
       .from('bot_instructions')
       .select('*')
@@ -24,7 +24,7 @@ router.get('/', requireAuth, async (req: AuthRequest, res) => {
 // ─── POST /api/instructions — Criar ou Editar instrução ──────────────────────
 router.post('/', requireAuth, async (req: AuthRequest, res) => {
   try {
-    const orgId = req.user?.id;
+    const orgId = req.user?.orgId;
     const { id, title, content } = req.body;
 
     if (!content) return res.status(400).json({ error: 'Conteúdo é obrigatório' });
@@ -60,7 +60,7 @@ router.post('/', requireAuth, async (req: AuthRequest, res) => {
 // ─── DELETE /api/instructions/:id — Eliminar instrução ──────────────────────
 router.delete('/:id', requireAuth, async (req: AuthRequest, res) => {
   try {
-    const orgId = req.user?.id;
+    const orgId = req.user?.orgId;
     const { id } = req.params;
 
     const { error } = await supabaseAdmin

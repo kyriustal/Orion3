@@ -40,6 +40,7 @@ import campaignsRoutes   from './api/campaigns.routes';
 import billingRoutes     from './api/billing.routes';
 import instructionsRoutes from './api/instructions.routes';
 import assetsRoutes from './api/assets.routes';
+import teamRoutes from './api/team.routes';
 
 app.use('/api/auth',        authRoutes);
 app.use('/api/knowledge',   knowledgeRoutes);
@@ -54,6 +55,7 @@ app.use('/api/automations', automationsRoutes);
 app.use('/api/templates',   templatesRoutes);
 app.use('/api/campaigns',   campaignsRoutes);
 app.use('/api/billing',     billingRoutes);
+app.use('/api/team',        teamRoutes);
 app.use('/api',             coreRoutes);
 
 // Frontend em Produção
