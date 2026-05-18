@@ -11,10 +11,14 @@
     scroll-behavior: smooth;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    overflow-x: hidden;
+    width: 100%;
   }
 
   body {
     @apply bg-white text-zinc-900;
+    overflow-x: hidden;
+    width: 100%;
   }
 
   /* Premium Scrollbar */

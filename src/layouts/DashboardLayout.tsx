@@ -78,7 +78,7 @@ export default function DashboardLayout() {
   });
 
   return (
-    <div className="flex h-screen bg-zinc-50 flex-col md:flex-row">
+    <div className="flex h-screen bg-zinc-50 flex-col md:flex-row w-full max-w-full overflow-x-hidden">
 
       {/* Mobile Header */}
       <div className="md:hidden flex items-center justify-between p-4 bg-white border-b border-zinc-200 z-40 relative">
@@ -220,7 +220,7 @@ export default function DashboardLayout() {
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 overflow-y-auto p-4 md:p-8">
+      <main className="flex-1 overflow-y-auto overflow-x-hidden p-4 md:p-8 w-full max-w-full">
         <PageTransition>
           <Outlet />
         </PageTransition>

@@ -30,7 +30,8 @@ export default function LiveChat() {
       setIsConnected(true);
       try {
         const decoded = JSON.parse(atob(token().split(".")[1]));
-        if (decoded?.id) sock.emit("join_org", decoded.id);
+        const orgId = decoded?.orgId || decoded?.id;
+        if (orgId) sock.emit("join_org", orgId);
       } catch {}
     });
 
@@ -40,7 +41,8 @@ export default function LiveChat() {
       setChats(prev => {
         const exists = prev.find(c => c.id === data.phone);
         if (exists) return prev.map(c => c.id === data.phone ? { ...c, lastMessage: data.text, time: data.time, unread: (c.unread || 0) + 1 } : c);
-        return [{ id: data.phone, phone: data.phone, name: `Cliente (${data.phone})`, lastMessage: data.text, time: data.time, timestamp: data.timestamp, platform: data.platform, unread: 1 }, ...prev];
+        const nameDisplay = data.platform === 'instagram' ? `Instagram (@${data.phone})` : data.platform === 'facebook' ? `Messenger (${data.phone.slice(-6)})` : `WhatsApp (${data.phone})`;
+        return [{ id: data.phone, phone: data.phone, name: nameDisplay, lastMessage: data.text, time: data.time, timestamp: data.timestamp, platform: data.platform, unread: 1 }, ...prev];
       });
 
       setActiveChatId(activeId => {

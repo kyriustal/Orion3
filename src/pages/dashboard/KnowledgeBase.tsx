@@ -195,7 +195,7 @@ export default function KnowledgeBase() {
   };
 
   return (
-    <div className="space-y-8 max-w-4xl pb-12">
+    <div className="space-y-8 w-full max-w-4xl pb-12 overflow-x-hidden">
       {/* ─────────────────────────────────────────────────────────
           CONHECIMENTO (RAG)
       ────────────────────────────────────────────────────────── */}
@@ -207,28 +207,28 @@ export default function KnowledgeBase() {
               Documentos que a IA usa para aprender sobre o seu negócio.
             </p>
           </div>
-          <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 w-full sm:w-auto">
-            <div className="flex items-center border rounded-lg px-2 bg-white focus-within:ring-2 focus-within:ring-emerald-500 flex-1 sm:flex-initial min-w-[180px]">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto min-w-0">
+            <div className="flex items-center border rounded-lg px-2 bg-white focus-within:ring-2 focus-within:ring-emerald-500 w-full sm:w-auto min-w-0">
               <input 
                 type="text" 
                 placeholder="https://oseusite.com" 
-                className="text-xs p-2 outline-none w-full sm:w-40"
+                className="text-xs p-2 outline-none flex-1 sm:w-40 min-w-0"
                 value={siteUrl}
                 onChange={e => setSiteUrl(e.target.value)}
               />
               <Button 
                 variant="ghost" 
                 size="sm" 
-                className="h-7 text-emerald-600 hover:text-emerald-700 shrink-0 px-2"
+                className="h-7 text-emerald-600 hover:text-emerald-700 shrink-0 px-2 font-medium"
                 onClick={handleImportSite}
                 disabled={isImportingSite || !siteUrl}
               >
                 {isImportingSite ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Importar Site'}
               </Button>
             </div>
-            <Button onClick={() => fileInputRef.current?.click()} disabled={isUploading} className="bg-emerald-600 hover:bg-emerald-700 gap-2 shrink-0">
-              {isUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-              Ficheiro
+            <Button onClick={() => fileInputRef.current?.click()} disabled={isUploading} className="bg-emerald-600 hover:bg-emerald-700 gap-2 shrink-0 w-full sm:w-auto justify-center">
+              {isUploading ? <Loader2 className="w-4 h-4 animate-spin shrink-0" /> : <Plus className="w-4 h-4 shrink-0" />}
+              <span>Carregar Ficheiro</span>
             </Button>
           </div>
           <input ref={fileInputRef} type="file" className="hidden" accept=".pdf,.docx,.doc,.txt" onChange={handleFileInput} />
@@ -239,12 +239,12 @@ export default function KnowledgeBase() {
             <CardTitle className="flex items-center gap-2 text-base"><BookOpen className="w-4 h-4" /> Documentos Carregados</CardTitle>
           </CardHeader>
           <CardContent className="p-0">
-            <div className="divide-y divide-zinc-100">
+            <div className="divide-y divide-zinc-100 min-w-0">
               {docs.map(doc => (
-                <div key={doc.id} className="flex items-start gap-4 p-4 hover:bg-zinc-50 transition-colors text-sm">
-                  <div className="mt-0.5">{getIcon(doc.filename)}</div>
-                  <div className="flex-1 truncate font-medium">{doc.filename}</div>
-                  <Button variant="ghost" size="sm" onClick={() => handleDelete(doc.id, doc.filename)} className="text-red-400 hover:text-red-600"><Trash2 className="w-4 h-4" /></Button>
+                <div key={doc.id} className="flex items-center gap-3 p-3 sm:p-4 hover:bg-zinc-50 transition-colors text-xs sm:text-sm min-w-0">
+                  <div className="shrink-0">{getIcon(doc.filename)}</div>
+                  <div className="flex-1 min-w-0 truncate font-medium">{doc.filename}</div>
+                  <Button variant="ghost" size="sm" onClick={() => handleDelete(doc.id, doc.filename)} className="text-red-400 hover:text-red-600 shrink-0 h-8 w-8 p-0"><Trash2 className="w-4 h-4" /></Button>
                 </div>
               ))}
               {docs.length === 0 && <div className="p-8 text-center text-zinc-400">Nenhum documento carregado.</div>}
@@ -266,8 +266,8 @@ export default function KnowledgeBase() {
           </p>
         </div>
 
-        <div className="grid md:grid-cols-2 gap-6">
-          <Card className="border-emerald-100 bg-emerald-50/20">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full max-w-full min-w-0">
+          <Card className="border-emerald-100 bg-emerald-50/20 w-full max-w-full overflow-hidden">
             <CardHeader>
               <CardTitle className="text-sm font-bold flex items-center gap-2 text-emerald-800">
                 <UploadCloud className="w-4 h-4" /> Novo Asset para Envio
@@ -305,13 +305,13 @@ export default function KnowledgeBase() {
             <CardContent className="p-0">
               <div className="divide-y divide-zinc-100 max-h-64 overflow-y-auto">
                 {assets.map(asset => (
-                  <div key={asset.id} className="flex items-center gap-3 p-3 hover:bg-zinc-50 transition-colors text-xs">
+                  <div key={asset.id} className="flex items-center gap-3 p-3 hover:bg-zinc-50 transition-colors text-xs min-w-0">
                     <FileType className="w-4 h-4 text-emerald-500 shrink-0" />
-                    <div className="flex-1 truncate">
-                      <p className="font-bold text-zinc-800">{asset.description}</p>
+                    <div className="flex-1 min-w-0 truncate">
+                      <p className="font-bold text-zinc-800 truncate">{asset.description}</p>
                       <p className="text-[10px] text-zinc-400 truncate">{asset.filename}</p>
                     </div>
-                    <Button variant="ghost" size="sm" onClick={() => handleDeleteAsset(asset.id)} className="h-8 w-8 p-0 text-red-400 hover:text-red-600"><Trash2 className="w-3.5 h-3.5" /></Button>
+                    <Button variant="ghost" size="sm" onClick={() => handleDeleteAsset(asset.id)} className="h-8 w-8 p-0 text-red-400 hover:text-red-600 shrink-0"><Trash2 className="w-3.5 h-3.5" /></Button>
                   </div>
                 ))}
                 {assets.length === 0 && <div className="p-8 text-center text-zinc-400 text-xs italic">Nenhum asset carregado.</div>}

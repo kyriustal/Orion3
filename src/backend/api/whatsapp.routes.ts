@@ -69,23 +69,31 @@ router.get('/chats', requireAuth, async (req: AuthRequest, res) => {
 
     const { data: history, error } = await supabaseAdmin
       .from('conversation_history')
-      .select('customer_phone, text, created_at, sender')
+      .select('customer_phone, text, created_at, sender, metadata')
       .eq('org_id', orgId)
-      .order('created_at', { ascending: false });
+      .order('created_at', { ascending: false })
+      .limit(5000);
 
     if (error) throw error;
 
     const chatsMap = new Map<string, any>();
     (history || []).forEach(item => {
+      if (!item.customer_phone || item.customer_phone === 'null') return;
       if (!chatsMap.has(item.customer_phone)) {
+        const platform = item.metadata?.platform || 'whatsapp';
+        let nameDisplay = `WhatsApp (${item.customer_phone})`;
+        if (platform === 'instagram') nameDisplay = `Instagram (@${item.customer_phone})`;
+        else if (platform === 'facebook') nameDisplay = `Messenger (${item.customer_phone.slice(-6)})`;
+
         chatsMap.set(item.customer_phone, {
           id: item.customer_phone,
           phone: item.customer_phone,
-          name: `Cliente (${item.customer_phone})`,
+          name: nameDisplay,
           lastMessage: item.text,
           time: new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           timestamp: item.created_at,
           lastSender: item.sender,
+          platform: platform,
         });
       }
     });
@@ -107,16 +115,17 @@ router.get('/history/:phone', requireAuth, async (req: AuthRequest, res) => {
       .select('*')
       .eq('org_id', orgId)
       .eq('customer_phone', phone)
-      .order('created_at', { ascending: true })
-      .limit(100);
+      .order('created_at', { ascending: false })
+      .limit(1000);
 
     if (error) throw error;
 
-    const messages = (data || []).map(m => ({
+    const messages = (data || []).reverse().map(m => ({
       id: m.id,
       sender: m.sender,
       text: m.text,
       time: new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      botName: m.metadata?.botName || undefined,
     }));
 
     res.json(messages);
