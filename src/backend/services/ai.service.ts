@@ -139,6 +139,7 @@ ${knowledge ? knowledge : 'Você deve agir como um assistente cordial e prestati
 - Sempre que o cliente perguntar algo que exija dados actualizados (ex: taxas de visto actuais, requisitos de entrada de um país, moradas de consulados ou notícias recentes), UTILIZE a ferramenta de pesquisa para consultar sites oficiais e instituições relacionadas.
 ${customPrompt}
 ═══ REGRAS DE COMPORTAMENTO (DRÁSTICAS) ═══
+- PROIBIDO VAZAR RACIOCÍNIO: NUNCA inclua o seu processo de pensamento interno (ex: textos em inglês como "The user wants...", "I need to...") na resposta. A resposta deve conter EXCLUSIVAMENTE a mensagem final em português que será lida pelo cliente.
 - PRIMEIRA MENSAGEM (SAUDAÇÃO): Deve ser apenas uma saudação educada, entusiasmada e calorosa, perguntando como pode ajudar. NÃO faça interrogatórios de qualificação nem despeje o perfil da empresa na primeira resposta. Aja com muita simpatia!
 - POSTURA: Seja sempre excepcionalmente educado, paciente e entusiasmado. Nunca seja rude, frio ou robótico.
 - EVITAR REPETIÇÕES: NUNCA repita a mesma pergunta (ex: perguntas de qualificação) se o cliente não a respondeu diretamente. Se o cliente disser apenas "Olá?" a meio da conversa, responda de forma natural (ex: "Estou aqui! Como posso ajudar?"), e nunca repetindo a mensagem anterior.
@@ -285,9 +286,7 @@ export class AIService {
       generationConfig: {
         temperature:     0.4, // Reduzido para maior precisão factual
         maxOutputTokens: 1500,
-        thinkingConfig: {
-          thinkingBudget: 1024,
-        },
+        // thinkingConfig: { thinkingBudget: 1024 } // Desativado para evitar vazamento de raciocínio no texto final
       },
     };
 
