@@ -200,33 +200,33 @@ export default function KnowledgeBase() {
           CONHECIMENTO (RAG)
       ────────────────────────────────────────────────────────── */}
       <div className="space-y-6">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
             <h2 className="text-2xl font-bold tracking-tight text-zinc-900">Base de Conhecimento</h2>
             <p className="text-zinc-500 text-sm mt-1">
               Documentos que a IA usa para aprender sobre o seu negócio.
             </p>
           </div>
-          <div className="flex gap-2">
-            <div className="hidden md:flex items-center border rounded-lg px-2 bg-white focus-within:ring-2 focus-within:ring-emerald-500">
+          <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 w-full sm:w-auto">
+            <div className="flex items-center border rounded-lg px-2 bg-white focus-within:ring-2 focus-within:ring-emerald-500 flex-1 sm:flex-initial min-w-[180px]">
               <input 
                 type="text" 
                 placeholder="https://oseusite.com" 
-                className="text-xs p-2 outline-none w-40"
+                className="text-xs p-2 outline-none w-full sm:w-40"
                 value={siteUrl}
                 onChange={e => setSiteUrl(e.target.value)}
               />
               <Button 
                 variant="ghost" 
                 size="sm" 
-                className="h-7 text-emerald-600 hover:text-emerald-700"
+                className="h-7 text-emerald-600 hover:text-emerald-700 shrink-0 px-2"
                 onClick={handleImportSite}
                 disabled={isImportingSite || !siteUrl}
               >
                 {isImportingSite ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Importar Site'}
               </Button>
             </div>
-            <Button onClick={() => fileInputRef.current?.click()} disabled={isUploading} className="bg-emerald-600 hover:bg-emerald-700 gap-2">
+            <Button onClick={() => fileInputRef.current?.click()} disabled={isUploading} className="bg-emerald-600 hover:bg-emerald-700 gap-2 shrink-0">
               {isUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
               Ficheiro
             </Button>
@@ -289,10 +289,10 @@ export default function KnowledgeBase() {
               <Button 
                 onClick={() => assetInputRef.current?.click()} 
                 disabled={isUploadingAsset} 
-                className="w-full bg-emerald-600 hover:bg-emerald-700 gap-2"
+                className="w-full bg-emerald-600 hover:bg-emerald-700 gap-2 whitespace-normal h-auto py-2.5 text-center"
               >
-                {isUploadingAsset ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                Seleccionar e Carregar Ficheiro
+                {isUploadingAsset ? <Loader2 className="w-4 h-4 animate-spin shrink-0" /> : <Plus className="w-4 h-4 shrink-0" />}
+                <span>Seleccionar e Carregar Ficheiro</span>
               </Button>
               <input ref={assetInputRef} type="file" className="hidden" onChange={handleAssetUpload} />
             </CardContent>

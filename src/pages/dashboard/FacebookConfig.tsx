@@ -136,7 +136,7 @@ export default function FacebookConfig() {
                   placeholder="EAA..." 
                 />
               </div>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <label className="text-sm font-medium">App ID</label>
                   <Input 
@@ -156,13 +156,13 @@ export default function FacebookConfig() {
                 </div>
               </div>
             </CardContent>
-            <CardContent className="border-t pt-4 flex justify-between">
+            <CardContent className="border-t pt-4 flex flex-col sm:flex-row gap-2 justify-between items-stretch sm:items-center">
               {config && (
-                <Button variant="ghost" className="text-red-500 hover:text-red-600 hover:bg-red-50" onClick={handleDelete} disabled={isSubmitting}>
+                <Button variant="ghost" className="text-red-500 hover:text-red-600 hover:bg-red-50 justify-center" onClick={handleDelete} disabled={isSubmitting}>
                   <Trash2 className="w-4 h-4 mr-2" /> Desconectar
                 </Button>
               )}
-              <Button className="ml-auto bg-blue-600 hover:bg-blue-700" onClick={handleSave} disabled={isSubmitting}>
+              <Button className="sm:ml-auto bg-blue-600 hover:bg-blue-700 justify-center" onClick={handleSave} disabled={isSubmitting}>
                 {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Facebook className="w-4 h-4 mr-2" />}
                 Salvar Configuração
               </Button>
@@ -180,16 +180,16 @@ export default function FacebookConfig() {
             <CardContent className="space-y-4">
               <div className="space-y-2">
                 <label className="text-xs font-bold text-zinc-500 uppercase">Callback URL</label>
-                <div className="flex gap-2">
-                  <Input readOnly value={webhookUrl} className="bg-zinc-50 font-mono text-xs" />
-                  <Button variant="outline" size="sm" onClick={() => { navigator.clipboard.writeText(webhookUrl); toast.info("Copiado!"); }}>Copiar</Button>
+                <div className="flex flex-col sm:flex-row gap-2 w-full">
+                  <Input readOnly value={webhookUrl} className="bg-zinc-50 font-mono text-xs sm:text-sm truncate flex-1" />
+                  <Button variant="outline" size="sm" onClick={() => { navigator.clipboard.writeText(webhookUrl); toast.info("Copiado!"); }} className="shrink-0 self-end sm:self-auto">Copiar</Button>
                 </div>
               </div>
               <div className="space-y-2">
                 <label className="text-xs font-bold text-zinc-500 uppercase">Verify Token</label>
-                <div className="flex gap-2">
-                  <Input readOnly value={verifyToken} className="bg-zinc-50 font-mono text-xs" />
-                  <Button variant="outline" size="sm" onClick={() => { navigator.clipboard.writeText(verifyToken); toast.info("Copiado!"); }}>Copiar</Button>
+                <div className="flex flex-col sm:flex-row gap-2 w-full">
+                  <Input readOnly value={verifyToken} className="bg-zinc-50 font-mono text-xs sm:text-sm truncate flex-1" />
+                  <Button variant="outline" size="sm" onClick={() => { navigator.clipboard.writeText(verifyToken); toast.info("Copiado!"); }} className="shrink-0 self-end sm:self-auto">Copiar</Button>
                 </div>
               </div>
             </CardContent>

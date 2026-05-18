@@ -115,30 +115,32 @@ export default function Simulation() {
 
   return (
     <div className="space-y-4 max-w-4xl">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h2 className="text-2xl font-bold tracking-tight text-zinc-900">Simulação do Agente</h2>
           <p className="text-zinc-500 text-sm mt-1">
             Teste o seu agente IA exatamente como os seus clientes vão interagir via WhatsApp.
           </p>
         </div>
-        <Button variant="outline" onClick={handleReset} className="gap-2">
+        <Button variant="outline" onClick={handleReset} className="gap-2 self-start sm:self-auto">
           <RotateCcw className="w-4 h-4" />
           Reiniciar
         </Button>
       </div>
 
       {/* Info banner */}
-      <div className="flex items-start gap-3 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl p-4 text-sm">
-        <Info className="w-4 h-4 mt-0.5 shrink-0 text-emerald-600" />
+      <div className="flex flex-col sm:flex-row sm:items-center gap-3 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl p-4 text-sm text-left">
+        <div className="flex items-center gap-2">
+          <Info className="w-4 h-4 shrink-0 text-emerald-600" />
+          <span className="font-semibold">Powered by Gemini 2.5 Flash</span>
+        </div>
         <div>
-          <span className="font-semibold">Powered by Gemini 2.5 Flash</span> com raciocínio activado.
-          A IA usa a personalidade e base de conhecimento definidas nas <a href="/dashboard/settings" className="underline font-medium">Configurações → Chatbot (IA)</a>.
+          <span>com raciocínio activado. A IA usa a personalidade e base de conhecimento definidas nas <a href="/dashboard/settings" className="underline font-medium">Configurações → Chatbot (IA)</a>.</span>
         </div>
       </div>
 
       {/* Chat Interface */}
-      <Card className="flex flex-col" style={{ height: 'calc(100vh - 22rem)' }}>
+      <Card className="flex flex-col min-h-[450px]" style={{ height: 'calc(100vh - 18rem)' }}>
         <CardHeader className="p-4 border-b border-zinc-100 flex flex-row items-center gap-3 space-y-0">
           <div className="w-10 h-10 rounded-full bg-emerald-100 flex items-center justify-center">
             <Bot className="w-5 h-5 text-emerald-600" />

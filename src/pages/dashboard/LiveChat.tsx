@@ -1,7 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/src/components/ui/card";
 import { Button } from "@/src/components/ui/button";
 import { Input } from "@/src/components/ui/input";
-import { Send, User, Bot, AlertCircle, MessageCircle, Loader2, Pause, Play, Wifi, WifiOff, Smartphone } from "lucide-react";
+import { Send, User, Bot, AlertCircle, MessageCircle, Loader2, Pause, Play, Wifi, WifiOff, Smartphone, ArrowLeft } from "lucide-react";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { io, Socket } from "socket.io-client";
 import { toast } from "sonner";
@@ -18,6 +18,7 @@ export default function LiveChat() {
   const [chats,    setChats]    = useState<Chat[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [typingChatIds, setTypingChatIds] = useState<Set<string>>(new Set());
+  const [showMobileList, setShowMobileList] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const token = () => localStorage.getItem("token") || "";
 
@@ -76,6 +77,7 @@ export default function LiveChat() {
 
   const selectChat = async (chat: Chat) => {
     setActiveChatId(chat.phone);
+    setShowMobileList(false);
     setChats(prev => prev.map(c => c.id === chat.id ? { ...c, unread: 0 } : c));
     setMessages([]);
     try {
@@ -111,7 +113,7 @@ export default function LiveChat() {
 
   return (
     <div className="flex h-[calc(100vh-8rem)] gap-4">
-      <Card className="w-80 flex flex-col">
+      <Card className={`w-full md:w-80 flex flex-col shrink-0 ${!showMobileList ? "hidden md:flex" : "flex"}`}>
         <CardHeader className="p-4 border-b border-zinc-100">
           <div className="flex items-center justify-between">
             <CardTitle className="text-base">Conversas</CardTitle>
@@ -147,13 +149,18 @@ export default function LiveChat() {
       </Card>
 
       {activeChat ? (
-        <Card className="flex-1 flex flex-col overflow-hidden">
-          <CardHeader className="p-4 border-b border-zinc-100 flex flex-row items-center justify-between space-y-0 shrink-0">
-            <div>
-              <CardTitle className="text-base">{activeChat.name}</CardTitle>
-              <p className="text-xs text-zinc-400 mt-0.5">{activeChat.phone}</p>
+        <Card className={`flex-1 flex flex-col overflow-hidden w-full ${showMobileList ? "hidden md:flex" : "flex"}`}>
+          <CardHeader className="p-4 border-b border-zinc-100 flex flex-row items-center justify-between space-y-0 shrink-0 gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <button onClick={() => setShowMobileList(true)} className="md:hidden p-1.5 rounded-lg hover:bg-zinc-100 text-zinc-600 shrink-0">
+                <ArrowLeft className="w-5 h-5" />
+              </button>
+              <div className="min-w-0">
+                <CardTitle className="text-base truncate">{activeChat.name}</CardTitle>
+                <p className="text-xs text-zinc-400 mt-0.5 truncate">{activeChat.phone}</p>
+              </div>
             </div>
-            <button onClick={toggleAi} className={`flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs font-medium transition-all ${isAiActive ? "bg-emerald-50 border-emerald-200 text-emerald-700" : "bg-amber-50 border-amber-200 text-amber-700"}`}>
+            <button onClick={toggleAi} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs font-medium shrink-0 transition-all ${isAiActive ? "bg-emerald-50 border-emerald-200 text-emerald-700" : "bg-amber-50 border-amber-200 text-amber-700"}`}>
               {isAiActive ? <><Play className="w-3 h-3" />IA Activa</> : <><Pause className="w-3 h-3" />IA Pausada</>}
             </button>
           </CardHeader>

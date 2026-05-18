@@ -324,16 +324,16 @@ export default function WhatsAppConfig() {
             ))
           )}
         </CardContent>
-        <CardFooter className="bg-zinc-50 border-t border-zinc-200 py-4 flex flex-col sm:flex-row gap-4 items-center justify-between">
+        <CardFooter className="bg-zinc-50 border-t border-zinc-200 py-4 flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
           <div className="flex items-center gap-2 text-xs text-zinc-500">
-            <ShieldCheck className="w-4 h-4 text-emerald-600" />
+            <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
             <span>Fluxo Oficial e Seguro via Meta Embedded Signup</span>
           </div>
-          <div className="flex gap-3">
-            <Button variant="outline" onClick={() => setIsModalOpen(true)} className="gap-2">
+          <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
+            <Button variant="outline" onClick={() => setIsModalOpen(true)} className="gap-2 w-full sm:w-auto justify-center">
               <Key className="w-4 h-4" /> Configuração Manual
             </Button>
-            <Button onClick={launchEmbeddedSignup} className="bg-[#1877F2] hover:bg-[#166fe5] text-white gap-2 font-bold shadow-md">
+            <Button onClick={launchEmbeddedSignup} className="bg-[#1877F2] hover:bg-[#166fe5] text-white gap-2 font-bold shadow-md w-full sm:w-auto justify-center">
               <Building className="w-4 h-4" /> Conectar com Meta
             </Button>
           </div>
@@ -349,16 +349,16 @@ export default function WhatsAppConfig() {
           <CardContent className="space-y-4">
             <div className="space-y-2">
               <label className="text-sm font-medium text-zinc-700">URL de Retorno (Callback URL)</label>
-              <div className="flex flex-col sm:flex-row gap-2">
-                <Input value={webhookUrl} readOnly className="bg-zinc-50 text-zinc-600 font-mono text-sm break-all" />
-                <Button variant="outline" size="icon" onClick={() => copyToClipboard(webhookUrl)} title="Copiar" className="shrink-0"><Copy className="w-4 h-4" /></Button>
+              <div className="flex flex-col sm:flex-row gap-2 w-full">
+                <Input value={webhookUrl} readOnly className="bg-zinc-50 text-zinc-600 font-mono text-xs sm:text-sm truncate flex-1" />
+                <Button variant="outline" size="icon" onClick={() => copyToClipboard(webhookUrl)} title="Copiar" className="shrink-0 self-end sm:self-auto"><Copy className="w-4 h-4" /></Button>
               </div>
             </div>
             <div className="space-y-2">
               <label className="text-sm font-medium text-zinc-700">Token de Verificação</label>
-              <div className="flex flex-col sm:flex-row gap-2">
-                <Input value={verifyToken} readOnly className="bg-zinc-50 text-zinc-600 font-mono text-sm break-all" />
-                <Button variant="outline" size="icon" onClick={() => copyToClipboard(verifyToken)} title="Copiar" className="shrink-0"><Copy className="w-4 h-4" /></Button>
+              <div className="flex flex-col sm:flex-row gap-2 w-full">
+                <Input value={verifyToken} readOnly className="bg-zinc-50 text-zinc-600 font-mono text-xs sm:text-sm truncate flex-1" />
+                <Button variant="outline" size="icon" onClick={() => copyToClipboard(verifyToken)} title="Copiar" className="shrink-0 self-end sm:self-auto"><Copy className="w-4 h-4" /></Button>
               </div>
             </div>
           </CardContent>

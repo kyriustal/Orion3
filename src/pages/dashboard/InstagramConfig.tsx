@@ -75,20 +75,20 @@ export default function InstagramConfig() {
         </CardHeader>
         <CardContent>
           {config ? (
-            <div className="flex items-center justify-between p-4 bg-zinc-50 rounded-xl border border-zinc-200">
-              <div className="flex items-center gap-4">
-                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-pink-500 to-purple-600 flex items-center justify-center">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-4 bg-zinc-50 rounded-xl border border-zinc-200">
+              <div className="flex items-center gap-4 w-full sm:w-auto">
+                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-pink-500 to-purple-600 flex items-center justify-center shrink-0">
                   <Instagram className="w-5 h-5 text-white" />
                 </div>
-                <div>
-                  <p className="font-semibold text-zinc-900">@{config.username || config.display_name}</p>
+                <div className="min-w-0">
+                  <p className="font-semibold text-zinc-900 truncate">@{config.username || config.display_name}</p>
                   <div className="flex items-center gap-1.5 text-xs text-emerald-600 font-medium mt-0.5">
-                    <CheckCircle2 className="w-3 h-3" /> Conectado e Activo
+                    <CheckCircle2 className="w-3 h-3 shrink-0" /> Conectado e Activo
                   </div>
-                  <p className="text-xs text-zinc-400 font-mono mt-1">ID: {config.instagram_user_id}</p>
+                  <p className="text-xs text-zinc-400 font-mono mt-1 truncate">ID: {config.instagram_user_id}</p>
                 </div>
               </div>
-              <Button variant="outline" size="sm" onClick={handleDisconnect} className="text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200">
+              <Button variant="outline" size="sm" onClick={handleDisconnect} className="text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200 self-end sm:self-auto shrink-0">
                 <Trash2 className="w-4 h-4 mr-2" /> Desconectar
               </Button>
             </div>
@@ -148,16 +148,16 @@ export default function InstagramConfig() {
         <CardContent className="space-y-4">
           <div className="space-y-2">
             <Label>Callback URL</Label>
-            <div className="flex gap-2">
-              <Input value={webhookUrl} readOnly className="bg-zinc-50 font-mono text-sm text-zinc-600" />
-              <Button variant="outline" size="icon" onClick={() => copy(webhookUrl)}><Copy className="w-4 h-4" /></Button>
+            <div className="flex flex-col sm:flex-row gap-2 w-full">
+              <Input value={webhookUrl} readOnly className="bg-zinc-50 font-mono text-xs sm:text-sm text-zinc-600 truncate flex-1" />
+              <Button variant="outline" size="icon" onClick={() => copy(webhookUrl)} className="shrink-0 self-end sm:self-auto"><Copy className="w-4 h-4" /></Button>
             </div>
           </div>
           <div className="space-y-2">
             <Label>Verify Token</Label>
-            <div className="flex gap-2">
-              <Input value={verifyToken} readOnly className="bg-zinc-50 font-mono text-sm text-zinc-600" />
-              <Button variant="outline" size="icon" onClick={() => copy(verifyToken)}><Copy className="w-4 h-4" /></Button>
+            <div className="flex flex-col sm:flex-row gap-2 w-full">
+              <Input value={verifyToken} readOnly className="bg-zinc-50 font-mono text-xs sm:text-sm text-zinc-600 truncate flex-1" />
+              <Button variant="outline" size="icon" onClick={() => copy(verifyToken)} className="shrink-0 self-end sm:self-auto"><Copy className="w-4 h-4" /></Button>
             </div>
           </div>
           <div className="bg-zinc-50 border border-zinc-200 rounded-xl p-3 text-xs text-zinc-600">

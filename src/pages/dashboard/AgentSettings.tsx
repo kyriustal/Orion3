@@ -187,25 +187,27 @@ export default function AgentSettings() {
 
   return (
     <div className="space-y-6 max-w-3xl pb-12">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h2 className="text-2xl font-bold tracking-tight text-zinc-900">Configuração do Agente IA</h2>
           <p className="text-zinc-500 text-sm mt-1">
             Defina a personalidade, tom e comportamento do seu assistente virtual.
           </p>
         </div>
-        <Button onClick={handleSave} disabled={isSaving} className="bg-emerald-600 hover:bg-emerald-700 h-10 px-6 gap-2">
+        <Button onClick={handleSave} disabled={isSaving} className="bg-emerald-600 hover:bg-emerald-700 h-10 px-6 gap-2 self-start sm:self-auto">
           {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
           Guardar
         </Button>
       </div>
 
-      <div className="flex items-center gap-2 bg-gradient-to-r from-violet-50 to-emerald-50 border border-emerald-200 rounded-xl px-4 py-3">
-        <Sparkles className="w-4 h-4 text-violet-500" />
-        <span className="text-sm font-medium text-zinc-700">Motor IA:</span>
-        <span className="text-sm font-bold text-emerald-700">Gemini 2.5 Flash</span>
+      <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 bg-gradient-to-r from-violet-50 to-emerald-50 border border-emerald-200 rounded-xl px-4 py-3 text-left">
+        <div className="flex items-center gap-2">
+          <Sparkles className="w-4 h-4 text-violet-500 shrink-0" />
+          <span className="text-sm font-medium text-zinc-700">Motor IA:</span>
+          <span className="text-sm font-bold text-emerald-700">Gemini 2.5 Flash</span>
+        </div>
         <span className="text-xs text-zinc-400">com raciocínio activado</span>
-        <span className="ml-auto text-xs bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-medium">Memória: 50 mensagens</span>
+        <span className="sm:ml-auto text-xs bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-medium self-start sm:self-auto">Memória: 50 mensagens</span>
       </div>
 
       <Card>
@@ -214,7 +216,7 @@ export default function AgentSettings() {
           <CardDescription>Como o seu assistente se apresenta aos clientes.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label>Nome do Bot</Label>
               <Input
