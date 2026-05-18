@@ -61,7 +61,8 @@ router.post('/settings/org', requireAuth, async (req: AuthRequest, res) => {
 
     const { error } = await supabaseAdmin
       .from('organizations')
-      .upsert({ id: orgId, ...body });
+      .update(body)
+      .eq('id', orgId);
 
     if (error) {
       // Tabela ou coluna não existe — não bloquear a UI
