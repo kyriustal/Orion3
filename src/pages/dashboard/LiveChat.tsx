@@ -17,6 +17,7 @@ export default function LiveChat() {
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [chats,    setChats]    = useState<Chat[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [typingChatIds, setTypingChatIds] = useState<Set<string>>(new Set());
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const token = () => localStorage.getItem("token") || "";
 

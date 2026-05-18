@@ -166,7 +166,10 @@ export default function KnowledgeBase() {
         body: formData,
       });
 
-      if (!res.ok) throw new Error('Erro no upload do asset.');
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || 'Erro no upload do asset.');
+      }
       toast.success('Asset carregado com sucesso!');
       setAssetDesc('');
       fetchAssets();
