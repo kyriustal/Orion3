@@ -295,9 +295,11 @@ export class AIService {
     
     // Tentar até 4 chaves diferentes se houver erro de autenticação ou quota
     for (let attempt = 0; attempt < 4; attempt++) {
+      const apiKey = getApiKey(attempt);
+      
+      // Tentativa 1: Com Google Search (se habilitado)
       try {
-        const apiKey = getApiKey(attempt);
-        const url    = `${GEMINI_BASE}/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
+        const url = `${GEMINI_BASE}/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
 
         const response = await axios.post(url, payload, {
           headers: { 'Content-Type': 'application/json' },
@@ -324,7 +326,7 @@ export class AIService {
         rawText = rawText.replace(/```python[\s\S]*?```/ig, ''); // Remove blocos de código
         rawText = rawText.trim();
 
-        // 5. Detecção de transferência (sucesso, sair do loop)
+        // Detecção de transferência (sucesso, sair do loop)
         const transfer   = rawText.includes('[TRANSFERIR_HUMANO]');
         const cleanReply = rawText.replace('[TRANSFERIR_HUMANO]', '').trim();
 
@@ -333,31 +335,110 @@ export class AIService {
       } catch (err: any) {
         lastError = err.response?.data?.error?.message || err.message;
         
-        // Log detalhado do erro para diagnóstico
-        console.error(`[AIService] Erro na tentativa ${attempt + 1}:`, {
-          status: err.response?.status,
-          message: lastError,
-          data: err.response?.data
-        });
-        
-        // Se for erro de chave inválida, permissão ou quota, tentar a próxima chave
-        if (
-          lastError.toLowerCase().includes('key') || 
-          lastError.includes('429') || 
-          lastError.includes('401') ||
-          lastError.includes('quota') ||
-          lastError.includes('not found')
-        ) {
-          console.warn(`[AIService] Tentando próxima chave devido a erro recuperável...`);
-          continue;
+        console.error(`[AIService] Falha na tentativa ${attempt + 1} com Google Search:`, lastError);
+
+        // Se for erro de quota ou autorização, ou se for um erro 400 que pode ser contornado ao desativar o Google Search
+        console.log(`[AIService] Tentando chave ${attempt + 1} sem Google Search...`);
+        try {
+          const url = `${GEMINI_BASE}/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
+          
+          const payloadNoSearch = {
+            systemInstruction: payload.systemInstruction,
+            contents: payload.contents,
+            generationConfig: payload.generationConfig
+          };
+
+          const response = await axios.post(url, payloadNoSearch, {
+            headers: { 'Content-Type': 'application/json' },
+            timeout: 35_000,
+          });
+
+          const parts: any[] = response.data?.candidates?.[0]?.content?.parts ?? [];
+          let rawText = parts
+            .filter((p: any) => !p.thought && !p.executableCode && !p.codeExecutionResult)
+            .map((p: any) => p.text ?? '')
+            .join('')
+            .trim();
+
+          if (!rawText) {
+            throw new Error('Gemini retornou resposta vazia.');
+          }
+
+          rawText = rawText.replace(/tool_code\s*[\s\S]*?(?:thought|$)/ig, '');
+          rawText = rawText.replace(/thought\s*[\s\S]*?(?=\n\n|$)/ig, '');
+          rawText = rawText.replace(/print\(.*?\)/ig, '');
+          rawText = rawText.replace(/```python[\s\S]*?```/ig, '');
+          rawText = rawText.trim();
+
+          const transfer   = rawText.includes('[TRANSFERIR_HUMANO]');
+          const cleanReply = rawText.replace('[TRANSFERIR_HUMANO]', '').trim();
+
+          return { reply: cleanReply || rawText, transfer };
+
+        } catch (errInner: any) {
+          lastError = errInner.response?.data?.error?.message || errInner.message;
+          console.error(`[AIService] Falha total na chave ${attempt + 1}:`, lastError);
+
+          // Se for erro de chave inválida, permissão ou quota, continuar para a próxima chave
+          if (
+            lastError.toLowerCase().includes('key') || 
+            lastError.includes('429') || 
+            lastError.includes('401') ||
+            lastError.includes('quota') ||
+            lastError.includes('not found')
+          ) {
+            console.warn(`[AIService] Tentando próxima chave devido a erro recuperável...`);
+            continue;
+          }
+          
+          // Outros erros críticos - parar
+          break;
         }
-        
-        // Outros erros críticos - parar
-        break;
       }
     }
 
-    console.error(`[AIService] Todas as tentativas falharam. Último erro: ${lastError}`);
+    // 5. Fallback de segurança definitivo para OpenAI (gpt-4o-mini)
+    try {
+      const openaiKey = process.env.OPENAI_API_KEY?.replace(/^["']|["']$/g, '')?.trim();
+      if (openaiKey && openaiKey.length > 5) {
+        console.log(`[AIService] Todas as tentativas Gemini falharam. Ativando fallback para OpenAI (gpt-4o-mini)...`);
+        const openaiUrl = 'https://api.openai.com/v1/chat/completions';
+
+        const messages = [
+          { role: 'system', content: systemPrompt },
+          ...history.map(h => ({
+            role: h.sender === 'user' ? 'user' : 'assistant',
+            content: h.text
+          })),
+          { role: 'user', content: message }
+        ];
+
+        const response = await axios.post(openaiUrl, {
+          model: 'gpt-4o-mini',
+          messages,
+          temperature: 0.4,
+          max_tokens: 1500
+        }, {
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${openaiKey}`
+          },
+          timeout: 25_000
+        });
+
+        const rawText = response.data?.choices?.[0]?.message?.content?.trim();
+        if (rawText) {
+          const transfer   = rawText.includes('[TRANSFERIR_HUMANO]');
+          const cleanReply = rawText.replace('[TRANSFERIR_HUMANO]', '').trim();
+          console.log(`[AIService] Resposta gerada via fallback OpenAI.`);
+          return { reply: cleanReply || rawText, transfer };
+        }
+      }
+    } catch (openaiErr: any) {
+      console.error(`[AIService] Erro fatal no fallback do OpenAI:`, openaiErr.response?.data || openaiErr.message);
+    }
+
+    console.error(`[AIService] Todas as tentativas Gemini e OpenAI falharam. Último erro: ${lastError}`);
     throw new Error(`Falha ao gerar resposta IA: ${lastError}`);
   }
 }

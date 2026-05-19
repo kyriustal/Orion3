@@ -115,7 +115,7 @@ export default function LiveChat() {
 
   return (
     <div className="flex h-[calc(100vh-8rem)] gap-4">
-      <Card className={`w-full md:w-80 flex flex-col shrink-0 ${!showMobileList ? "hidden md:flex" : "flex"}`}>
+      <Card className={`w-full lg:w-80 flex flex-col shrink-0 ${!showMobileList ? "hidden lg:flex" : "flex"}`}>
         <CardHeader className="p-4 border-b border-zinc-100">
           <div className="flex items-center justify-between">
             <CardTitle className="text-base">Conversas</CardTitle>
@@ -151,10 +151,10 @@ export default function LiveChat() {
       </Card>
 
       {activeChat ? (
-        <Card className={`flex-1 flex flex-col overflow-hidden w-full ${showMobileList ? "hidden md:flex" : "flex"}`}>
+        <Card className={`flex-1 flex flex-col overflow-hidden w-full ${showMobileList ? "hidden lg:flex" : "flex"}`}>
           <CardHeader className="p-4 border-b border-zinc-100 flex flex-row items-center justify-between space-y-0 shrink-0 gap-2">
             <div className="flex items-center gap-2 min-w-0">
-              <button onClick={() => setShowMobileList(true)} className="md:hidden p-1.5 rounded-lg hover:bg-zinc-100 text-zinc-600 shrink-0">
+              <button onClick={() => setShowMobileList(true)} className="lg:hidden p-1.5 rounded-lg hover:bg-zinc-100 text-zinc-600 shrink-0">
                 <ArrowLeft className="w-5 h-5" />
               </button>
               <div className="min-w-0">
