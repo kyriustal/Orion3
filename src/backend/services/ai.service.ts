@@ -28,9 +28,9 @@ export interface GenerateResult {
 }
 
 // ─────────────────────────────────────────────────────────
-//  Configuração Gemini 2.5 Flash
+//  Configuração Gemini 2.0 Flash (Estável - suporta googleSearch)
 // ─────────────────────────────────────────────────────────
-const GEMINI_MODEL = 'gemini-2.5-flash';
+const GEMINI_MODEL = 'gemini-2.0-flash';
 const GEMINI_BASE  = 'https://generativelanguage.googleapis.com/v1beta/models';
 
 /** Rotação de chaves para distribuir quota */
@@ -373,11 +373,14 @@ export class AIService {
         return { reply: cleanReply || rawText, transfer };
 
       } catch (err: any) {
-        lastError = err.response?.data?.error?.message || err.message;
-        
-        console.error(`[AIService] Falha na tentativa ${attempt + 1} com Google Search:`, lastError);
+        const errData = err.response?.data;
+        lastError = errData?.error?.message || err.message;
+        const httpStatus = err.response?.status || 'N/A';
 
-        // Se for erro de quota ou autorização, ou se for um erro 400 que pode ser contornado ao desativar o Google Search
+        console.error(`[AIService] Falha na tentativa ${attempt + 1} com Google Search (HTTP ${httpStatus}):`, lastError);
+        if (errData) console.error(`[AIService] Resposta completa da API:`, JSON.stringify(errData).substring(0, 500));
+
+        // Sempre tentar sem Google Search antes de desistir desta chave
         console.log(`[AIService] Tentando chave ${attempt + 1} sem Google Search...`);
         try {
           const url = `${GEMINI_BASE}/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
@@ -416,23 +419,15 @@ export class AIService {
           return { reply: cleanReply || rawText, transfer };
 
         } catch (errInner: any) {
-          lastError = errInner.response?.data?.error?.message || errInner.message;
-          console.error(`[AIService] Falha total na chave ${attempt + 1}:`, lastError);
+          const errInnerData = errInner.response?.data;
+          lastError = errInnerData?.error?.message || errInner.message;
+          const httpInnerStatus = errInner.response?.status || 'N/A';
+          console.error(`[AIService] Falha total na chave ${attempt + 1} (HTTP ${httpInnerStatus}):`, lastError);
+          if (errInnerData) console.error(`[AIService] Resposta completa (sem search):`, JSON.stringify(errInnerData).substring(0, 500));
 
-          // Se for erro de chave inválida, permissão ou quota, continuar para a próxima chave
-          if (
-            lastError.toLowerCase().includes('key') || 
-            lastError.includes('429') || 
-            lastError.includes('401') ||
-            lastError.includes('quota') ||
-            lastError.includes('not found')
-          ) {
-            console.warn(`[AIService] Tentando próxima chave devido a erro recuperável...`);
-            continue;
-          }
-          
-          // Outros erros críticos - parar
-          break;
+          // Sempre avançar para a próxima chave - nunca parar prematuramente
+          console.warn(`[AIService] Avançando para próxima chave...`);
+          continue;
         }
       }
     }
