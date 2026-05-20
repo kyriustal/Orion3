@@ -33,9 +33,9 @@ export interface GenerateResult {
 const GEMINI_MODEL = 'gemini-2.5-flash-preview-04-17';
 const GEMINI_BASE  = 'https://generativelanguage.googleapis.com/v1beta/models';
 
-/** Rotação de chaves para distribuir quota */
-export function getApiKey(attempt = 0): string {
-  // Coletar todas as chaves possíveis do .env
+
+/** Obter lista de todas as chaves Gemini válidas e únicas */
+export function getUniqueApiKeys(): string[] {
   const rawKeys = [
     process.env.GEMINI_API_KEY,
     process.env.GEMINI_API_KEY_2,
@@ -43,18 +43,21 @@ export function getApiKey(attempt = 0): string {
     process.env.GEMINI_API_KEY_4,
   ].filter(Boolean) as string[];
 
-  // Expandir chaves que venham separadas por vírgula numa única string e limpar
   const allKeys: string[] = [];
   rawKeys.forEach(k => {
     const parts = k.split(',').map(s => s.trim().replace(/^["']|["']$/g, ''));
     allKeys.push(...parts);
   });
 
-  // Remover duplicados e chaves inválidas
-  const uniqueKeys = Array.from(new Set(allKeys.filter(k => k.length > 10)));
+  return Array.from(new Set(allKeys.filter(k => k.length > 10)));
+}
+
+/** Rotação de chaves para distribuir quota */
+export function getApiKey(attempt = 0): string {
+  const uniqueKeys = getUniqueApiKeys();
 
   if (uniqueKeys.length === 0) {
-    console.error('[AIService] ERRO: Nenhuma chave carregada. rawKeys:', rawKeys);
+    console.error('[AIService] ERRO: Nenhuma chave carregada.');
     throw new Error('[AIService] Nenhuma GEMINI_API_KEY válida no .env');
   }
 
@@ -358,11 +361,26 @@ export class AIService {
     const payloadWithSearch2 = { ...baseConfig, tools: [{ googleSearch: {} }] }; // fallback de formato
     const payloadNoSearch    = { ...baseConfig };
 
-    // 4. Sequência de tentativas: 4 chaves × (com search → sem search)
+
+    // 4. Obter todas as chaves Gemini configuradas no .env e ordená-las de forma rotativa
+    const uniqueKeys = getUniqueApiKeys();
+    if (uniqueKeys.length === 0) {
+      console.error('[AIService] ERRO: Nenhuma chave Gemini configurada no .env.');
+    }
+
+    // Rotacionar o ponto de partida das chaves com base no minuto atual
+    const baseIdx = Math.floor(Date.now() / 60_000);
+    const rotatedKeys: string[] = [];
+    for (let i = 0; i < uniqueKeys.length; i++) {
+      const idx = (baseIdx + i) % uniqueKeys.length;
+      rotatedKeys.push(uniqueKeys[idx]);
+    }
+
     let lastError = '';
 
-    for (let attempt = 0; attempt < 4; attempt++) {
-      const apiKey = getApiKey(attempt);
+    // Tentar todas as chaves Gemini configuradas antes de avançar para o fallback OpenAI
+    for (let attempt = 0; attempt < rotatedKeys.length; attempt++) {
+      const apiKey = rotatedKeys[attempt];
       const url    = `${GEMINI_BASE}/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
 
       // ── Tentativas ordenadas por prioridade ──────────────────────────────────
@@ -374,7 +392,7 @@ export class AIService {
 
       for (const { label, payload } of attempts) {
         try {
-          console.log(`[AIService] Chave ${attempt + 1} — tentativa ${label}...`);
+          console.log(`[AIService] Tentando chave Gemini ${attempt + 1}/${rotatedKeys.length} — formato ${label}...`);
 
           const response = await axios.post(url, payload, {
             headers: { 'Content-Type': 'application/json' },
@@ -385,27 +403,27 @@ export class AIService {
           const cleanText = extractCleanText(parts);
 
           if (!cleanText) {
-            console.warn(`[AIService] Chave ${attempt + 1} ${label}: resposta vazia após limpeza.`);
+            console.warn(`[AIService] Chave ${attempt + 1}/${rotatedKeys.length} ${label}: resposta vazia após limpeza.`);
             continue; // tenta próxima variante
           }
 
           const transfer   = cleanText.includes('[TRANSFERIR_HUMANO]');
           const cleanReply = cleanText.replace('[TRANSFERIR_HUMANO]', '').trim();
 
-          console.log(`[AIService] ✅ Resposta gerada — chave ${attempt + 1}, ${label}.`);
+          console.log(`[AIService] ✅ Resposta gerada com sucesso — chave Gemini ${attempt + 1}/${rotatedKeys.length}, formato ${label}.`);
           return { reply: cleanReply || cleanText, transfer };
 
         } catch (err: any) {
           const errData  = err.response?.data;
           lastError      = errData?.error?.message || err.message;
           const status   = err.response?.status ?? 'N/A';
-          console.error(`[AIService] ❌ Chave ${attempt + 1} ${label} falhou (HTTP ${status}): ${lastError}`);
+          console.error(`[AIService] ❌ Chave Gemini ${attempt + 1}/${rotatedKeys.length} ${label} falhou (HTTP ${status}): ${lastError}`);
           if (errData) console.error(`[AIService] Detalhe API:`, JSON.stringify(errData).substring(0, 400));
           // continua para a próxima variante
         }
       }
 
-      console.warn(`[AIService] Chave ${attempt + 1} esgotada — tentando próxima chave...`);
+      console.warn(`[AIService] Chave Gemini ${attempt + 1}/${rotatedKeys.length} esgotada. Tentando próxima...`);
     }
 
     // 5. Fallback OpenAI (gpt-4o-mini)
@@ -448,10 +466,19 @@ export class AIService {
       console.error(`[AIService] Fallback OpenAI falhou:`, openaiErr.response?.data || openaiErr.message);
     }
 
-    // 6. Último recurso: resposta genérica (NUNCA deixar o cliente sem resposta)
-    console.error(`[AIService] ⚠️ Todos os caminhos falharam. Gerando resposta genérica. Último erro: ${lastError}`);
+
+    // 6. Último recurso: resposta genérica (apenas quando houver erro)
+    if (lastError) {
+      console.error(`[AIService] ⚠️ Todos os caminhos falharam. Gerando resposta genérica. Último erro: ${lastError}`);
+      return {
+        reply: 'Desculpe, não consegui processar sua mensagem neste momento. Por favor, tente novamente em breve.',
+        transfer: false,
+      };
+    }
+    // Caso inesperado sem erro registrado, devolver mensagem padrão neutra
+    console.warn(`[AIService] Nenhum erro registrado, mas chegou ao fallback. Resposta padrão.`);
     return {
-      reply: 'Olá! Recebi a sua mensagem. De momento temos uma sobrecarga de pedidos, mas iremos responder em breve. Pedimos desculpa pela demora! 🙏',
+      reply: 'Desculpe, não consegui processar sua mensagem neste momento. Por favor, tente novamente em breve.',
       transfer: false,
     };
   }
