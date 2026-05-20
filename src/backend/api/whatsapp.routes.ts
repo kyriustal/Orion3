@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import { supabaseAdmin } from '../config/supabase';
-import { AIService } from '../services/ai.service';
+import { AIService, getUniqueApiKeys } from '../services/ai.service';
 import { WhatsAppService } from '../services/whatsapp.service';
 import { AudioService } from '../services/audio.service';
 import { DocumentService } from '../services/document.service';
@@ -798,6 +798,51 @@ export async function recoverMissedMessages() {
     console.error('[RECOVERY] Erro crítico no processo de recuperação:', err.message);
   }
 }
+
+// ─── GET /api/whatsapp/test-keys — Diagnosticar online todas as chaves Gemini ─
+router.get('/test-keys', async (req, res) => {
+  try {
+    const keys = getUniqueApiKeys();
+    const results: any[] = [];
+
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+      const masked = key.substring(0, 8) + '...' + key.substring(key.length - 4);
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`;
+      
+      try {
+        const response = await axios.post(url, {
+          contents: [{ parts: [{ text: 'Ping' }] }]
+        }, { timeout: 15000 });
+
+        const text = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
+        results.push({
+          index: i + 1,
+          key: masked,
+          status: 'SUCESSO',
+          reply: text?.trim()
+        });
+      } catch (err: any) {
+        const errData = err.response?.data;
+        results.push({
+          index: i + 1,
+          key: masked,
+          status: 'FALHOU',
+          error: errData?.error?.message || err.message,
+          fullError: errData
+        });
+      }
+    }
+
+    res.json({
+      timestamp: new Date().toISOString(),
+      total_keys: keys.length,
+      results
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // ─── GET /api/whatsapp/recover-force — Trigger recovery manually via GET ──────
 router.get('/recover-force', async (req, res) => {
