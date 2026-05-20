@@ -28,9 +28,9 @@ export interface GenerateResult {
 }
 
 // ─────────────────────────────────────────────────────────
-//  Configuração Gemini 2.0 Flash (Estável - suporta googleSearch)
+//  Configuração Gemini 2.5 Flash
 // ─────────────────────────────────────────────────────────
-const GEMINI_MODEL = 'gemini-2.0-flash';
+const GEMINI_MODEL = 'gemini-2.5-flash-preview-04-17';
 const GEMINI_BASE  = 'https://generativelanguage.googleapis.com/v1beta/models';
 
 /** Rotação de chaves para distribuir quota */
@@ -308,172 +308,152 @@ export class AIService {
       externalKnowledge = `${snippetsText}\n\n${externalKnowledge}`;
     }
 
+    // ── Função auxiliar: limpar texto e extrair apenas a resposta final ────────
+    function extractCleanText(parts: any[]): string {
+      // 1. Filtrar partes de "pensamento" da API (thought=true, code, etc.)
+      const textParts = parts
+        .filter((p: any) => !p.thought && !p.executableCode && !p.codeExecutionResult)
+        .map((p: any) => (p.text ?? '').trim())
+        .filter(Boolean);
+
+      let raw = textParts.join('\n').trim();
+
+      if (!raw) return '';
+
+      // 2. Remover blocos <think>...</think> (raciocínio interno do modelo)
+      raw = raw.replace(/<think>[\s\S]*?<\/think>/gi, '');
+
+      // 3. Remover padrões de raciocínio em inglês que vazam no output
+      raw = raw.replace(/^(The user (is asking|wants|said|mentioned)|I need to|I should|Let me|I will|I'll|Okay,|Sure,|Certainly,).*$/gim, '');
+
+      // 4. Remover blocos de código técnico (tool_code, python, etc.)
+      raw = raw.replace(/```(?:python|tool_code|json|javascript|typescript)?[\s\S]*?```/gi, '');
+      raw = raw.replace(/tool_code\s*[\s\S]*?(?=\n\n|$)/gi, '');
+      raw = raw.replace(/print\(.*?\)/gi, '');
+
+      // 5. Remover linhas de raciocínio típicas do Gemini 2.5 Thinking
+      raw = raw.replace(/^(Thought:|Reasoning:|Step \d+:|Analysis:|Context:).*$/gim, '');
+
+      // 6. Limpar linhas vazias excessivas
+      raw = raw.replace(/\n{3,}/g, '\n\n').trim();
+
+      return raw;
+    }
+
     // 2. Construir sistema e conteúdos
     const fullKnowledge = `${org?.product_description || ''}\n\n${externalKnowledge}\n\n${availableAssets}`.trim();
     
     const systemPrompt = buildSystemPrompt(mode, { ...org, product_description: fullKnowledge } as any, botName, referral, timeSinceLastMessageHours);
     const contents     = buildContents(history, message, media);
 
-    // 3. Payload Gemini 2.5 Flash com Grounding (Google Search)
-    const payload = {
-      systemInstruction: {
-        parts: [{ text: systemPrompt }],
-      },
+    // 3. Payloads: com e sem Google Search
+    // gemini-2.5-flash-preview usa "google_search" (underscore) como tool key
+    const baseConfig = {
+      systemInstruction: { parts: [{ text: systemPrompt }] },
       contents,
-      tools: [
-        { googleSearch: {} }
-      ],
-      generationConfig: {
-        temperature:     0.4, // Reduzido para maior precisão factual
-        maxOutputTokens: 1500,
-        // thinkingConfig: { thinkingBudget: 1024 } // Desativado para evitar vazamento de raciocínio no texto final
-      },
+      generationConfig: { temperature: 0.4, maxOutputTokens: 1500 },
     };
 
-    // 4. Chamada à API com retry em caso de chave inválida/quota
+    const payloadWithSearch  = { ...baseConfig, tools: [{ google_search: {} }] };
+    const payloadWithSearch2 = { ...baseConfig, tools: [{ googleSearch: {} }] }; // fallback de formato
+    const payloadNoSearch    = { ...baseConfig };
+
+    // 4. Sequência de tentativas: 4 chaves × (com search → sem search)
     let lastError = '';
-    
-    // Tentar até 4 chaves diferentes se houver erro de autenticação ou quota
+
     for (let attempt = 0; attempt < 4; attempt++) {
       const apiKey = getApiKey(attempt);
-      
-      // Tentativa 1: Com Google Search (se habilitado)
-      try {
-        const url = `${GEMINI_BASE}/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
+      const url    = `${GEMINI_BASE}/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
 
-        const response = await axios.post(url, payload, {
-          headers: { 'Content-Type': 'application/json' },
-          timeout: 35_000,
-        });
+      // ── Tentativas ordenadas por prioridade ──────────────────────────────────
+      const attempts = [
+        { label: 'com google_search',  payload: payloadWithSearch  },
+        { label: 'com googleSearch',   payload: payloadWithSearch2 },
+        { label: 'sem tools',          payload: payloadNoSearch    },
+      ];
 
-        const parts: any[] = response.data?.candidates?.[0]?.content?.parts ?? [];
-
-        // Filtrar partes de "pensamento" oficiais da API e juntar o texto
-        let rawText = parts
-          .filter((p: any) => !p.thought && !p.executableCode && !p.codeExecutionResult)
-          .map((p: any) => p.text ?? '')
-          .join('')
-          .trim();
-
-        if (!rawText) {
-          throw new Error('Gemini retornou resposta vazia.');
-        }
-
-        // Limpeza Regex agressiva para remover "vazamentos" de raciocínio no texto final
-        rawText = rawText.replace(/tool_code\s*[\s\S]*?(?:thought|$)/ig, ''); // Remove blocos de tool_code
-        rawText = rawText.replace(/thought\s*[\s\S]*?(?=\n\n|$)/ig, ''); // Remove blocos de thought residuais
-        rawText = rawText.replace(/print\(.*?\)/ig, ''); // Remove prints de python
-        rawText = rawText.replace(/```python[\s\S]*?```/ig, ''); // Remove blocos de código
-        rawText = rawText.trim();
-
-        // Detecção de transferência (sucesso, sair do loop)
-        const transfer   = rawText.includes('[TRANSFERIR_HUMANO]');
-        const cleanReply = rawText.replace('[TRANSFERIR_HUMANO]', '').trim();
-
-        return { reply: cleanReply || rawText, transfer };
-
-      } catch (err: any) {
-        const errData = err.response?.data;
-        lastError = errData?.error?.message || err.message;
-        const httpStatus = err.response?.status || 'N/A';
-
-        console.error(`[AIService] Falha na tentativa ${attempt + 1} com Google Search (HTTP ${httpStatus}):`, lastError);
-        if (errData) console.error(`[AIService] Resposta completa da API:`, JSON.stringify(errData).substring(0, 500));
-
-        // Sempre tentar sem Google Search antes de desistir desta chave
-        console.log(`[AIService] Tentando chave ${attempt + 1} sem Google Search...`);
+      for (const { label, payload } of attempts) {
         try {
-          const url = `${GEMINI_BASE}/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
-          
-          const payloadNoSearch = {
-            systemInstruction: payload.systemInstruction,
-            contents: payload.contents,
-            generationConfig: payload.generationConfig
-          };
+          console.log(`[AIService] Chave ${attempt + 1} — tentativa ${label}...`);
 
-          const response = await axios.post(url, payloadNoSearch, {
+          const response = await axios.post(url, payload, {
             headers: { 'Content-Type': 'application/json' },
             timeout: 35_000,
           });
 
           const parts: any[] = response.data?.candidates?.[0]?.content?.parts ?? [];
-          let rawText = parts
-            .filter((p: any) => !p.thought && !p.executableCode && !p.codeExecutionResult)
-            .map((p: any) => p.text ?? '')
-            .join('')
-            .trim();
+          const cleanText = extractCleanText(parts);
 
-          if (!rawText) {
-            throw new Error('Gemini retornou resposta vazia.');
+          if (!cleanText) {
+            console.warn(`[AIService] Chave ${attempt + 1} ${label}: resposta vazia após limpeza.`);
+            continue; // tenta próxima variante
           }
 
-          rawText = rawText.replace(/tool_code\s*[\s\S]*?(?:thought|$)/ig, '');
-          rawText = rawText.replace(/thought\s*[\s\S]*?(?=\n\n|$)/ig, '');
-          rawText = rawText.replace(/print\(.*?\)/ig, '');
-          rawText = rawText.replace(/```python[\s\S]*?```/ig, '');
-          rawText = rawText.trim();
+          const transfer   = cleanText.includes('[TRANSFERIR_HUMANO]');
+          const cleanReply = cleanText.replace('[TRANSFERIR_HUMANO]', '').trim();
 
-          const transfer   = rawText.includes('[TRANSFERIR_HUMANO]');
-          const cleanReply = rawText.replace('[TRANSFERIR_HUMANO]', '').trim();
+          console.log(`[AIService] ✅ Resposta gerada — chave ${attempt + 1}, ${label}.`);
+          return { reply: cleanReply || cleanText, transfer };
 
-          return { reply: cleanReply || rawText, transfer };
-
-        } catch (errInner: any) {
-          const errInnerData = errInner.response?.data;
-          lastError = errInnerData?.error?.message || errInner.message;
-          const httpInnerStatus = errInner.response?.status || 'N/A';
-          console.error(`[AIService] Falha total na chave ${attempt + 1} (HTTP ${httpInnerStatus}):`, lastError);
-          if (errInnerData) console.error(`[AIService] Resposta completa (sem search):`, JSON.stringify(errInnerData).substring(0, 500));
-
-          // Sempre avançar para a próxima chave - nunca parar prematuramente
-          console.warn(`[AIService] Avançando para próxima chave...`);
-          continue;
+        } catch (err: any) {
+          const errData  = err.response?.data;
+          lastError      = errData?.error?.message || err.message;
+          const status   = err.response?.status ?? 'N/A';
+          console.error(`[AIService] ❌ Chave ${attempt + 1} ${label} falhou (HTTP ${status}): ${lastError}`);
+          if (errData) console.error(`[AIService] Detalhe API:`, JSON.stringify(errData).substring(0, 400));
+          // continua para a próxima variante
         }
       }
+
+      console.warn(`[AIService] Chave ${attempt + 1} esgotada — tentando próxima chave...`);
     }
 
-    // 5. Fallback de segurança definitivo para OpenAI (gpt-4o-mini)
+    // 5. Fallback OpenAI (gpt-4o-mini)
     try {
       const openaiKey = process.env.OPENAI_API_KEY?.replace(/^["']|["']$/g, '')?.trim();
-      if (openaiKey && openaiKey.length > 5) {
-        console.log(`[AIService] Todas as tentativas Gemini falharam. Ativando fallback para OpenAI (gpt-4o-mini)...`);
-        const openaiUrl = 'https://api.openai.com/v1/chat/completions';
+      if (openaiKey && openaiKey.length > 10) {
+        console.log(`[AIService] Todas as chaves Gemini falharam. Tentando OpenAI gpt-4o-mini...`);
 
-        const messages = [
+        const openaiMessages = [
           { role: 'system', content: systemPrompt },
           ...history.map(h => ({
             role: h.sender === 'user' ? 'user' : 'assistant',
-            content: h.text
+            content: h.text,
           })),
-          { role: 'user', content: message }
+          { role: 'user', content: message },
         ];
 
-        const response = await axios.post(openaiUrl, {
+        const response = await axios.post('https://api.openai.com/v1/chat/completions', {
           model: 'gpt-4o-mini',
-          messages,
+          messages: openaiMessages,
           temperature: 0.4,
-          max_tokens: 1500
+          max_tokens: 1500,
         }, {
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${openaiKey}`
+            'Authorization': `Bearer ${openaiKey}`,
           },
-          timeout: 25_000
+          timeout: 25_000,
         });
 
         const rawText = response.data?.choices?.[0]?.message?.content?.trim();
         if (rawText) {
           const transfer   = rawText.includes('[TRANSFERIR_HUMANO]');
           const cleanReply = rawText.replace('[TRANSFERIR_HUMANO]', '').trim();
-          console.log(`[AIService] Resposta gerada via fallback OpenAI.`);
+          console.log(`[AIService] ✅ Resposta gerada via fallback OpenAI.`);
           return { reply: cleanReply || rawText, transfer };
         }
       }
     } catch (openaiErr: any) {
-      console.error(`[AIService] Erro fatal no fallback do OpenAI:`, openaiErr.response?.data || openaiErr.message);
+      console.error(`[AIService] Fallback OpenAI falhou:`, openaiErr.response?.data || openaiErr.message);
     }
 
-    console.error(`[AIService] Todas as tentativas Gemini e OpenAI falharam. Último erro: ${lastError}`);
-    throw new Error(`Falha ao gerar resposta IA: ${lastError}`);
+    // 6. Último recurso: resposta genérica (NUNCA deixar o cliente sem resposta)
+    console.error(`[AIService] ⚠️ Todos os caminhos falharam. Gerando resposta genérica. Último erro: ${lastError}`);
+    return {
+      reply: 'Olá! Recebi a sua mensagem. De momento temos uma sobrecarga de pedidos, mas iremos responder em breve. Pedimos desculpa pela demora! 🙏',
+      transfer: false,
+    };
   }
 }
+
