@@ -73,4 +73,11 @@ app.use((err: any, _req: express.Request, res: express.Response, _next: express.
 
 httpServer.listen(PORT, () => {
   console.log(`🚀 Orion Server na porta ${PORT} | IA: Gemini 2.5 Flash | Socket.io: Activo`);
+  
+  // Auto-recuperação de leads sem resposta nas últimas 24 horas devido ao erro anterior
+  import('./api/whatsapp.routes').then(({ recoverMissedMessages }) => {
+    setTimeout(() => {
+      recoverMissedMessages().catch(err => console.error('[RECOVERY-BOOT] Falha na recuperação de boot:', err.message));
+    }, 5000);
+  }).catch(err => console.error('[RECOVERY-BOOT] Erro de importação no boot:', err.message));
 });

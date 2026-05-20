@@ -169,38 +169,78 @@ function buildContents(
   message: string,
   media?: { base64: string; mimeType: string }
 ): any[] {
-  const contents: any[] = [];
+  // 1. Construir a lista linear de mensagens (filtrando 'human' e deduzindo roles)
+  const rawList: { role: 'user' | 'model'; text: string; media?: { base64: string; mimeType: string } }[] = [];
 
-  // Últimas 50 mensagens de contexto
-  const window = history.slice(-50);
-
-  for (const msg of window) {
+  for (const msg of history) {
     if (msg.sender === 'user') {
-      contents.push({ role: 'user',  parts: [{ text: msg.text }] });
+      rawList.push({ role: 'user', text: msg.text });
     } else if (msg.sender === 'bot') {
-      contents.push({ role: 'model', parts: [{ text: msg.text }] });
+      rawList.push({ role: 'model', text: msg.text });
     }
-    // Mensagens de 'human' (atendente) são ignoradas no contexto da IA
   }
 
-  // Mensagem actual (com média opcional)
-  const currentParts: any[] = [];
-
-  if (media && (
-    media.mimeType.startsWith('image/') ||
-    media.mimeType.startsWith('video/') ||
-    media.mimeType.startsWith('audio/')
-  )) {
-    currentParts.push({
-      inlineData: { mimeType: media.mimeType, data: media.base64 }
-    });
+  // Verificar se o último item da rawList é exatamente igual à mensagem atual
+  // para evitar duplicações de mensagens já salvas no banco
+  const lastItem = rawList[rawList.length - 1];
+  if (lastItem && lastItem.role === 'user' && lastItem.text === message) {
+    if (media) {
+      lastItem.media = media;
+    }
+  } else {
+    rawList.push({ role: 'user', text: message, media });
   }
 
-  currentParts.push({ text: message });
-  contents.push({ role: 'user', parts: currentParts });
+  // 2. Agrupar mensagens consecutivas do mesmo role para cumprir a regra de alternância do Gemini
+  const mergedList: { role: 'user' | 'model'; parts: any[] }[] = [];
 
-  return contents;
+  for (const item of rawList) {
+    const lastMerged = mergedList[mergedList.length - 1];
+
+    if (lastMerged && lastMerged.role === item.role) {
+      // Se for o mesmo role, agrupar
+      if (item.media && (
+        item.media.mimeType.startsWith('image/') ||
+        item.media.mimeType.startsWith('video/') ||
+        item.media.mimeType.startsWith('audio/')
+      )) {
+        lastMerged.parts.push({
+          inlineData: { mimeType: item.media.mimeType, data: item.media.base64 }
+        });
+      }
+      
+      // Adicionar o texto
+      const lastPart = lastMerged.parts.find(p => p.text !== undefined);
+      if (lastPart) {
+        lastPart.text = `${lastPart.text}\n${item.text}`.trim();
+      } else {
+        lastMerged.parts.push({ text: item.text });
+      }
+    } else {
+      // Novo role
+      const parts: any[] = [];
+      if (item.media && (
+        item.media.mimeType.startsWith('image/') ||
+        item.media.mimeType.startsWith('video/') ||
+        item.media.mimeType.startsWith('audio/')
+      )) {
+        parts.push({
+          inlineData: { mimeType: item.media.mimeType, data: item.media.base64 }
+        });
+      }
+      parts.push({ text: item.text });
+      mergedList.push({ role: item.role, parts });
+    }
+  }
+
+  // 3. Garantir que a conversa sempre começa com o role 'user'
+  while (mergedList.length > 0 && mergedList[0].role !== 'user') {
+    mergedList.shift();
+  }
+
+  return mergedList;
 }
+
 
 // ─────────────────────────────────────────────────────────
 //  Serviço Principal
@@ -281,7 +321,7 @@ export class AIService {
       },
       contents,
       tools: [
-        { google_search: {} }
+        { googleSearch: {} }
       ],
       generationConfig: {
         temperature:     0.4, // Reduzido para maior precisão factual

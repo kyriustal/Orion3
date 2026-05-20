@@ -298,7 +298,10 @@ async function triggerAIResponse(params: {
       timeSinceLastMessageHours = (currentMsgTime - prevMsgTime) / (1000 * 60 * 60);
     }
 
-    const history = (dbHistory || []).reverse().map(h => ({ sender: h.sender, text: h.text }));
+    // dbHistory[0] é a mensagem atual que acabámos de persistir no banco antes de chamar a IA.
+    // Excluímo-la para passar à IA apenas o histórico anterior real.
+    const pastDbHistory = dbHistory ? dbHistory.slice(1) : [];
+    const history = pastDbHistory.reverse().map(h => ({ sender: h.sender, text: h.text }));
 
     // Gerar resposta com IA (Gemini 2.5 Flash + Thinking)
     const aiResult = await AIService.generateResponse({
@@ -597,10 +600,19 @@ router.post('/webhook', async (req, res) => {
     }
 
     // ── 7. Enriquecer texto com contexto de anúncio ───────────────────────────
-    let dbText = userText || `(Mídia: ${incomingMsg.type})`;
-    if (referral?.headline) {
-      dbText = `[Vindo do Anúncio: "${referral.headline}"] ${dbText}`;
-      console.log(`[WEBHOOK] Cliente vindo de anúncio: ${referral.headline}`);
+    let dbText = userText;
+    if (!dbText) {
+      if (incomingMsg.type === 'text') {
+        dbText = referral ? '(Clique no anúncio)' : '(Mensagem vazia)';
+      } else {
+        dbText = `(Mídia: ${incomingMsg.type})`;
+      }
+    }
+
+    if (referral) {
+      const adIdentifier = referral.headline || referral.body || 'Anúncio';
+      dbText = `[Vindo do Anúncio: "${adIdentifier}"] ${dbText}`;
+      console.log(`[WEBHOOK] Cliente vindo de anúncio: ${adIdentifier}`);
     }
 
     // ── 8. Persistir mensagem do cliente ─────────────────────────────────────
@@ -673,5 +685,118 @@ router.post('/ai-pause', requireAuth, async (req: AuthRequest, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// ─── POST /api/whatsapp/recover-missed — Trigger recovery manually ───────────
+router.post('/recover-missed', requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const orgId = req.user?.orgId;
+    if (!orgId) return res.status(401).json({ error: 'Não autorizado.' });
+    
+    // Executar de forma assíncrona para não bloquear
+    recoverMissedMessages();
+    
+    res.json({ message: 'Processo de recuperação de mensagens não respondidas iniciado em segundo plano.' });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Função de Recuperação de Mensagens Não Respondidas (Sistema de Lead Rescue)
+// ─────────────────────────────────────────────────────────────────────────────
+export async function recoverMissedMessages() {
+  console.log('[RECOVERY] Iniciando verificação de mensagens não respondidas...');
+  try {
+    const last24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    
+    const { data: errorMessages, error } = await supabaseAdmin
+      .from('conversation_history')
+      .select('id, org_id, customer_phone, created_at')
+      .eq('sender', 'bot')
+      .eq('text', '[Erro do sistema] Desculpe, tive um problema técnico temporário. Por favor tente novamente em breve.')
+      .gte('created_at', last24h)
+      .order('created_at', { ascending: false });
+
+    if (error || !errorMessages || errorMessages.length === 0) {
+      console.log('[RECOVERY] Nenhuma mensagem de erro encontrada nas últimas 24h.');
+      return;
+    }
+
+    console.log(`[RECOVERY] Encontradas ${errorMessages.length} mensagens de erro para processar.`);
+
+    const processedChats = new Set<string>();
+
+    for (const errMsg of errorMessages) {
+      const chatKey = `${errMsg.org_id}:${errMsg.customer_phone}`;
+      if (processedChats.has(chatKey)) {
+        await supabaseAdmin.from('conversation_history').delete().eq('id', errMsg.id);
+        continue;
+      }
+      processedChats.add(chatKey);
+
+      console.log(`[RECOVERY] Recuperando chat de ${errMsg.customer_phone} para org ${errMsg.org_id}...`);
+
+      await supabaseAdmin.from('conversation_history').delete().eq('id', errMsg.id);
+
+      const { data: userMsgs } = await supabaseAdmin
+        .from('conversation_history')
+        .select('text, metadata')
+        .eq('org_id', errMsg.org_id)
+        .eq('customer_phone', errMsg.customer_phone)
+        .eq('sender', 'user')
+        .order('created_at', { ascending: false })
+        .limit(1);
+
+      if (!userMsgs || userMsgs.length === 0) {
+        console.warn(`[RECOVERY] Nenhuma mensagem de utilizador encontrada para ${errMsg.customer_phone}.`);
+        continue;
+      }
+
+      const lastUserMsg = userMsgs[0];
+      
+      const { data: config } = await supabaseAdmin
+        .from('whatsapp_config')
+        .select('phone_number_id, access_token, display_name')
+        .eq('org_id', errMsg.org_id)
+        .eq('is_active', true)
+        .maybeSingle();
+
+      if (!config) {
+        console.warn(`[RECOVERY] Configuração ativa do WhatsApp não encontrada para a org ${errMsg.org_id}.`);
+        continue;
+      }
+
+      const { phone_number_id: phoneNumberId, access_token: accessToken, display_name: displayName } = config;
+
+      const { data: orgData } = await supabaseAdmin
+        .from('organizations')
+        .select('chatbot_name')
+        .eq('id', errMsg.org_id)
+        .maybeSingle();
+
+      const botName = orgData?.chatbot_name || displayName || 'Assistente';
+
+      console.log(`[RECOVERY] Disparando IA para responder a ${errMsg.customer_phone} com texto: "${lastUserMsg.text.substring(0, 50)}..."`);
+      
+      await triggerAIResponse({
+        orgId: errMsg.org_id,
+        fromNumber: errMsg.customer_phone,
+        phoneNumberId,
+        accessToken,
+        botName,
+        message: lastUserMsg.text,
+        incomingMessageId: lastUserMsg.metadata?.message_id || `recovered_${Date.now()}`,
+        media: undefined,
+        referral: lastUserMsg.metadata?.referral || undefined,
+        isAudio: false,
+        isVoiceAllowed: false
+      });
+    }
+
+    console.log('[RECOVERY] Processo de recuperação concluído com sucesso.');
+  } catch (err: any) {
+    console.error('[RECOVERY] Erro crítico no processo de recuperação:', err.message);
+  }
+}
 
 export default router;
