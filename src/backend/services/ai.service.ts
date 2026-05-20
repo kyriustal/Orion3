@@ -331,7 +331,7 @@ export class AIService {
       // 3. Remover padrões de raciocínio em inglês que vazam no output
       raw = raw.replace(/^(The user (is asking|wants|said|mentioned)|I need to|I should|Let me|I will|I'll|Okay,|Sure,|Certainly,).*$/gim, '');
 
-      // 4. Remover blocos de código técnico (tool_code, python, etc.)
+            // 4. Remover blocos de código técnico (tool_code, python, etc.)
       raw = raw.replace(/```(?:python|tool_code|json|javascript|typescript)?[\s\S]*?```/gi, '');
       raw = raw.replace(/tool_code\s*[\s\S]*?(?=\n\n|$)/gi, '');
       raw = raw.replace(/print\(.*?\)/gi, '');
@@ -352,7 +352,6 @@ export class AIService {
     const contents     = buildContents(history, message, media);
 
     // 3. Payloads: com e sem Google Search
-    // gemini-2.5-flash-preview usa "google_search" (underscore) como tool key
     const baseConfig = {
       systemInstruction: { parts: [{ text: systemPrompt }] },
       contents,
@@ -363,68 +362,15 @@ export class AIService {
     const payloadWithSearch2 = { ...baseConfig, tools: [{ googleSearch: {} }] }; // fallback de formato
     const payloadNoSearch    = { ...baseConfig };
 
-
-    // 4. Obter exatamente uma única chave Gemini ativa para esta requisição (com rotação de minuto em minuto)
-    const apiKey = getApiKey(0);
-    const url    = `${GEMINI_BASE}/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
     let lastError = '';
 
-    // ── Tentativas ordenadas por prioridade para esta chave específica ────────
-    const attempts = [
-      { label: 'com google_search',  payload: payloadWithSearch  },
-      { label: 'com googleSearch',   payload: payloadWithSearch2 },
-      { label: 'sem tools',          payload: payloadNoSearch    },
-    ];
-
-    let success = false;
-    let reply = '';
-    let transfer = false;
-
-    for (const { label, payload } of attempts) {
-      try {
-        console.log(`[AIService] Tentando chave Gemini ativa — formato ${label}...`);
-
-        const response = await axios.post(url, payload, {
-          headers: { 'Content-Type': 'application/json' },
-          timeout: 35_000,
-        });
-
-        const parts: any[] = response.data?.candidates?.[0]?.content?.parts ?? [];
-        const cleanText = extractCleanText(parts);
-
-        if (!cleanText) {
-          console.warn(`[AIService] Resposta vazia após limpeza no formato ${label}.`);
-          continue; // tenta próxima variante de formato
-        }
-
-        transfer   = cleanText.includes('[TRANSFERIR_HUMANO]');
-        reply      = cleanText.replace('[TRANSFERIR_HUMANO]', '').trim();
-        success    = true;
-
-        console.log(`[AIService] ✅ Resposta gerada com sucesso com formato ${label}.`);
-        break; // Sucesso, sai do loop de formatos para esta chave
-
-      } catch (err: any) {
-        const errData  = err.response?.data;
-        lastError      = errData?.error?.message || err.message;
-        const status   = err.response?.status ?? 'N/A';
-        console.error(`[AIService] ❌ Formato ${label} falhou (HTTP ${status}): ${lastError}`);
-        if (errData) console.error(`[AIService] Detalhe API:`, JSON.stringify(errData).substring(0, 400));
-      }
-    }
-
-    // Se obteve resposta com sucesso, retorna de imediato
-    if (success) {
-      return { reply, transfer };
-    }
-
-    console.warn(`[AIService] A chave Gemini ativa falhou em todos os formatos. Avançando diretamente para o fallback...`);
-
-    // 5. Fallback OpenAI (gpt-4o-mini)
+    // ─────────────────────────────────────────────────────────
+    // 4. Tentar OpenAI gpt-4o-mini Primeiro (Se a chave estiver configurada)
+    // ─────────────────────────────────────────────────────────
     try {
       const openaiKey = process.env.OPENAI_API_KEY?.replace(/^["']|["']$/g, '')?.trim();
       if (openaiKey && openaiKey.length > 10) {
-        console.log(`[AIService] Todas as chaves Gemini falharam. Tentando OpenAI gpt-4o-mini...`);
+        console.log(`[AIService] Tentando OpenAI gpt-4o-mini como motor principal...`);
 
         const openaiMessages = [
           { role: 'system', content: systemPrompt },
@@ -452,14 +398,70 @@ export class AIService {
         if (rawText) {
           const transfer   = rawText.includes('[TRANSFERIR_HUMANO]');
           const cleanReply = rawText.replace('[TRANSFERIR_HUMANO]', '').trim();
-          console.log(`[AIService] ✅ Resposta gerada via fallback OpenAI.`);
+          console.log(`[AIService] ✅ Resposta gerada com sucesso via OpenAI gpt-4o-mini.`);
           return { reply: cleanReply || rawText, transfer };
         }
       }
     } catch (openaiErr: any) {
-      console.error(`[AIService] Fallback OpenAI falhou:`, openaiErr.response?.data || openaiErr.message);
+      const errData = openaiErr.response?.data;
+      lastError = errData?.error?.message || openaiErr.message;
+      console.error(`[AIService] ❌ OpenAI falhou:`, lastError);
+      if (errData) console.error(`[AIService] Detalhe API OpenAI:`, JSON.stringify(errData).substring(0, 400));
     }
 
+    // ─────────────────────────────────────────────────────────
+    // 5. Fallback automático para Gemini 2.5 Flash
+    // ─────────────────────────────────────────────────────────
+    try {
+      console.log(`[AIService] Avançando para fallback Gemini 2.5 Flash...`);
+      const apiKey = getApiKey(0);
+      const url    = `${GEMINI_BASE}/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
+
+      const attempts = [
+        { label: 'com google_search',  payload: payloadWithSearch  },
+        { label: 'com googleSearch',   payload: payloadWithSearch2 },
+        { label: 'sem tools',          payload: payloadNoSearch    },
+      ];
+
+      for (const { label, payload } of attempts) {
+        try {
+          console.log(`[AIService] Tentando chave Gemini ativa — formato ${label}...`);
+
+          const response = await axios.post(url, payload, {
+            headers: { 'Content-Type': 'application/json' },
+            timeout: 35_000,
+          });
+
+          const parts: any[] = response.data?.candidates?.[0]?.content?.parts ?? [];
+          const cleanText = extractCleanText(parts);
+
+          if (!cleanText) {
+            console.warn(`[AIService] Resposta vazia após limpeza no formato ${label}.`);
+            continue;
+          }
+
+          const transfer   = cleanText.includes('[TRANSFERIR_HUMANO]');
+          const cleanReply = cleanText.replace('[TRANSFERIR_HUMANO]', '').trim();
+
+          console.log(`[AIService] ✅ Resposta gerada com sucesso com formato ${label} via Gemini.`);
+          return { reply: cleanReply || cleanText, transfer };
+
+        } catch (err: any) {
+          const errData  = err.response?.data;
+          lastError      = errData?.error?.message || err.message;
+          const status   = err.response?.status ?? 'N/A';
+          console.error(`[AIService] ❌ Gemini formato ${label} falhou (HTTP ${status}): ${lastError}`);
+          if (errData) console.error(`[AIService] Detalhe API Gemini:`, JSON.stringify(errData).substring(0, 400));
+          
+          if (status === 429) {
+            console.warn(`[AIService] ⚠️ Quota esgotada (429) na chave Gemini. Interrompendo tentativas Gemini.`);
+            break;
+          }
+        }
+      }
+    } catch (geminiErr: any) {
+      console.error(`[AIService] Falha crítica no fallback Gemini:`, geminiErr.message);
+    }
 
     // 6. Último recurso: resposta genérica (apenas quando houver erro)
     if (lastError) {
