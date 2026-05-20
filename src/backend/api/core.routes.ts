@@ -59,22 +59,40 @@ router.post('/settings/org', requireAuth, async (req: AuthRequest, res) => {
     const orgId = req.user?.orgId;
     const body = req.body;
 
+    // 1. Obter um registo para inspecionar as colunas válidas na base de dados
+    const { data: existingOrg, error: fetchError } = await supabaseAdmin
+      .from('organizations')
+      .select('*')
+      .eq('id', orgId)
+      .maybeSingle();
+
+    if (fetchError) throw fetchError;
+    if (!existingOrg) {
+      return res.status(404).json({ error: 'Organização não encontrada.' });
+    }
+
+    // 2. Filtrar apenas as chaves do body que existem como colunas na tabela 'organizations'
+    const validColumns = Object.keys(existingOrg);
+    const filteredUpdate: any = {};
+    for (const key of Object.keys(body)) {
+      if (validColumns.includes(key)) {
+        filteredUpdate[key] = body[key];
+      }
+    }
+
+    // 3. Executar o update apenas com as colunas válidas
+    console.log(`[SETTINGS] A atualizar organização ${orgId} com as colunas filtradas:`, Object.keys(filteredUpdate));
+
     const { error } = await supabaseAdmin
       .from('organizations')
-      .update(body)
+      .update(filteredUpdate)
       .eq('id', orgId);
 
-    if (error) {
-      // Tabela ou coluna não existe — não bloquear a UI
-      if (error.code === '42P01' || error.code === '42703') {
-        console.warn('[SETTINGS] Tabela ou coluna não existe no banco. Ignorando.', error.message);
-        return res.json({ message: 'Configurações guardadas.' });
-      }
-      throw error;
-    }
+    if (error) throw error;
 
     res.json({ message: 'Configurações guardadas com sucesso.' });
   } catch (err: any) {
+    console.error('[SETTINGS] Erro ao guardar configurações:', err.message);
     res.status(500).json({ error: err.message });
   }
 });

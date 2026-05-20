@@ -372,13 +372,26 @@ export class AIService {
       if (openaiKey && openaiKey.length > 10) {
         console.log(`[AIService] Tentando OpenAI gpt-4o-mini como motor principal...`);
 
+        // Suporte multimodal para imagens no GPT-4o mini
+        const lastUserContent: any[] = [{ type: 'text', text: message }];
+
+        if (media && media.mimeType.startsWith('image/')) {
+          console.log(`[AIService] Incluindo imagem (${media.mimeType}) no payload do GPT-4o mini...`);
+          lastUserContent.push({
+            type: 'image_url',
+            image_url: {
+              url: `data:${media.mimeType};base64,${media.base64}`,
+            },
+          });
+        }
+
         const openaiMessages = [
           { role: 'system', content: systemPrompt },
           ...history.map(h => ({
             role: h.sender === 'user' ? 'user' : 'assistant',
             content: h.text,
           })),
-          { role: 'user', content: message },
+          { role: 'user', content: lastUserContent.length > 1 ? lastUserContent : message },
         ];
 
         const response = await axios.post('https://api.openai.com/v1/chat/completions', {

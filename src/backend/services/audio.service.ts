@@ -18,11 +18,54 @@ export class AudioService {
     base64: string,
     mimeType: string
   ): Promise<string | null> {
+    // ─────────────────────────────────────────────────────────
+    // 1. Tentar OpenAI Whisper se a chave estiver configurada
+    // ─────────────────────────────────────────────────────────
+    const openaiKey = process.env.OPENAI_API_KEY?.replace(/^["']|["']$/g, '')?.trim();
+    if (openaiKey && openaiKey.length > 10) {
+      try {
+        console.log(`[AudioService] Tentando transcrição de áudio via OpenAI Whisper...`);
+
+        // Obter extensão correspondente para o arquivo
+        const ext = mimeType.includes('mpeg') || mimeType.includes('mp3') ? 'mp3' :
+                    mimeType.includes('wav') ? 'wav' :
+                    mimeType.includes('webm') ? 'webm' : 'ogg';
+
+        const buffer   = Buffer.from(base64, 'base64');
+        const fileBlob = new Blob([buffer], { type: mimeType });
+
+        const formData = new FormData();
+        formData.append('file', fileBlob, `audio.${ext}`);
+        formData.append('model', 'whisper-1');
+        formData.append('language', 'pt');
+
+        const response = await axios.post('https://api.openai.com/v1/audio/transcriptions', formData, {
+          headers: {
+            'Authorization': `Bearer ${openaiKey}`,
+            'Content-Type': 'multipart/form-data',
+          },
+          timeout: 25_000,
+        });
+
+        const transcript = response.data?.text?.trim();
+        if (transcript) {
+          console.log(`[AudioService] ✅ Transcrição Whisper concluída com sucesso.`);
+          return transcript;
+        }
+      } catch (err: any) {
+        console.error('[AudioService] ❌ Transcrição Whisper falhou:', err.response?.data || err.message);
+        console.log('[AudioService] Avançando para fallback Gemini para transcrição de áudio...');
+      }
+    }
+
+    // ─────────────────────────────────────────────────────────
+    // 2. Fallback para Gemini 2.5 Flash
+    // ─────────────────────────────────────────────────────────
     let apiKey: string;
     try {
-      apiKey = getApiKey();
+      apiKey = getApiKey(0);
     } catch (err) {
-      console.warn('[AudioService] Nenhuma chave válida:', err);
+      console.warn('[AudioService] Nenhuma chave Gemini ativa disponível:', err);
       return null;
     }
 
