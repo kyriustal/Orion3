@@ -30,7 +30,7 @@ export interface GenerateResult {
 // ─────────────────────────────────────────────────────────
 //  Configuração Gemini 2.5 Flash
 // ─────────────────────────────────────────────────────────
-const GEMINI_MODEL = 'gemini-2.5-flash-preview-04-17';
+const GEMINI_MODEL = 'gemini-2.5-flash';
 const GEMINI_BASE  = 'https://generativelanguage.googleapis.com/v1beta/models';
 
 
@@ -45,7 +45,9 @@ export function getUniqueApiKeys(): string[] {
 
   const allKeys: string[] = [];
   rawKeys.forEach(k => {
-    const parts = k.split(',').map(s => s.trim().replace(/^["']|["']$/g, ''));
+    // Remover aspas de toda a string antes de fazer o split
+    const cleanStr = k.trim().replace(/^["']|["']$/g, '');
+    const parts = cleanStr.split(',').map(s => s.trim().replace(/^["']|["']$/g, ''));
     allKeys.push(...parts);
   });
 
