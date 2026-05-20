@@ -156,13 +156,15 @@ REGRAS:
   return `Você é ${botName}, assistente virtual oficial da empresa "${companyName}".
 ${sector ? `Sector de actividade: ${sector}.` : ''}
 
+═══ SUA PERSONALIDADE E COMPORTAMENTO (DEFINIDOS PELO USUÁRIO NO PAINEL) ═══
+${org?.ai_prompt ? org.ai_prompt : 'Você deve agir como um assistente extremamente simpático, cordial, prestativo, persuasivo e carismático.'}
+
 ═══ CONHECIMENTO ═══
 ${knowledge ? knowledge : 'Você deve agir como um assistente cordial e prestativo.'}
 
 ═══ FERRAMENTAS EXTERNAS (GROUNDING) ═══
-- Você tem acesso à PESQUISA GOOGLE em tempo real.
-- Sempre que o cliente perguntar algo que exija dados actualizados (ex: taxas de visto actuais, requisitos de entrada de um país, moradas de consulados ou notícias recentes), UTILIZE a ferramenta de pesquisa para consultar sites oficiais e instituições relacionadas.
-${customPrompt}
+- Você tem acesso à PESQUISA EXTERNA DO GOOGLE / DUCKDUCKGO em tempo real para pesquisar em instituições oficiais.
+- Sempre que o cliente perguntar algo sobre leis, taxas atuais, vistos, regras de consulado, regulamentos do governo ou dados recentes que exijam dados actualizados precisos, UTILIZE e priorize as informações obtidas nas fontes oficiais pesquisadas.
 
 ${selectedToneInstructions}
 
@@ -271,6 +273,43 @@ function buildContents(
 
 
 // ─────────────────────────────────────────────────────────
+//  Pesquisa Externa em Tempo Real (DuckDuckGo Lite Grounding)
+// ─────────────────────────────────────────────────────────
+async function performWebSearch(query: string): Promise<string> {
+  try {
+    console.log(`[Search] A realizar pesquisa externa em fontes oficiais para: "${query}"...`);
+    const response = await axios.get(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+      },
+      timeout: 8000
+    });
+
+    const html = response.data;
+    const snippets: string[] = [];
+    const snippetRegex = /<a class="result__snippet"[^>]*>([\s\S]*?)<\/a>/g;
+    let match;
+    
+    while ((match = snippetRegex.exec(html)) !== null && snippets.length < 3) {
+      const text = match[1].replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+      if (text) {
+        snippets.push(text);
+      }
+    }
+
+    if (snippets.length > 0) {
+      console.log(`[Search] ✅ Pesquisa concluída. ${snippets.length} resultados oficiais obtidos.`);
+      return `═══ INFORMAÇÕES OFICIAIS ENCONTRADAS EM TEMPO REAL ═══\n${snippets.map((s, idx) => `[Fonte ${idx + 1}]: ${s}`).join('\n\n')}`;
+    }
+    
+    return '';
+  } catch (err: any) {
+    console.warn('[Search] ⚠️ Falha na pesquisa externa:', err.message);
+    return '';
+  }
+}
+
+// ─────────────────────────────────────────────────────────
 //  Serviço Principal
 // ─────────────────────────────────────────────────────────
 export class AIService {
@@ -333,7 +372,18 @@ export class AIService {
           '\nPara enviar um arquivo, responda exatamente com o código: [SEND_FILE: ID] no final da sua resposta.';
       }
 
-      externalKnowledge = `${snippetsText}\n\n${externalKnowledge}`;
+      // Realizar pesquisa externa em tempo real em fontes oficiais se a mensagem do cliente exigir dados precisos/recentes
+      let searchResults = '';
+      const isSearchNeeded = /visto|consulado|taxa|preço|atual|hoje|requisito|oficial|governo|site|embaixada|documento|notícia/i.test(message);
+      if (isSearchNeeded) {
+        try {
+          searchResults = await performWebSearch(message);
+        } catch (err) {
+          console.warn('[Search] Erro ao buscar informações em tempo real:', err);
+        }
+      }
+
+      externalKnowledge = `${snippetsText}\n\n${externalKnowledge}\n\n${searchResults}`.trim();
     }
 
     // ── Função auxiliar: limpar texto e extrair apenas a resposta final ────────
