@@ -364,69 +364,61 @@ export class AIService {
     const payloadNoSearch    = { ...baseConfig };
 
 
-    // 4. Obter todas as chaves Gemini configuradas no .env e ordená-las de forma rotativa
-    const uniqueKeys = getUniqueApiKeys();
-    if (uniqueKeys.length === 0) {
-      console.error('[AIService] ERRO: Nenhuma chave Gemini configurada no .env.');
-    }
-
-    // Rotacionar o ponto de partida das chaves com base no minuto atual
-    const baseIdx = Math.floor(Date.now() / 60_000);
-    const rotatedKeys: string[] = [];
-    for (let i = 0; i < uniqueKeys.length; i++) {
-      const idx = (baseIdx + i) % uniqueKeys.length;
-      rotatedKeys.push(uniqueKeys[idx]);
-    }
-
+    // 4. Obter exatamente uma única chave Gemini ativa para esta requisição (com rotação de minuto em minuto)
+    const apiKey = getApiKey(0);
+    const url    = `${GEMINI_BASE}/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
     let lastError = '';
 
-    // Tentar todas as chaves Gemini configuradas antes de avançar para o fallback OpenAI
-    for (let attempt = 0; attempt < rotatedKeys.length; attempt++) {
-      const apiKey = rotatedKeys[attempt];
-      const url    = `${GEMINI_BASE}/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
+    // ── Tentativas ordenadas por prioridade para esta chave específica ────────
+    const attempts = [
+      { label: 'com google_search',  payload: payloadWithSearch  },
+      { label: 'com googleSearch',   payload: payloadWithSearch2 },
+      { label: 'sem tools',          payload: payloadNoSearch    },
+    ];
 
-      // ── Tentativas ordenadas por prioridade ──────────────────────────────────
-      const attempts = [
-        { label: 'com google_search',  payload: payloadWithSearch  },
-        { label: 'com googleSearch',   payload: payloadWithSearch2 },
-        { label: 'sem tools',          payload: payloadNoSearch    },
-      ];
+    let success = false;
+    let reply = '';
+    let transfer = false;
 
-      for (const { label, payload } of attempts) {
-        try {
-          console.log(`[AIService] Tentando chave Gemini ${attempt + 1}/${rotatedKeys.length} — formato ${label}...`);
+    for (const { label, payload } of attempts) {
+      try {
+        console.log(`[AIService] Tentando chave Gemini ativa — formato ${label}...`);
 
-          const response = await axios.post(url, payload, {
-            headers: { 'Content-Type': 'application/json' },
-            timeout: 35_000,
-          });
+        const response = await axios.post(url, payload, {
+          headers: { 'Content-Type': 'application/json' },
+          timeout: 35_000,
+        });
 
-          const parts: any[] = response.data?.candidates?.[0]?.content?.parts ?? [];
-          const cleanText = extractCleanText(parts);
+        const parts: any[] = response.data?.candidates?.[0]?.content?.parts ?? [];
+        const cleanText = extractCleanText(parts);
 
-          if (!cleanText) {
-            console.warn(`[AIService] Chave ${attempt + 1}/${rotatedKeys.length} ${label}: resposta vazia após limpeza.`);
-            continue; // tenta próxima variante
-          }
-
-          const transfer   = cleanText.includes('[TRANSFERIR_HUMANO]');
-          const cleanReply = cleanText.replace('[TRANSFERIR_HUMANO]', '').trim();
-
-          console.log(`[AIService] ✅ Resposta gerada com sucesso — chave Gemini ${attempt + 1}/${rotatedKeys.length}, formato ${label}.`);
-          return { reply: cleanReply || cleanText, transfer };
-
-        } catch (err: any) {
-          const errData  = err.response?.data;
-          lastError      = errData?.error?.message || err.message;
-          const status   = err.response?.status ?? 'N/A';
-          console.error(`[AIService] ❌ Chave Gemini ${attempt + 1}/${rotatedKeys.length} ${label} falhou (HTTP ${status}): ${lastError}`);
-          if (errData) console.error(`[AIService] Detalhe API:`, JSON.stringify(errData).substring(0, 400));
-          // continua para a próxima variante
+        if (!cleanText) {
+          console.warn(`[AIService] Resposta vazia após limpeza no formato ${label}.`);
+          continue; // tenta próxima variante de formato
         }
-      }
 
-      console.warn(`[AIService] Chave Gemini ${attempt + 1}/${rotatedKeys.length} esgotada. Tentando próxima...`);
+        transfer   = cleanText.includes('[TRANSFERIR_HUMANO]');
+        reply      = cleanText.replace('[TRANSFERIR_HUMANO]', '').trim();
+        success    = true;
+
+        console.log(`[AIService] ✅ Resposta gerada com sucesso com formato ${label}.`);
+        break; // Sucesso, sai do loop de formatos para esta chave
+
+      } catch (err: any) {
+        const errData  = err.response?.data;
+        lastError      = errData?.error?.message || err.message;
+        const status   = err.response?.status ?? 'N/A';
+        console.error(`[AIService] ❌ Formato ${label} falhou (HTTP ${status}): ${lastError}`);
+        if (errData) console.error(`[AIService] Detalhe API:`, JSON.stringify(errData).substring(0, 400));
+      }
     }
+
+    // Se obteve resposta com sucesso, retorna de imediato
+    if (success) {
+      return { reply, transfer };
+    }
+
+    console.warn(`[AIService] A chave Gemini ativa falhou em todos os formatos. Avançando diretamente para o fallback...`);
 
     // 5. Fallback OpenAI (gpt-4o-mini)
     try {
