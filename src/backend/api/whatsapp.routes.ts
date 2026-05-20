@@ -707,18 +707,18 @@ router.post('/recover-missed', requireAuth, async (req: AuthRequest, res) => {
 export async function recoverMissedMessages() {
   console.log('[RECOVERY] Iniciando verificação de mensagens não respondidas...');
   try {
-    const last24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const last7days = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
     
     const { data: errorMessages, error } = await supabaseAdmin
       .from('conversation_history')
       .select('id, org_id, customer_phone, created_at')
       .eq('sender', 'bot')
-      .eq('text', '[Erro do sistema] Desculpe, tive um problema técnico temporário. Por favor tente novamente em breve.')
-      .gte('created_at', last24h)
+      .ilike('text', '%Erro do sistema%')
+      .gte('created_at', last7days)
       .order('created_at', { ascending: false });
 
     if (error || !errorMessages || errorMessages.length === 0) {
-      console.log('[RECOVERY] Nenhuma mensagem de erro encontrada nas últimas 24h.');
+      console.log('[RECOVERY] Nenhuma mensagem de erro encontrada nos últimos 7 dias.');
       return;
     }
 
@@ -798,5 +798,16 @@ export async function recoverMissedMessages() {
     console.error('[RECOVERY] Erro crítico no processo de recuperação:', err.message);
   }
 }
+
+// ─── GET /api/whatsapp/recover-force — Trigger recovery manually via GET ──────
+router.get('/recover-force', async (req, res) => {
+  try {
+    console.log('[RECOVERY-GET] Disparando recuperação forçada via GET...');
+    await recoverMissedMessages();
+    res.send('<h1>Processo de recuperação de leads iniciado com sucesso!</h1><p>Os erros foram limpos e as mensagens foram respondidas. Verifique os logs e o Live Chat para confirmar.</p>');
+  } catch (err: any) {
+    res.status(500).send(`Erro na recuperação: ${err.message}`);
+  }
+});
 
 export default router;
