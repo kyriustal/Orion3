@@ -113,7 +113,7 @@ export class WhatsAppService {
             const fileBlob = new Blob([fileBuffer], { type: 'audio/mpeg' });
             
             formData.append('file', fileBlob, 'audio.mp3');
-            formData.append('type', 'audio/mpeg');
+            formData.append('type', 'audio'); // <-- Formato correto exigido pela API da Meta
             formData.append('messaging_product', 'whatsapp');
 
             const url = `https://graph.facebook.com/v19.0/${phoneNumberId}/media`;
