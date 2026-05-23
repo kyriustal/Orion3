@@ -1,5 +1,6 @@
 import pdfParse from 'pdf-parse';
 import mammoth from 'mammoth';
+import axios from 'axios';
 
 /**
  * Serviço de extracção de texto de documentos.
@@ -53,6 +54,46 @@ export class DocumentService {
 
     } catch (err: any) {
       console.error('[DocumentService] Erro ao extrair texto:', err.message);
+      return null;
+    }
+  }
+
+  /**
+   * Extrai o conteúdo de texto limpo de uma página web (URL).
+   * Remove scripts, estilos e tags HTML, retornando o conteúdo principal estruturado.
+   */
+  static async extractTextFromUrl(url: string): Promise<string | null> {
+    try {
+      console.log(`[DocumentService] A extrair conteúdo do URL: ${url}`);
+      
+      const response = await axios.get(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        },
+        timeout: 5000 // Timeout curto para não bloquear a experiência do WhatsApp
+      });
+
+      let html = response.data;
+      if (typeof html !== 'string') {
+        html = JSON.stringify(html);
+      }
+
+      // Remover blocos de script, estilos e marcação HTML
+      let text = html
+        .replace(/<script\b[^>]*>([\s\S]*?)<\/script>/gim, '')
+        .replace(/<style\b[^>]*>([\s\S]*?)<\/style>/gim, '')
+        .replace(/<[^>]+>/gm, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+      if (text.length < 30) {
+        return null;
+      }
+
+      // Limitar o tamanho do conteúdo extraído para otimizar o tamanho do contexto da IA
+      return text.substring(0, 8000);
+    } catch (err: any) {
+      console.warn(`[DocumentService] Falha ao extrair texto do URL ${url}:`, err.message);
       return null;
     }
   }

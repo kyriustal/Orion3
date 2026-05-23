@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { supabaseAdmin } from '../config/supabase';
+import { DocumentService } from './document.service';
 
 // As variáveis de ambiente são carregadas em ../config/supabase.ts e server.ts
 
@@ -176,6 +177,7 @@ ${selectedToneInstructions}
 - PROIBIDO REPETIR SAUDAÇÕES: Se o histórico mostra que a conversa já começou, vá DIRETO à resposta sem dizer "Olá" novamente.
 - EQUILÍBRIO & SIMPATIA: Seja objetivo e evite rodeios desnecessários, mas NUNCA à custa do carisma e da empatia. As respostas devem ter uma extensão natural, sendo sempre acolhedoras, carismáticas, fluidas e extremamente persuasivas.
 - ENVIO DE ARQUIVOS/DOCUMENTOS: Sempre que o cliente solicitar, pedir ou demonstrar interesse claro em receber qualquer arquivo, catálogo, guia, documento ou PDF que esteja listado na secção "ARQUIVOS QUE VOCÊ PODE ENVIAR", você DEVE anexar o código correspondente [SEND_FILE: ID] exatamente no final da sua mensagem (exemplo: "Aqui tem o ficheiro solicitado: [SEND_FILE: 12345678-abcd-1234-abcd-1234567890ab]"). Nunca invente IDs de arquivos e nunca crie códigos para arquivos que não estão explicitamente na lista fornecida.
+- CONTEXTO DE LINKS E ANÚNCIOS: Quando a mensagem do cliente contiver blocos "[Conteúdo da página URL]:", significa que o cliente veio de um anúncio (Facebook, Instagram ou outra plataforma) e o sistema já extraiu o conteúdo dessa página para si. USE esse conteúdo para responder DIRECTAMENTE e de forma específica ao assunto do anúncio ou serviço em questão, sem perguntar "como posso ajudar?" de forma genérica. Responda como se já soubesse exactamente o que o cliente procura com base no anúncio que clicou.
 ${returnGreetingRule}
 
 ═══ REGRAS DE IDENTIDADE ═══
@@ -327,6 +329,30 @@ export class AIService {
       timeSinceLastMessageHours,
     } = options;
 
+    // 0. Extrair e ler o conteúdo de URLs presentes na mensagem (ex: links de anúncios do Facebook/Instagram)
+    // Isso permite que a IA compreenda o contexto da página e responda diretamente ao tema do anúncio.
+    const urlRegex = /https?:\/\/[^\s<>"{}|\\^`[\]]+/gi;
+    const detectedUrls = message.match(urlRegex) || [];
+    let urlContextBlocks: string[] = [];
+
+    if (detectedUrls.length > 0) {
+      console.log(`[AIService] 🔗 ${detectedUrls.length} URL(s) detectado(s) na mensagem. A extrair conteúdo...`);
+      const urlFetches = detectedUrls.slice(0, 3).map(async (url) => {
+        const content = await DocumentService.extractTextFromUrl(url);
+        if (content) {
+          return `[Conteúdo da página ${url}]:\n${content}`;
+        }
+        return null;
+      });
+      const results = await Promise.all(urlFetches);
+      urlContextBlocks = results.filter(Boolean) as string[];
+    }
+
+    // Mensagem enriquecida com o conteúdo dos links (usada em toda a cadeia de IA)
+    const enrichedMessage = urlContextBlocks.length > 0
+      ? `${message}\n\n${urlContextBlocks.join('\n\n')}`
+      : message;
+
     // 1. Carregar perfil da organização, Base de Conhecimento (RAG) e Assets
     let org: OrgProfile | null = null;
     let externalKnowledge = '';
@@ -375,10 +401,10 @@ export class AIService {
 
       // Realizar pesquisa externa em tempo real em fontes oficiais se a mensagem do cliente exigir dados precisos/recentes
       let searchResults = '';
-      const isSearchNeeded = /visto|consulado|taxa|preço|atual|hoje|requisito|oficial|governo|site|embaixada|documento|notícia/i.test(message);
+      const isSearchNeeded = /visto|consulado|taxa|preço|atual|hoje|requisito|oficial|governo|site|embaixada|documento|notícia/i.test(enrichedMessage);
       if (isSearchNeeded) {
         try {
-          searchResults = await performWebSearch(message);
+          searchResults = await performWebSearch(enrichedMessage);
         } catch (err) {
           console.warn('[Search] Erro ao buscar informações em tempo real:', err);
         }
@@ -423,7 +449,7 @@ export class AIService {
     const fullKnowledge = `${org?.product_description || ''}\n\n${externalKnowledge}\n\n${availableAssets}`.trim();
     
     const systemPrompt = buildSystemPrompt(mode, { ...org, product_description: fullKnowledge } as any, botName, referral, timeSinceLastMessageHours);
-    const contents     = buildContents(history, message, media);
+    const contents     = buildContents(history, enrichedMessage, media);
 
     // 3. Payloads: com e sem Google Search
     const baseConfig = {
@@ -447,7 +473,7 @@ export class AIService {
         console.log(`[AIService] Tentando OpenAI gpt-4o-mini como motor principal...`);
 
         // Suporte multimodal para imagens no GPT-4o mini
-        const lastUserContent: any[] = [{ type: 'text', text: message }];
+        const lastUserContent: any[] = [{ type: 'text', text: enrichedMessage }];
 
         if (media && media.mimeType.startsWith('image/')) {
           console.log(`[AIService] Incluindo imagem (${media.mimeType}) no payload do GPT-4o mini...`);
@@ -465,7 +491,7 @@ export class AIService {
             role: h.sender === 'user' ? 'user' : 'assistant',
             content: h.text,
           })),
-          { role: 'user', content: lastUserContent.length > 1 ? lastUserContent : message },
+          { role: 'user', content: lastUserContent.length > 1 ? lastUserContent : enrichedMessage },
         ];
 
         const response = await axios.post('https://api.openai.com/v1/chat/completions', {

@@ -12,6 +12,34 @@ const app        = express();
 const httpServer = createServer(app);
 const PORT       = process.env.PORT || 3000;
 
+// 1. Redirecionamento de HTTP para HTTPS em produção
+if (process.env.NODE_ENV === 'production') {
+  app.use((req, res, next) => {
+    const isSecure = 
+      req.secure || 
+      req.headers['x-forwarded-proto'] === 'https' || 
+      req.headers['x-forwarded-ssl'] === 'on';
+
+    if (!isSecure) {
+      console.log(`[SECURITY] Redirecionando requisição insegura (HTTP) para segura (HTTPS): ${req.headers.host}${req.url}`);
+      return res.redirect(301, `https://${req.headers.host}${req.url}`);
+    }
+    next();
+  });
+}
+
+// 2. Cabeçalhos de Segurança Globais (Segurança Nível A+)
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  if (process.env.NODE_ENV === 'production') {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload');
+  }
+  next();
+});
+
 // Inicializar Socket.io (singleton disponível globalmente via getIo())
 initSocket(httpServer);
 
