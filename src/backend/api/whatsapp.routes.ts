@@ -536,7 +536,7 @@ router.post('/webhook', async (req, res) => {
     }
 
     const currentPlan   = subData?.plan || 'trial';
-    const isVoiceAllowed = currentPlan === 'pro' || currentPlan === 'enterprise' || isVip;
+    const isVoiceAllowed = true; // Habilitado universalmente conforme os requisitos de IA multimodal
 
     // ── 6. Extrair conteúdo da mensagem ──────────────────────────────────────
     let userText = '';

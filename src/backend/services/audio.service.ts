@@ -1,4 +1,7 @@
 import axios from 'axios';
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
 import { getApiKey } from './ai.service';
 
 const GEMINI_MODEL = 'gemini-2.5-flash';
@@ -116,12 +119,55 @@ export class AudioService {
   }
 
   /**
-   * Text-to-Speech — retorna null (funcionalidade de voz via Meta é separada).
-   * Implementar com Google Cloud TTS se necessário no futuro.
+   * Converte texto em áudio usando a API Text-to-Speech (TTS) da OpenAI.
+   * Utiliza o modelo tts-1 e a voz feminina "nova" (enérgica e carismática).
+   * Salva o ficheiro temporariamente e retorna o caminho absoluto do MP3.
    */
-  static async textToSpeech(_text: string): Promise<string | null> {
-    // TTS via Google Cloud TTS requer dependência extra.
-    // Por enquanto, retorna null para forçar fallback para texto.
-    return null;
+  static async textToSpeech(text: string): Promise<string | null> {
+    const openaiKey = process.env.OPENAI_API_KEY?.replace(/^["']|["']$/g, '')?.trim();
+    
+    if (!openaiKey || openaiKey.length < 10) {
+      console.warn('[AudioService] OPENAI_API_KEY não configurada ou inválida. TTS ignorado.');
+      return null;
+    }
+
+    try {
+      console.log(`[AudioService] A gerar áudio via OpenAI TTS (voz feminina 'nova')...`);
+      
+      const response = await axios.post(
+        'https://api.openai.com/v1/audio/speech',
+        {
+          model: 'tts-1',
+          input: text,
+          voice: 'nova', // Voz feminina expressiva e natural
+          response_format: 'mp3'
+        },
+        {
+          headers: {
+            'Authorization': `Bearer ${openaiKey}`,
+            'Content-Type': 'application/json'
+          },
+          responseType: 'arraybuffer',
+          timeout: 25000
+        }
+      );
+
+      const tempDir = os.tmpdir();
+      const filename = `tts_reply_${Date.now()}.mp3`;
+      const filePath = path.join(tempDir, filename);
+
+      fs.writeFileSync(filePath, Buffer.from(response.data));
+      console.log(`[AudioService] ✅ Áudio TTS gravado em: ${filePath}`);
+      
+      return filePath;
+    } catch (err: any) {
+      const errMsg = err.response?.data 
+        ? Buffer.isBuffer(err.response.data) 
+          ? err.response.data.toString() 
+          : JSON.stringify(err.response.data)
+        : err.message;
+      console.error('[AudioService] ❌ Erro ao gerar TTS via OpenAI:', errMsg);
+      return null;
+    }
   }
 }

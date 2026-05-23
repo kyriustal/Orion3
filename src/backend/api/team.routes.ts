@@ -1,6 +1,7 @@
 import { Router, Response } from 'express';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import { supabaseAdmin } from '../config/supabase';
+import { EmailService } from '../services/email.service';
 
 const router = Router();
 
@@ -76,6 +77,28 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
       .single();
 
     if (dbError) throw dbError;
+
+    // 3. Obter nome da organização e enviar email de convite com as credenciais configuradas
+    try {
+      const { data: orgData } = await supabaseAdmin
+        .from('organizations')
+        .select('name')
+        .eq('id', orgId)
+        .maybeSingle();
+      
+      const orgName = orgData?.name || 'Orion';
+
+      await EmailService.sendTeamInvitation({
+        email,
+        name,
+        password,
+        role,
+        orgName
+      });
+    } catch (emailErr: any) {
+      // Logamos o erro mas não impedimos a criação do membro (para robustez)
+      console.error(`[TEAM ROUTE] Erro ao disparar email de convite para ${email}:`, emailErr.message);
+    }
 
     res.status(201).json(newMember);
   } catch (error: any) {
