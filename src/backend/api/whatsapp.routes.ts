@@ -670,6 +670,7 @@ router.post('/webhook', async (req, res) => {
       referral,
       isAudio: isAudioMessage,
       isVoiceAllowed,
+      detectedLanguage,
     });
 
     // Desativar sinal de digitação

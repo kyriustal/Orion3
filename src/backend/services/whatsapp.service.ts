@@ -109,9 +109,10 @@ export class WhatsAppService {
 
         try {
             const formData = new FormData();
-            const fileStream = fs.createReadStream(filePath);
-            // @ts-ignore
-            formData.append('file', fileStream);
+            const fileBuffer = fs.readFileSync(filePath);
+            const fileBlob = new Blob([fileBuffer], { type: 'audio/mpeg' });
+            
+            formData.append('file', fileBlob, 'audio.mp3');
             formData.append('type', 'audio/mpeg');
             formData.append('messaging_product', 'whatsapp');
 
