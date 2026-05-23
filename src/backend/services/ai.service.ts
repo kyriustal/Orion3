@@ -280,31 +280,78 @@ function buildContents(
 // ─────────────────────────────────────────────────────────
 async function performWebSearch(query: string): Promise<string> {
   try {
-    console.log(`[Search] A realizar pesquisa externa em fontes oficiais para: "${query}"...`);
-    const response = await axios.get(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-      },
-      timeout: 8000
-    });
+    console.log(`[Search] 🔍 A pesquisar em fontes oficiais: "${query}"...`);
 
-    const html = response.data;
-    const snippets: string[] = [];
-    const snippetRegex = /<a class="result__snippet"[^>]*>([\s\S]*?)<\/a>/g;
-    let match;
-    
-    while ((match = snippetRegex.exec(html)) !== null && snippets.length < 3) {
-      const text = match[1].replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
-      if (text) {
-        snippets.push(text);
+    // 1. Obter URLs de resultados via DuckDuckGo (motor de busca)
+    const searchResp = await axios.get(
+      `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query + ' site oficial')}`,
+      {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        },
+        timeout: 8000
+      }
+    );
+
+    const html = searchResp.data as string;
+
+    // 2. Extrair URLs reais dos resultados (links de resultados com href externo)
+    const urlPattern = /href="(https?:\/\/(?!duckduckgo)[^"&]+)"/gi;
+    const foundUrls: string[] = [];
+    let m: RegExpExecArray | null;
+    while ((m = urlPattern.exec(html)) !== null && foundUrls.length < 4) {
+      const u = m[1];
+      // Excluir rastreadores, anúncios e plataformas sociais menos oficiais
+      if (!/facebook|instagram|twitter|youtube|tiktok|pinterest|reddit|amazon/i.test(u)) {
+        foundUrls.push(u);
       }
     }
 
-    if (snippets.length > 0) {
-      console.log(`[Search] ✅ Pesquisa concluída. ${snippets.length} resultados oficiais obtidos.`);
-      return `═══ INFORMAÇÕES OFICIAIS ENCONTRADAS EM TEMPO REAL ═══\n${snippets.map((s, idx) => `[Fonte ${idx + 1}]: ${s}`).join('\n\n')}`;
+    if (foundUrls.length === 0) {
+      console.warn('[Search] Nenhum URL encontrado nos resultados de pesquisa.');
+      return '';
     }
-    
+
+    console.log(`[Search] 📄 ${foundUrls.length} fontes encontradas. A extrair conteúdo real...`);
+
+    // 3. Ler o conteúdo real das páginas em paralelo (máx 3 fontes, 5s timeout)
+    const pageResults = await Promise.all(
+      foundUrls.slice(0, 3).map(async (url, idx) => {
+        try {
+          const pageResp = await axios.get(url, {
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            },
+            timeout: 5000
+          });
+          let pageHtml = pageResp.data as string;
+          // Limpar HTML → texto
+          const text = pageHtml
+            .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gim, '')
+            .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gim, '')
+            .replace(/<[^>]+>/gm, ' ')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .substring(0, 3000); // máx 3000 chars por fonte
+
+          if (text.length > 50) {
+            console.log(`[Search] ✅ Fonte ${idx + 1} lida: ${url.substring(0, 60)}...`);
+            return `[Fonte ${idx + 1} — ${url}]:\n${text}`;
+          }
+          return null;
+        } catch {
+          return null;
+        }
+      })
+    );
+
+    const validResults = pageResults.filter(Boolean) as string[];
+
+    if (validResults.length > 0) {
+      console.log(`[Search] ✅ Pesquisa concluída. ${validResults.length} fontes com conteúdo real.`);
+      return `═══ INFORMAÇÕES REAIS EXTRAÍDAS DE FONTES OFICIAIS ═══\n${validResults.join('\n\n')}`;
+    }
+
     return '';
   } catch (err: any) {
     console.warn('[Search] ⚠️ Falha na pesquisa externa:', err.message);
@@ -590,6 +637,36 @@ export class AIService {
       reply: 'Desculpe, não consegui processar sua mensagem neste momento. Por favor, tente novamente em breve.',
       transfer: false,
     };
+  }
+
+  /**
+   * Traduz um texto silenciosamente para a língua alvo (usado para gravar histórico em PT)
+   */
+  static async translateText(text: string, targetLanguage: string): Promise<string> {
+    try {
+      const openaiKey = process.env.OPENAI_API_KEY?.replace(/^["']|["']$/g, '')?.trim();
+      if (openaiKey && openaiKey.length > 10) {
+        const response = await axios.post('https://api.openai.com/v1/chat/completions', {
+          model: 'gpt-4o-mini',
+          messages: [{ role: 'user', content: `Traduza o seguinte texto para ${targetLanguage}. Retorne APENAS a tradução, sem comentários:\n\n${text}` }],
+          temperature: 0.3,
+        }, {
+          headers: { 'Authorization': `Bearer ${openaiKey}` }
+        });
+        return response.data?.choices?.[0]?.message?.content?.trim() || text;
+      }
+      
+      // Fallback Gemini
+      const apiKey = getApiKey(0);
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+      const response = await axios.post(url, {
+        contents: [{ parts: [{ text: `Traduza o seguinte texto para ${targetLanguage}. Retorne APENAS a tradução:\n\n${text}` }] }],
+      });
+      return response.data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || text;
+    } catch (err) {
+      console.warn(`[AIService] Erro ao traduzir texto:`, err);
+      return text; // fallback to original
+    }
   }
 }
 

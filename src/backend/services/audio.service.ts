@@ -15,12 +15,13 @@ const GEMINI_BASE  = 'https://generativelanguage.googleapis.com/v1beta/models';
 export class AudioService {
 
   /**
-   * Transcreve áudio em Base64 para texto usando Gemini multimodal.
+   * Transcreve áudio em Base64 para texto usando Whisper (OpenAI) ou Gemini.
+   * Retorna o texto transcrito e a língua detectada automaticamente.
    */
   static async speechToTextFromBase64(
     base64: string,
     mimeType: string
-  ): Promise<string | null> {
+  ): Promise<{ text: string; language: string } | null> {
     // ─────────────────────────────────────────────────────────
     // 1. Tentar OpenAI Whisper se a chave estiver configurada
     // ─────────────────────────────────────────────────────────
@@ -40,7 +41,7 @@ export class AudioService {
         const formData = new FormData();
         formData.append('file', fileBlob, `audio.${ext}`);
         formData.append('model', 'whisper-1');
-        formData.append('language', 'pt');
+        // Sem 'language' explícito — Whisper deteta automaticamente a língua do cliente
 
         const response = await axios.post('https://api.openai.com/v1/audio/transcriptions', formData, {
           headers: {
@@ -51,9 +52,10 @@ export class AudioService {
         });
 
         const transcript = response.data?.text?.trim();
+        const detectedLang: string = response.data?.language || 'pt'; // Whisper retorna a língua detetada
         if (transcript) {
-          console.log(`[AudioService] ✅ Transcrição Whisper concluída com sucesso.`);
-          return transcript;
+          console.log(`[AudioService] ✅ Transcrição Whisper concluída. Língua detectada: ${detectedLang}`);
+          return { text: transcript, language: detectedLang };
         }
       } catch (err: any) {
         console.error('[AudioService] ❌ Transcrição Whisper falhou:', err.response?.data || err.message);
@@ -110,7 +112,7 @@ export class AudioService {
 
       if (!text || text === '[inaudível]') return null;
 
-      return text;
+      return { text, language: 'pt' }; // Gemini fallback assume PT (não reporta língua)
 
     } catch (err: any) {
       console.error('[AudioService] Erro na transcrição:', err.response?.data?.error?.message || err.message);

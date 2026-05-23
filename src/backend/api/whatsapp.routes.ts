@@ -260,10 +260,12 @@ async function triggerAIResponse(params: {
   referral?: any;
   isAudio?: boolean;
   isVoiceAllowed?: boolean;
+  detectedLanguage?: string;
 }) {
   const {
     orgId, fromNumber, phoneNumberId, accessToken, botName,
     message, incomingMessageId, media, referral, isAudio, isVoiceAllowed,
+    detectedLanguage = 'pt',
   } = params;
 
   // Verificar se a IA está pausada (coexistência com humano)
@@ -320,6 +322,13 @@ async function triggerAIResponse(params: {
     }
 
     let replyText = aiResult.reply;
+    let ptReplyText = replyText;
+
+    // Tradução silenciosa para PT para manter o painel/histórico em português
+    if (detectedLanguage !== 'pt' && detectedLanguage !== 'por') {
+      console.log(`[IA] Traduzindo silenciosamente a resposta de ${detectedLanguage} para PT...`);
+      ptReplyText = await AIService.translateText(replyText, 'português');
+    }
     
     // ── 10. Processar envio de arquivos [SEND_FILE: ID] ───────────────────────
     const fileMatch = replyText.match(/\[SEND_FILE:\s*([a-f0-9-]{36})\]/i);
@@ -327,8 +336,9 @@ async function triggerAIResponse(params: {
       const assetId = fileMatch[1];
       console.log(`[IA] Comando de envio de arquivo detectado: ${assetId}`);
       
-      // Remover o código do texto da resposta
+      // Remover o código do texto da resposta (ambas as versões)
       replyText = replyText.replace(/\[SEND_FILE:\s*[a-f0-9-]{36}\]/i, '').trim();
+      ptReplyText = ptReplyText.replace(/\[SEND_FILE:\s*[a-f0-9-]{36}\]/i, '').trim();
 
       // Buscar asset no banco
       const { data: asset } = await supabaseAdmin
@@ -353,20 +363,20 @@ async function triggerAIResponse(params: {
       }
     }
 
-    // Persistir resposta no histórico
+    // Persistir resposta no histórico em PORTUGUÊS
     await supabaseAdmin.from('conversation_history').insert({
       org_id: orgId,
       customer_phone: fromNumber,
       sender: 'bot',
-      text: replyText,
+      text: ptReplyText,
     });
 
-    // Emitir resposta da IA para o Live Chat em tempo real
+    // Emitir resposta da IA para o Live Chat em tempo real em PORTUGUÊS
     try {
       getIo().to(`org:${orgId}`).emit('new_message', {
         phone:     fromNumber,
         sender:    'bot',
-        text:      replyText,
+        text:      ptReplyText,
         botName:   botName,
         time:      new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         timestamp: new Date().toISOString(),
@@ -542,6 +552,7 @@ router.post('/webhook', async (req, res) => {
     let userText = '';
     let media: { base64: string; mimeType: string } | undefined;
     let isAudioMessage = false;
+    let detectedLanguage = 'pt'; // Língua detectada no áudio do cliente (default: português)
 
     if (incomingMsg.type === 'text') {
       userText = incomingMsg.text?.body || '';
@@ -560,13 +571,18 @@ router.post('/webhook', async (req, res) => {
           media = mediaData;
 
           if (incomingMsg.type === 'audio') {
-            // Transcrição de áudio via Gemini
+            // Transcrição de áudio via Whisper/Gemini — detecta língua automaticamente
             if (isVoiceAllowed) {
-              const transcript = await AudioService.speechToTextFromBase64(mediaData.base64, mediaData.mimeType);
-              if (transcript) {
-                userText = `[Mensagem de Áudio]: ${transcript}`;
+              const sttResult = await AudioService.speechToTextFromBase64(mediaData.base64, mediaData.mimeType);
+              if (sttResult) {
+                userText = `[Mensagem de Áudio]: ${sttResult.text}`;
+                detectedLanguage = sttResult.language || 'pt';
                 isAudioMessage = true;
-                console.log(`[WEBHOOK] Áudio transcrito: "${transcript.substring(0, 80)}"`);
+                console.log(`[WEBHOOK] Áudio transcrito (língua: ${detectedLanguage}): "${sttResult.text.substring(0, 80)}"`);
+                // Instruir a IA a responder na língua do cliente
+                if (detectedLanguage !== 'pt' && detectedLanguage !== 'por') {
+                  userText += `\n\n[SISTEMA INTERNO — NÃO MENCIONAR AO CLIENTE]: O cliente falou em "${detectedLanguage}". Responda EXCLUSIVAMENTE nessa língua. Não use português na resposta enviada ao cliente.`;
+                }
               } else {
                 userText = '(Mensagem de áudio não transcrita)';
               }
