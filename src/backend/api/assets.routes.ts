@@ -33,23 +33,38 @@ router.post('/', requireAuth, upload.single('file'), async (req: AuthRequest, re
     if (!file) return res.status(400).json({ error: 'Nenhum ficheiro enviado' });
 
     const fileName = `${orgId}/${Date.now()}_${file.originalname}`;
-    
-    // 1. Upload para o Supabase Storage (Bucket: assets)
-    const { data: uploadData, error: uploadError } = await supabaseAdmin.storage
+
+    // 1. Garantir que o bucket 'assets' existe (cria se necessário)
+    const { data: buckets } = await supabaseAdmin.storage.listBuckets();
+    const bucketExists = buckets?.some(b => b.name === 'assets');
+    if (!bucketExists) {
+      const { error: bucketErr } = await supabaseAdmin.storage.createBucket('assets', { public: true });
+      if (bucketErr) {
+        console.error('[ASSETS] Erro ao criar bucket:', bucketErr.message);
+        return res.status(500).json({ error: `Erro ao criar bucket de armazenamento: ${bucketErr.message}` });
+      }
+      console.log('[ASSETS] ✅ Bucket "assets" criado automaticamente.');
+    }
+
+    // 2. Upload para o Supabase Storage (Bucket: assets)
+    const { error: uploadError } = await supabaseAdmin.storage
       .from('assets')
       .upload(fileName, file.buffer, {
         contentType: file.mimetype,
-        upsert: true
+        upsert: true,
       });
 
-    if (uploadError) throw uploadError;
+    if (uploadError) {
+      console.error('[ASSETS] Erro no upload para Storage:', uploadError.message);
+      return res.status(500).json({ error: `Erro no upload: ${uploadError.message}` });
+    }
 
-    // 2. Obter URL pública
+    // 3. Obter URL pública
     const { data: { publicUrl } } = supabaseAdmin.storage
       .from('assets')
       .getPublicUrl(fileName);
 
-    // 3. Guardar no banco
+    // 4. Guardar no banco
     const { data, error } = await supabaseAdmin
       .from('public_assets')
       .insert({
@@ -57,14 +72,20 @@ router.post('/', requireAuth, upload.single('file'), async (req: AuthRequest, re
         filename: file.originalname,
         file_url: publicUrl,
         mime_type: file.mimetype,
-        description: description || file.originalname
+        description: description || file.originalname,
       })
       .select()
       .single();
 
-    if (error) throw error;
+    if (error) {
+      console.error('[ASSETS] Erro ao guardar no banco:', error.message);
+      return res.status(500).json({ error: `Erro ao guardar no banco: ${error.message}` });
+    }
+
+    console.log(`[ASSETS] ✅ Asset "${file.originalname}" carregado para org ${orgId}.`);
     res.json(data);
   } catch (err: any) {
+    console.error('[ASSETS] Erro inesperado:', err.message);
     res.status(500).json({ error: err.message });
   }
 });

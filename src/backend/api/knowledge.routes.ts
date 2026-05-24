@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import { supabaseAdmin } from '../config/supabase';
 import multer from 'multer';
+import axios from 'axios';
 import { DocumentService } from '../services/document.service';
 
 const router = Router();
@@ -183,10 +184,10 @@ router.post('/site', requireAuth, async (req: AuthRequest, res) => {
       doc: data,
     });
   } catch (err: any) {
-    console.error('[KNOWLEDGE] Erro ao importar site:', err.message);
-    res.status(500).json({ error: `Erro ao aceder ao site: ${err.message}` });
+    const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
+    console.error('[KNOWLEDGE] Erro ao importar site:', detail);
+    res.status(500).json({ error: `Erro ao aceder ao site: ${detail}` });
   }
 });
 
-import axios from 'axios';
 export default router;
