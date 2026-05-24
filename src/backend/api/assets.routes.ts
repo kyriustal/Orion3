@@ -32,7 +32,15 @@ router.post('/', requireAuth, upload.single('file'), async (req: AuthRequest, re
 
     if (!file) return res.status(400).json({ error: 'Nenhum ficheiro enviado' });
 
-    const fileName = `${orgId}/${Date.now()}_${file.originalname}`;
+    // Sanitizar o nome do ficheiro — Supabase Storage não aceita espaços nem acentos
+    const sanitizedName = file.originalname
+      .normalize('NFD')                     // decompõe caracteres acentuados (ó → o + ́)
+      .replace(/[\u0300-\u036f]/g, '')      // remove as marcas de acento
+      .replace(/[^a-zA-Z0-9._-]/g, '_')    // substitui espaços e símbolos por underscore
+      .replace(/_+/g, '_')                  // colapsa underscores consecutivos
+      .replace(/^_|_$/g, '');              // remove underscores no início/fim
+
+    const fileName = `${orgId}/${Date.now()}_${sanitizedName}`;
 
     // 1. Garantir que o bucket 'assets' existe (cria se necessário)
     const { data: buckets } = await supabaseAdmin.storage.listBuckets();
