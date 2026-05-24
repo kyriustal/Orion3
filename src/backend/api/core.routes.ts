@@ -40,30 +40,37 @@ router.post('/agent/simulate', requireAuth, async (req: AuthRequest, res: Respon
 router.get('/dashboard/metrics', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const orgId = req.user?.orgId;
+    const { period } = req.query;
     
-    // Obter data de hoje (início do dia local)
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const startOfDay = today.toISOString();
+    let startDate = new Date();
+    startDate.setHours(0, 0, 0, 0); // Default: hoje (24h)
 
-    // 1. Número total de mensagens hoje
-    const { count: msgsToday, error: msgError } = await supabaseAdmin
+    if (period === '7d') startDate = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    else if (period === '30d') startDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    else if (period === '3m') startDate = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+    else if (period === '6m') startDate = new Date(Date.now() - 180 * 24 * 60 * 60 * 1000);
+    else if (period === '1y') startDate = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000);
+
+    const startIso = startDate.toISOString();
+
+    // 1. Número total de mensagens no período
+    const { count: msgs, error: msgError } = await supabaseAdmin
       .from('conversation_history')
       .select('id', { count: 'exact', head: true })
       .eq('org_id', orgId)
-      .gte('created_at', startOfDay);
+      .gte('created_at', startIso);
 
-    // 2. Número de chats únicos hoje
+    // 2. Número de chats únicos no período
     const { data: uniqueChats, error: chatError } = await supabaseAdmin
       .from('conversation_history')
       .select('customer_phone')
       .eq('org_id', orgId)
-      .gte('created_at', startOfDay);
+      .gte('created_at', startIso);
 
     const uniqueCustomers = new Set(uniqueChats?.map(c => c.customer_phone)).size;
 
     res.json({
-      messagesToday: msgsToday || 0,
+      messagesToday: msgs || 0,
       newChats: uniqueCustomers || 0,
       resolutionRate: '98%', // Pode ser dinâmico no futuro
       apiStatus: 'Online'
