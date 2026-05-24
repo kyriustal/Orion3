@@ -12,21 +12,7 @@ const app        = express();
 const httpServer = createServer(app);
 const PORT       = process.env.PORT || 3000;
 
-// 1. Redirecionamento de HTTP para HTTPS em produção
-if (process.env.NODE_ENV === 'production') {
-  app.use((req, res, next) => {
-    const isSecure = 
-      req.secure || 
-      req.headers['x-forwarded-proto'] === 'https' || 
-      req.headers['x-forwarded-ssl'] === 'on';
-
-    if (!isSecure) {
-      console.log(`[SECURITY] Redirecionando requisição insegura (HTTP) para segura (HTTPS): ${req.headers.host}${req.url}`);
-      return res.redirect(301, `https://${req.headers.host}${req.url}`);
-    }
-    next();
-  });
-}
+// Redirecionamento forçado de HTTPS removido para evitar conflitos com o proxy da Hostinger e quebra de WebSockets (Socket.io)
 
 // 2. Cabeçalhos de Segurança Globais (Segurança Nível A+)
 app.use((req, res, next) => {
