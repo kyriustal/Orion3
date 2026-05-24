@@ -627,8 +627,14 @@ router.post('/webhook', async (req, res) => {
 
     if (referral) {
       const adIdentifier = referral.headline || referral.body || 'Anúncio';
-      dbText = `[Vindo do Anúncio: "${adIdentifier}"] ${dbText}`;
-      console.log(`[WEBHOOK] Cliente vindo de anúncio: ${adIdentifier}`);
+      let referralContext = `[Vindo do Anúncio: "${adIdentifier}"]`;
+      
+      if (referral.source_url) {
+        referralContext += `\nLink do Anúncio: ${referral.source_url}`;
+      }
+      
+      dbText = `${referralContext}\n\n${dbText}`;
+      console.log(`[WEBHOOK] Cliente vindo de anúncio: ${adIdentifier} (${referral.source_url || 'Sem link'})`);
     }
 
     // ── 8. Persistir mensagem do cliente ─────────────────────────────────────
