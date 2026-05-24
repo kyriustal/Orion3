@@ -1,7 +1,37 @@
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/src/components/ui/card";
-import { MessageSquare, Users, Activity, TrendingUp } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/src/components/ui/card";
+import { MessageSquare, Users, Activity } from "lucide-react";
 
 export default function Overview() {
+  const [metrics, setMetrics] = useState({
+    messagesToday: 0,
+    newChats: 0,
+    resolutionRate: '---',
+    apiStatus: 'Conectando...'
+  });
+
+  useEffect(() => {
+    const fetchMetrics = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        const res = await fetch('/api/dashboard/metrics', {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setMetrics(data);
+        }
+      } catch (err) {
+        console.error('Erro ao carregar métricas', err);
+      }
+    };
+
+    fetchMetrics();
+    // Atualizar a cada minuto
+    const interval = setInterval(fetchMetrics, 60000);
+    return () => clearInterval(interval);
+  }, []);
+
   return (
     <div className="space-y-6">
       <div>
@@ -16,9 +46,9 @@ export default function Overview() {
             <MessageSquare className="h-4 w-4 text-zinc-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">0</div>
+            <div className="text-2xl font-bold">{metrics.messagesToday}</div>
             <p className="text-xs text-zinc-500 mt-1">
-              Aguardando as primeiras interações
+              {metrics.messagesToday === 0 ? 'Aguardando as primeiras interações' : 'Interações registadas'}
             </p>
           </CardContent>
         </Card>
@@ -28,9 +58,9 @@ export default function Overview() {
             <Users className="h-4 w-4 text-zinc-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">0</div>
+            <div className="text-2xl font-bold">{metrics.newChats}</div>
             <p className="text-xs text-zinc-500 mt-1">
-              Nenhum chat iniciado hoje
+              {metrics.newChats === 0 ? 'Nenhum chat iniciado hoje' : 'Pessoas ativas hoje'}
             </p>
           </CardContent>
         </Card>
@@ -40,9 +70,9 @@ export default function Overview() {
             <BotIcon className="h-4 w-4 text-zinc-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">---</div>
+            <div className="text-2xl font-bold">{metrics.resolutionRate}</div>
             <p className="text-xs text-zinc-500 mt-1">
-              Aguardando dados de simulação
+              Processado pela inteligência artificial
             </p>
           </CardContent>
         </Card>
@@ -52,9 +82,11 @@ export default function Overview() {
             <Activity className="h-4 w-4 text-emerald-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-emerald-600">Online</div>
+            <div className={`text-2xl font-bold ${metrics.apiStatus === 'Online' ? 'text-emerald-600' : 'text-zinc-600'}`}>
+              {metrics.apiStatus}
+            </div>
             <p className="text-xs text-zinc-500 mt-1">
-              Latência média: 1.2s
+              Serviço WhatsApp a funcionar
             </p>
           </CardContent>
         </Card>

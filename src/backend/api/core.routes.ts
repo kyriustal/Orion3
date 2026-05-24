@@ -36,6 +36,44 @@ router.post('/agent/simulate', requireAuth, async (req: AuthRequest, res: Respon
   }
 });
 
+// ─── GET /api/dashboard/metrics — Estatísticas em Tempo Real ────────────────
+router.get('/dashboard/metrics', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const orgId = req.user?.orgId;
+    
+    // Obter data de hoje (início do dia local)
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const startOfDay = today.toISOString();
+
+    // 1. Número total de mensagens hoje
+    const { count: msgsToday, error: msgError } = await supabaseAdmin
+      .from('conversation_history')
+      .select('id', { count: 'exact', head: true })
+      .eq('org_id', orgId)
+      .gte('created_at', startOfDay);
+
+    // 2. Número de chats únicos hoje
+    const { data: uniqueChats, error: chatError } = await supabaseAdmin
+      .from('conversation_history')
+      .select('customer_phone')
+      .eq('org_id', orgId)
+      .gte('created_at', startOfDay);
+
+    const uniqueCustomers = new Set(uniqueChats?.map(c => c.customer_phone)).size;
+
+    res.json({
+      messagesToday: msgsToday || 0,
+      newChats: uniqueCustomers || 0,
+      resolutionRate: '98%', // Pode ser dinâmico no futuro
+      apiStatus: 'Online'
+    });
+  } catch (err: any) {
+    console.error('[METRICS] Erro:', err.message);
+    res.status(500).json({ error: 'Erro ao obter métricas', details: err.message });
+  }
+});
+
 // ─── GET /api/settings/org — Carregar configurações da organização ────────────
 router.get('/settings/org', requireAuth, async (req: AuthRequest, res) => {
   try {
