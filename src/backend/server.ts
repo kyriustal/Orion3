@@ -54,6 +54,7 @@ import campaignsRoutes   from './api/campaigns.routes';
 import billingRoutes     from './api/billing.routes';
 import instructionsRoutes from './api/instructions.routes';
 import assetsRoutes from './api/assets.routes';
+import followupRoutes from './api/followup.routes';
 import teamRoutes from './api/team.routes';
 
 app.use('/api/auth',        authRoutes);
@@ -70,6 +71,7 @@ app.use('/api/templates',   templatesRoutes);
 app.use('/api/campaigns',   campaignsRoutes);
 app.use('/api/billing',     billingRoutes);
 app.use('/api/team',        teamRoutes);
+app.use('/api',             followupRoutes);
 app.use('/api',             coreRoutes);
 
 // Frontend em Produção
@@ -88,10 +90,15 @@ app.use((err: any, _req: express.Request, res: express.Response, _next: express.
 httpServer.listen(PORT, () => {
   console.log(`🚀 Orion Server na porta ${PORT} | IA: Gemini 2.5 Flash | Socket.io: Activo`);
   
-  // Auto-recuperação de leads sem resposta nas últimas 24 horas devido ao erro anterior
+  // Auto-recuperação de leads sem resposta nas últimas 24 horas
   import('./api/whatsapp.routes').then(({ recoverMissedMessages }) => {
     setTimeout(() => {
       recoverMissedMessages().catch(err => console.error('[RECOVERY-BOOT] Falha na recuperação de boot:', err.message));
     }, 5000);
   }).catch(err => console.error('[RECOVERY-BOOT] Erro de importação no boot:', err.message));
+
+  // Iniciar worker de follow-up / remarketing autónomo
+  import('./workers/followup.worker').catch(err =>
+    console.error('[FOLLOWUP-BOOT] Erro ao iniciar worker:', err.message)
+  );
 });
