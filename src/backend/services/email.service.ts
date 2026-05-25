@@ -1,4 +1,5 @@
 import nodemailer from 'nodemailer';
+import { supabaseAdmin } from '../config/supabase';
 
 export interface SendTeamInvitationParams {
   email: string;
@@ -231,6 +232,107 @@ export class EmailService {
     } catch (err: any) {
       console.error(`[EmailService] ❌ Erro ao enviar email de convite para ${email}:`, err.message);
       throw err;
+    }
+  }
+
+  /**
+   * Envia um alerta de handover ou agendamento para os administradores da organização.
+   */
+  static async sendAlertNotification(orgId: string, type: 'handover' | 'booking', customerPhone: string, customerName: string = 'Cliente', messageText: string = ''): Promise<void> {
+    try {
+      // Obter nome da organização e e-mails dos admins/owners
+      const { data: orgData } = await supabaseAdmin
+        .from('organizations')
+        .select('name')
+        .eq('id', orgId)
+        .maybeSingle();
+
+      const { data: teamMembers } = await supabaseAdmin
+        .from('team_members')
+        .select('email, name, role')
+        .eq('org_id', orgId)
+        .in('role', ['OWNER', 'ADMIN', 'AGENT']);
+
+      if (!teamMembers || teamMembers.length === 0) {
+        console.warn(`[EmailService] Nenhum membro da equipa encontrado para notificar na org ${orgId}`);
+        return;
+      }
+
+      const orgName = orgData?.name || 'sua organização';
+      const host = process.env.SMTP_HOST;
+      const port = parseInt(process.env.SMTP_PORT || '587', 10);
+      const user = process.env.SMTP_USER;
+      const pass = process.env.SMTP_PASS;
+      const from = process.env.SMTP_FROM || 'Orion Platform <no-reply@orion.com>';
+
+      if (!user || !pass) {
+        console.warn(`[EmailService] SMTP não configurado. Simulação de envio de alerta de ${type} para org ${orgId}.`);
+        return;
+      }
+
+      const transporter = nodemailer.createTransport({
+        host,
+        port,
+        secure: port === 465,
+        auth: { user, pass },
+      });
+
+      const title = type === 'handover' ? '🚨 Pedido de Atendimento Humano' : '📅 Novo Pedido de Agendamento';
+      const description = type === 'handover' 
+        ? 'A Inteligência Artificial detetou que um cliente solicitou falar com um assistente humano.'
+        : 'Um cliente demonstrou interesse em agendar um serviço ou consulta.';
+
+      const htmlContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <style>
+          body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f3f4f6; margin: 0; padding: 0; }
+          .container { max-width: 600px; margin: 40px auto; background: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
+          .header { background: ${type === 'handover' ? 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)' : 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)'}; padding: 30px 20px; text-align: center; color: #ffffff; }
+          .header h1 { margin: 0; font-size: 24px; }
+          .content { padding: 30px; color: #1f2937; }
+          .card { background-color: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 20px; margin: 20px 0; }
+          .row { margin-bottom: 10px; font-size: 15px; }
+          .label { font-weight: 600; color: #4b5563; }
+          .btn { background-color: #10b981; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block; margin-top: 15px; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>${title}</h1>
+          </div>
+          <div class="content">
+            <p>Olá equipa da <strong>${orgName}</strong>,</p>
+            <p>${description}</p>
+            <div class="card">
+              <div class="row"><span class="label">Contacto do Cliente:</span> ${customerPhone}</div>
+              ${messageText ? '<div class="row"><span class="label">Última Mensagem:</span> "' + messageText + '"</div>' : ''}
+            </div>
+            <p>Aceda ao painel do Live Chat da Orion para dar seguimento ao contacto.</p>
+            <div style="text-align: center;">
+              <a href="${process.env.VITE_APP_URL || 'https://orionboot.com'}/dashboard/live-chat" class="btn">Abrir Live Chat</a>
+            </div>
+          </div>
+        </div>
+      </body>
+      </html>
+      `;
+
+      const emails = teamMembers.map(m => m.email).join(', ');
+
+      await transporter.sendMail({
+        from,
+        to: emails,
+        subject: `Orion AI | ${title} - ${customerPhone}`,
+        html: htmlContent,
+      });
+
+      console.log(`[EmailService] ✅ Alerta (${type}) enviado para a equipa da org ${orgId}`);
+    } catch (err: any) {
+      console.error(`[EmailService] ❌ Erro ao enviar alerta (${type}):`, err.message);
     }
   }
 }

@@ -9,7 +9,7 @@ const router = Router();
 // ─── POST /api/followup — Agendar um follow-up ────────────────────────────────
 router.post('/followup', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
-    const orgId = req.user?.orgId;
+    const orgId = req.user!.orgId!;
     const { phone, platform = 'whatsapp', delay, customPrompt, lastMessageId } = req.body;
 
     if (!phone)    return res.status(400).json({ error: 'O campo "phone" é obrigatório.' });
@@ -41,7 +41,7 @@ router.post('/followup', requireAuth, async (req: AuthRequest, res: Response) =>
 // ─── GET /api/followup — Listar agendamentos da organização ─────────────────
 router.get('/followup', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
-    const orgId  = req.user?.orgId;
+    const orgId  = req.user!.orgId!;
     const status = (req.query.status as string) || 'pending';
     const data   = await FollowupService.listByOrg(orgId, status);
     res.json(data);
@@ -53,7 +53,7 @@ router.get('/followup', requireAuth, async (req: AuthRequest, res: Response) => 
 // ─── GET /api/followup/all — Listar todos (pendentes, enviados, cancelados) ──
 router.get('/followup/all', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
-    const orgId = req.user?.orgId;
+    const orgId = req.user!.orgId!;
     const data  = await FollowupService.listByOrg(orgId);
     res.json(data);
   } catch (err: any) {

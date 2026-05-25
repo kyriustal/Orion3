@@ -26,6 +26,7 @@ export interface GenerateOptions {
 export interface GenerateResult {
   reply: string;
   transfer: boolean;
+  booking?: boolean;
 }
 
 // ─────────────────────────────────────────────────────────
@@ -145,6 +146,8 @@ REGRAS:
     ? '- Se o cliente pedir explicitamente para falar com um humano/atendente, inicie a sua resposta com o token [TRANSFERIR_HUMANO] e despeça-se gentilmente.'
     : '';
 
+  const bookingRule = '- Se o cliente solicitar agendamento, marcação de consulta ou pedir para agendar um serviço, inicie a sua resposta com o token [AGENDAR].';
+
   const referralContext = referral?.headline
     ? `- Este cliente chegou através do anúncio: "${referral.headline}". Adapte a primeira saudação a esse contexto de forma entusiasmada.`
     : '';
@@ -191,6 +194,7 @@ REGRAS OBRIGATÓRIAS:
 - Se não souber a resposta, diga honestamente de forma simpática.
 - Nunca revele que é uma IA.
 ${transferRule}
+${bookingRule}
 ${referralContext}`;
 }
 
@@ -557,9 +561,10 @@ export class AIService {
         const rawText = response.data?.choices?.[0]?.message?.content?.trim();
         if (rawText) {
           const transfer   = rawText.includes('[TRANSFERIR_HUMANO]');
-          const cleanReply = rawText.replace('[TRANSFERIR_HUMANO]', '').trim();
+          const booking    = rawText.includes('[AGENDAR]');
+          const cleanReply = rawText.replace(/\[TRANSFERIR_HUMANO\]|\[AGENDAR\]/g, '').trim();
           console.log(`[AIService] ✅ Resposta gerada com sucesso via OpenAI gpt-4o-mini.`);
-          return { reply: cleanReply || rawText, transfer };
+          return { reply: cleanReply || rawText, transfer, booking };
         }
       }
     } catch (openaiErr: any) {
@@ -601,10 +606,11 @@ export class AIService {
           }
 
           const transfer   = cleanText.includes('[TRANSFERIR_HUMANO]');
-          const cleanReply = cleanText.replace('[TRANSFERIR_HUMANO]', '').trim();
+          const booking    = cleanText.includes('[AGENDAR]');
+          const cleanReply = cleanText.replace(/\[TRANSFERIR_HUMANO\]|\[AGENDAR\]/g, '').trim();
 
           console.log(`[AIService] ✅ Resposta gerada com sucesso com formato ${label} via Gemini.`);
-          return { reply: cleanReply || cleanText, transfer };
+          return { reply: cleanReply || cleanText, transfer, booking };
 
         } catch (err: any) {
           const errData  = err.response?.data;

@@ -5,6 +5,8 @@ import { AIService, getUniqueApiKeys } from '../services/ai.service';
 import { WhatsAppService } from '../services/whatsapp.service';
 import { AudioService } from '../services/audio.service';
 import { DocumentService } from '../services/document.service';
+import { EmailService } from '../services/email.service';
+import { PushService } from '../services/push.service';
 import { getIo } from '../socket';
 import axios from 'axios';
 import fs from 'fs';
@@ -319,6 +321,42 @@ async function triggerAIResponse(params: {
 
     if (!aiResult?.reply) {
       throw new Error('Resposta da IA vazia.');
+    }
+
+    // ── Disparar notificações de Booking ou Handover ──
+    if (aiResult.transfer || aiResult.booking) {
+      const alertType = aiResult.transfer ? 'handover' : 'booking';
+      const alertTitle = aiResult.transfer ? '🚨 Pedido de Atendimento Humano' : '📅 Novo Pedido de Agendamento';
+      const alertBody  = aiResult.transfer
+        ? `O cliente ${fromNumber} quer falar com um assistente.`
+        : `O cliente ${fromNumber} solicitou um agendamento.`;
+      
+      // 1. Enviar email para admins/owners
+      EmailService.sendAlertNotification(orgId, alertType, fromNumber, 'Cliente', message).catch(e => console.error('[ALERTA] Erro ao enviar email:', e.message));
+      
+      // 2. Web Push Notification (segundo plano, browser fechado)
+      PushService.sendAlertToOrg(orgId, {
+        title: alertTitle,
+        body:  alertBody,
+        type:  alertType,
+        url:   '/dashboard/live-chat',
+      }).catch(e => console.error('[ALERTA] Erro ao enviar push:', e.message));
+
+      // 3. Emitir evento Socket para notificação sonora no painel (browser aberto)
+      try {
+        getIo().to(`org:${orgId}`).emit(alertType === 'handover' ? 'handover_alert' : 'booking_alert', {
+          phone: fromNumber,
+          message: message,
+          type: alertType,
+          platform: 'whatsapp'
+        });
+      } catch (_) { /* silencioso */ }
+
+      // Se for transferência para humano, pausar a IA por 24h automaticamente
+      if (aiResult.transfer) {
+        aiPauses.set(historyKey, Date.now() + 24 * 60 * 60 * 1000);
+        console.log(`[IA] Handover detectado. IA pausada automaticamente por 24h para ${fromNumber}`);
+      }
     }
 
     let replyText = aiResult.reply;

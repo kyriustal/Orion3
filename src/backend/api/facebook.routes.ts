@@ -3,6 +3,9 @@ import { supabaseAdmin } from '../config/supabase';
 import { AIService } from '../services/ai.service';
 import { FacebookService } from '../services/facebook.service';
 import { requireAuth, AuthRequest } from '../middleware/auth';
+import { EmailService } from '../services/email.service';
+import { PushService } from '../services/push.service';
+import { getIo } from '../socket';
 
 const router = Router();
 const VERIFY_TOKEN = process.env.META_VERIFY_TOKEN || 'orion_secure_token_123';
@@ -183,6 +186,36 @@ router.post('/webhook', async (req, res) => {
         botName: botName || 'Assistente',
         mode: 'simulation',
       });
+
+      // ── Disparar notificações de Booking ou Handover ──
+      if (aiResult.transfer || aiResult.booking) {
+        const alertType  = aiResult.transfer ? 'handover' : 'booking';
+        const alertTitle = aiResult.transfer ? '🚨 Pedido de Atendimento Humano' : '📅 Novo Pedido de Agendamento';
+        const alertBody  = aiResult.transfer
+          ? `Mensageiro (${senderId}) quer falar com um assistente.`
+          : `Mensageiro (${senderId}) solicitou um agendamento.`;
+        
+        // 1. Enviar email para admins/owners
+        EmailService.sendAlertNotification(orgId, alertType, senderId, 'Cliente Facebook', userText).catch(e => console.error('[ALERTA FB] Erro ao enviar email:', e.message));
+        
+        // 2. Web Push Notification (segundo plano, browser fechado)
+        PushService.sendAlertToOrg(orgId, {
+          title: alertTitle,
+          body:  alertBody,
+          type:  alertType,
+          url:   '/dashboard/live-chat',
+        }).catch(e => console.error('[ALERTA FB] Erro ao enviar push:', e.message));
+
+        // 3. Emitir evento Socket para notificação no painel (browser aberto)
+        try {
+          getIo().to(`org:${orgId}`).emit(alertType === 'handover' ? 'handover_alert' : 'booking_alert', {
+            phone: senderId,
+            message: userText,
+            type: alertType,
+            platform: 'facebook'
+          });
+        } catch (_) { /* silencioso */ }
+      }
 
       // 6. Enviar resposta
       await FacebookService.sendMessage(pageId, senderId, aiResult.reply, accessToken);

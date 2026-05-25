@@ -2,6 +2,8 @@ import { Outlet, Link, useLocation } from 'react-router-dom';
 import { Bot, Smartphone, LayoutDashboard, BookOpen, MessageSquare, CreditCard, Settings, Megaphone, Users, BarChart, LogOut, UserCircle, PlayCircle, Menu, X, Zap, Instagram } from 'lucide-react';
 import { PageTransition } from '@/src/components/ui/PageTransition';
 import { useState, useEffect } from 'react';
+import { io } from 'socket.io-client';
+import { toast } from 'sonner';
 import TrialExpiredGate from '@/src/components/TrialExpiredGate';
 import {
   DropdownMenu,
@@ -59,6 +61,134 @@ export default function DashboardLayout() {
       .then(res => res.json())
       .then(data => setSubStatus(data))
       .catch(() => {});
+
+    // Configuração de WebSocket para Notificações Globais
+    const sock = io(window.location.origin, { transports: ["websocket", "polling"] });
+    sock.on("connect", () => {
+      try {
+        if (token) {
+          const decoded = JSON.parse(atob(token.split(".")[1]));
+          const orgId = decoded?.orgId || decoded?.id;
+          if (orgId) sock.emit("join_org", orgId);
+        }
+      } catch {}
+    });
+
+    const playNotificationSound = () => {
+      try {
+        const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
+        const ctx = new AudioContext();
+        const osc = ctx.createOscillator();
+        const gainNode = ctx.createGain();
+        
+        osc.type = 'sine';
+        // Frequência suave (ding)
+        osc.frequency.setValueAtTime(880, ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(1760, ctx.currentTime + 0.1);
+        
+        gainNode.gain.setValueAtTime(0.1, ctx.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
+        
+        osc.connect(gainNode);
+        gainNode.connect(ctx.destination);
+        
+        osc.start();
+        osc.stop(ctx.currentTime + 0.3);
+      } catch (e) {
+        console.warn('Audio play failed', e);
+      }
+    };
+
+    sock.on("handover_alert", (data: any) => {
+      playNotificationSound();
+      toast.error(`🚨 Pedido de Atendimento Humano`, {
+        description: `O cliente ${data.phone} pediu para falar com um assistente (${data.platform}).`,
+        duration: 10000,
+        action: { label: 'Abrir Chat', onClick: () => window.location.href = '/dashboard/live-chat' }
+      });
+    });
+
+    sock.on("booking_alert", (data: any) => {
+      playNotificationSound();
+      toast.success(`📅 Novo Pedido de Agendamento`, {
+        description: `O cliente ${data.phone} solicitou um agendamento (${data.platform}).`,
+        duration: 10000,
+        action: { label: 'Abrir Chat', onClick: () => window.location.href = '/dashboard/live-chat' }
+      });
+    });
+
+    return () => {
+      sock.disconnect();
+    };
+  }, []);
+
+  // ── Registar Service Worker e subscrever Web Push (segundo plano) ────────────
+  useEffect(() => {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+      console.warn('[PUSH] Web Push não suportado neste browser.');
+      return;
+    }
+
+    const setupPush = async () => {
+      try {
+        // 1. Registar o Service Worker
+        const registration = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
+        console.log('[PUSH] Service Worker registado:', registration.scope);
+
+        // 2. Verificar permissão atual
+        let permission = Notification.permission;
+
+        if (permission === 'default') {
+          // Pedir permissão ao utilizador (aparece a popup do browser)
+          permission = await Notification.requestPermission();
+        }
+
+        if (permission !== 'granted') {
+          console.log('[PUSH] Permissão de notificações negada pelo utilizador.');
+          return;
+        }
+
+        // 3. Obter chave pública VAPID do servidor
+        const keyRes = await fetch('/api/push/public-key');
+        if (!keyRes.ok) {
+          console.warn('[PUSH] Servidor não devolveu chave VAPID — web-push não configurado.');
+          return;
+        }
+        const { publicKey } = await keyRes.json();
+        if (!publicKey) return;
+
+        // 4. Converter chave VAPID Base64 para Uint8Array
+        const urlBase64ToUint8Array = (base64String: string) => {
+          const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+          const base64  = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+          const rawData = atob(base64);
+          return Uint8Array.from([...rawData].map(char => char.charCodeAt(0)));
+        };
+
+        // 5. Subscrever ao PushManager
+        const subscription = await registration.pushManager.subscribe({
+          userVisibleOnly:      true,
+          applicationServerKey: urlBase64ToUint8Array(publicKey),
+        });
+
+        // 6. Enviar a assinatura para o backend guardar
+        const token = localStorage.getItem('token');
+        await fetch('/api/push/subscribe', {
+          method:  'POST',
+          headers: {
+            'Content-Type':  'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+          body: JSON.stringify({ subscription }),
+        });
+
+        console.log('[PUSH] ✅ Assinatura de Web Push registada com sucesso!');
+      } catch (err) {
+        console.error('[PUSH] Erro ao configurar Web Push:', err);
+      }
+    };
+
+    setupPush();
   }, []);
 
   useEffect(() => {
