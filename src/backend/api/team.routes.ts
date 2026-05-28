@@ -63,6 +63,7 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
     }
 
     // 1. Criar o utilizador no auth.users do Supabase
+    let newUserId: string;
     const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
       email,
       password,
@@ -71,14 +72,22 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
     });
 
     if (authError) {
-      // Se o email já estiver em uso, tentar ver se já não é membro desta org
-      if (authError.message.includes('already been registered')) {
-        return res.status(400).json({ error: 'Este e-mail já tem conta registada no sistema.' });
-      }
-      throw authError;
-    }
+      if (authError.message.includes('already been registered') || authError.message.includes('already exists')) {
+        console.log(`[TEAM ROUTE] Utilizador ${email} já existe no auth.users. Recuperando ID...`);
+        const { data: usersList, error: listError } = await supabaseAdmin.auth.admin.listUsers();
+        if (listError) throw listError;
 
-    const newUserId = authData.user.id;
+        const existingUser = usersList?.users?.find(u => u.email?.toLowerCase() === email.toLowerCase());
+        if (!existingUser) {
+          return res.status(400).json({ error: 'Este e-mail já está registado no sistema, mas não conseguimos recuperar o ID da conta.' });
+        }
+        newUserId = existingUser.id;
+      } else {
+        throw authError;
+      }
+    } else {
+      newUserId = authData.user.id;
+    }
 
     // 2. Inserir na tabela team_members
     const { data: newMember, error: dbError } = await supabaseAdmin
