@@ -26,6 +26,26 @@ const formatSeparatorDate = (timestampStr?: string) => {
   }
 };
 
+// Para a previsualização da lista de conversas: hora se hoje, "Ontem" se ontem, data curta se mais antigo
+const formatChatPreviewDate = (timestampStr?: string, fallbackTime?: string) => {
+  if (!timestampStr) return fallbackTime || "";
+  const date = new Date(timestampStr);
+  if (isNaN(date.getTime())) return fallbackTime || "";
+  const today = new Date();
+  const yesterday = new Date();
+  yesterday.setDate(today.getDate() - 1);
+
+  if (date.toDateString() === today.toDateString()) {
+    // Hoje: mostrar apenas a hora
+    return date.toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' });
+  } else if (date.toDateString() === yesterday.toDateString()) {
+    return "Ontem";
+  } else {
+    // Mais antigo: mostrar dia e mês abreviado (ex: "24 mai")
+    return date.toLocaleDateString('pt-PT', { day: 'numeric', month: 'short' });
+  }
+};
+
 export default function LiveChat() {
   const [isLoading,   setIsLoading]   = useState(true);
   const [isAiActive,  setIsAiActive]  = useState(true);
@@ -162,21 +182,25 @@ export default function LiveChat() {
               <MessageCircle className="w-12 h-12 mb-3 opacity-10" />
               <p className="text-sm text-zinc-400">Aguardando mensagens...</p>
             </div>
-          ) : chats.map(chat => (
-            <div key={chat.id} onClick={() => selectChat(chat)} className={`p-4 border-b border-zinc-50 cursor-pointer transition-colors relative ${activeChatId === chat.phone ? "bg-emerald-50 border-l-2 border-l-emerald-500" : "hover:bg-zinc-50"}`}>
-              <div className="flex justify-between items-start mb-1">
-                <div className="flex items-center gap-1.5">
-                  <Smartphone className="w-3 h-3 text-emerald-500" />
-                  <h3 className="font-medium text-sm text-zinc-900 truncate max-w-[130px]">{chat.name}</h3>
+          ) : chats.map(chat => {
+            const previewDate = formatChatPreviewDate(chat.timestamp, chat.time);
+            const isToday = chat.timestamp && new Date(chat.timestamp).toDateString() === new Date().toDateString();
+            return (
+              <div key={chat.id} onClick={() => selectChat(chat)} className={`p-4 border-b border-zinc-50 cursor-pointer transition-colors relative ${activeChatId === chat.phone ? "bg-emerald-50 border-l-2 border-l-emerald-500" : "hover:bg-zinc-50"}`}>
+                <div className="flex justify-between items-start mb-1">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <Smartphone className="w-3 h-3 text-emerald-500 shrink-0" />
+                    <h3 className="font-medium text-sm text-zinc-900 truncate max-w-[120px]">{chat.name}</h3>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0 ml-1">
+                    <span className={`text-[10px] font-medium ${isToday ? 'text-zinc-400' : 'text-emerald-600'}`}>{previewDate}</span>
+                    {(chat.unread || 0) > 0 && <span className="w-5 h-5 bg-emerald-500 text-white text-[10px] rounded-full flex items-center justify-center font-bold">{chat.unread}</span>}
+                  </div>
                 </div>
-                <div className="flex items-center gap-1">
-                  <span className="text-[10px] text-zinc-400">{chat.time}</span>
-                  {(chat.unread || 0) > 0 && <span className="w-5 h-5 bg-emerald-500 text-white text-[10px] rounded-full flex items-center justify-center font-bold">{chat.unread}</span>}
-                </div>
+                <p className="text-xs text-zinc-400 truncate">{chat.lastMessage}</p>
               </div>
-              <p className="text-xs text-zinc-400 truncate">{chat.lastMessage}</p>
-            </div>
-          ))}
+            );
+          })}
         </CardContent>
       </Card>
 
