@@ -127,6 +127,7 @@ router.get('/history/:phone', requireAuth, async (req: AuthRequest, res) => {
       sender: m.sender,
       text: m.text,
       time: new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      timestamp: m.created_at,
       botName: m.metadata?.botName || undefined,
     }));
 

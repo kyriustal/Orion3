@@ -6,8 +6,25 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { io, Socket } from "socket.io-client";
 import { toast } from "sonner";
 
-type Message = { id: number; sender: "user" | "bot" | "human"; text: string; time: string; botName?: string; };
+type Message = { id: number; sender: "user" | "bot" | "human"; text: string; time: string; timestamp?: string; botName?: string; };
 type Chat = { id: string; phone: string; name: string; lastMessage: string; time: string; timestamp: string; platform?: string; unread?: number; };
+
+const formatSeparatorDate = (timestampStr?: string) => {
+  if (!timestampStr) return "Hoje";
+  const date = new Date(timestampStr);
+  if (isNaN(date.getTime())) return "Hoje";
+  const today = new Date();
+  const yesterday = new Date();
+  yesterday.setDate(today.getDate() - 1);
+
+  if (date.toDateString() === today.toDateString()) {
+    return "Hoje";
+  } else if (date.toDateString() === yesterday.toDateString()) {
+    return "Ontem";
+  } else {
+    return date.toLocaleDateString('pt-PT', { day: 'numeric', month: 'long', year: 'numeric' });
+  }
+};
 
 export default function LiveChat() {
   const [isLoading,   setIsLoading]   = useState(true);
@@ -47,7 +64,14 @@ export default function LiveChat() {
 
       setActiveChatId(activeId => {
         if (activeId === data.phone) {
-          setMessages(prev => [...prev, { id: Date.now() + Math.random(), sender: data.sender as any, text: data.text, time: data.time, botName: data.botName }]);
+          setMessages(prev => [...prev, { 
+            id: Date.now() + Math.random(), 
+            sender: data.sender as any, 
+            text: data.text, 
+            time: data.time, 
+            timestamp: data.timestamp || new Date().toISOString(),
+            botName: data.botName 
+          }]);
         }
         return activeId;
       });
@@ -93,7 +117,13 @@ export default function LiveChat() {
     if (!message.trim() || !activeChatId) return;
     const text = message.trim();
     setMessage("");
-    setMessages(prev => [...prev, { id: Date.now(), sender: "human", text, time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) }]);
+    setMessages(prev => [...prev, { 
+      id: Date.now(), 
+      sender: "human", 
+      text, 
+      time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      timestamp: new Date().toISOString()
+    }]);
     try {
       const res = await fetch("/api/whatsapp/send", {
         method: "POST",
@@ -173,20 +203,41 @@ export default function LiveChat() {
                 <AlertCircle className="w-4 h-4" /> IA pausada — você está no controlo.
               </div>
             )}
-            {messages.map((msg, i) => (
-              <div key={`${msg.id}-${i}`} className={`flex ${msg.sender === "user" ? "justify-start" : "justify-end"} animate-in fade-in`}>
-                <div className={`max-w-[72%] rounded-2xl px-4 py-2.5 text-sm shadow-sm ${msg.sender === "user" ? "bg-white border border-zinc-100 text-zinc-900 rounded-tl-sm" : msg.sender === "bot" ? "bg-emerald-50 border border-emerald-100 text-emerald-900 rounded-tr-sm" : "bg-zinc-800 text-white rounded-tr-sm"}`}>
-                  <div className="flex items-center gap-1.5 mb-1 opacity-60">
-                    {msg.sender === "user" ? <User className="w-3 h-3" /> : <Bot className="w-3 h-3" />}
-                    <span className="text-[10px] font-semibold uppercase tracking-wider">
-                      {msg.sender === "user" ? "Cliente" : msg.sender === "bot" ? (msg.botName || "IA") : "Você"}
-                    </span>
+            {messages.map((msg, i) => {
+              const showSeparator = i === 0 || (
+                msg.timestamp && messages[i - 1]?.timestamp && 
+                new Date(msg.timestamp).toDateString() !== new Date(messages[i - 1].timestamp!).toDateString()
+              );
+
+              return (
+                <div key={`${msg.id}-${i}`} className="space-y-4">
+                  {showSeparator && (
+                    <div className="relative flex items-center justify-center my-6">
+                      <div className="absolute inset-0 flex items-center" aria-hidden="true">
+                        <div className="w-full border-t border-zinc-200/60"></div>
+                      </div>
+                      <div className="relative flex justify-center">
+                        <span className="bg-zinc-200/70 dark:bg-zinc-800 backdrop-blur-sm px-3 py-1 text-[11px] font-bold text-zinc-600 dark:text-zinc-300 rounded-full border border-zinc-300/50 shadow-sm uppercase tracking-wider">
+                          {formatSeparatorDate(msg.timestamp)}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                  <div className={`flex ${msg.sender === "user" ? "justify-start" : "justify-end"} animate-in fade-in`}>
+                    <div className={`max-w-[72%] rounded-2xl px-4 py-2.5 text-sm shadow-sm ${msg.sender === "user" ? "bg-white border border-zinc-100 text-zinc-900 rounded-tl-sm" : msg.sender === "bot" ? "bg-emerald-50 border border-emerald-100 text-emerald-900 rounded-tr-sm" : "bg-zinc-800 text-white rounded-tr-sm"}`}>
+                      <div className="flex items-center gap-1.5 mb-1 opacity-60">
+                        {msg.sender === "user" ? <User className="w-3 h-3" /> : <Bot className="w-3 h-3" />}
+                        <span className="text-[10px] font-semibold uppercase tracking-wider">
+                          {msg.sender === "user" ? "Cliente" : msg.sender === "bot" ? (msg.botName || "IA") : "Você"}
+                        </span>
+                      </div>
+                      <p className="whitespace-pre-wrap leading-relaxed">{msg.text}</p>
+                      <p className="text-[10px] text-right mt-1 opacity-40">{msg.time}</p>
+                    </div>
                   </div>
-                  <p className="whitespace-pre-wrap leading-relaxed">{msg.text}</p>
-                  <p className="text-[10px] text-right mt-1 opacity-40">{msg.time}</p>
                 </div>
-              </div>
-            ))}
+              );
+            })}
             {activeChatId && typingChatIds.has(activeChatId) && (
               <div className="flex justify-end animate-in fade-in slide-in-from-bottom-2 duration-300">
                 <div className="bg-emerald-50 border border-emerald-100 rounded-2xl rounded-tr-sm px-4 py-3 shadow-sm">

@@ -51,7 +51,10 @@ export default function Team() {
         body: JSON.stringify(newMember)
       });
 
-      if (!response.ok) throw new Error("Erro ao adicionar membro");
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Erro ao adicionar membro");
+      }
 
       const addedMember = await response.json();
       setTeam([...team, addedMember]);

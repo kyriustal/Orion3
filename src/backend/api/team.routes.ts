@@ -45,6 +45,23 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
       return res.status(400).json({ error: 'Preencha todos os campos obrigatórios' });
     }
 
+    // Auto-healing: Garantir que a organização do utilizador existe
+    const { data: orgCheck } = await supabaseAdmin
+      .from('organizations')
+      .select('id')
+      .eq('id', orgId)
+      .maybeSingle();
+
+    if (!orgCheck) {
+      console.log(`[TEAM ROUTE] Auto-healing: Criando organização em falta para o utilizador ${orgId}`);
+      await supabaseAdmin.from('organizations').insert({
+        id: orgId,
+        owner_email: req.user?.email || '',
+        first_name: req.user?.email?.split('@')[0] || 'Admin',
+        name: 'Minha Organização',
+      });
+    }
+
     // 1. Criar o utilizador no auth.users do Supabase
     const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
       email,

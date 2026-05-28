@@ -38,14 +38,23 @@ router.post('/login', async (req, res) => {
         // Check if user is an owner
         const { data: org } = await supabaseAdmin.from('organizations').select('id').eq('id', user.id).maybeSingle();
 
-        if (!org && !VIP_EMAILS.includes(email.toLowerCase())) {
+        if (!org) {
             // Check if user is a team member
             const { data: member } = await supabaseAdmin.from('team_members').select('org_id, role').eq('user_id', user.id).maybeSingle();
             if (member) {
                 orgId = member.org_id;
                 role = member.role;
             } else {
-                return res.status(401).json({ error: 'Conta não tem nenhuma organização associada.' });
+                // Auto-healing: Se for o proprietário principal mas a linha na tabela 'organizations' não existir (dados legados/incompletos)
+                console.log(`[AUTH LOGIN] Auto-healing: Criando organização em falta para o utilizador ${user.id}`);
+                await supabaseAdmin.from('organizations').insert({
+                    id: user.id,
+                    owner_email: email,
+                    first_name: email.split('@')[0],
+                    name: 'Minha Organização',
+                });
+                orgId = user.id;
+                role = 'OWNER';
             }
         }
 
@@ -214,17 +223,15 @@ router.post('/register', async (req, res) => {
             });
         }
 
-        // Criar organização base
-        if (companyName || phone || whatsapp) {
-            await supabaseAdmin.from('organizations').upsert({
-                id: user.id,
-                owner_email: email,
-                first_name: firstName || '',
-                name: companyName || '',
-                phone: phone || '',
-                whatsapp: whatsapp || '',
-            });
-        }
+        // Criar organização base (Sempre criada para garantir que o utilizador tem uma org associada)
+        await supabaseAdmin.from('organizations').upsert({
+            id: user.id,
+            owner_email: email,
+            first_name: firstName || '',
+            name: companyName || `${firstName || 'Minha'} Empresa`,
+            phone: phone || '',
+            whatsapp: whatsapp || '',
+        });
 
         res.status(201).json({
             message: isVip
