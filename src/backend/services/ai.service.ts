@@ -204,10 +204,11 @@ ${referralContext}`;
 function buildContents(
   history: ChatMessage[],
   message: string,
-  media?: { base64: string; mimeType: string }
+  media?: { base64: string; mimeType: string },
+  extraImages?: { base64: string; mimeType: string }[]
 ): any[] {
   // 1. Construir a lista linear de mensagens (filtrando 'human' e deduzindo roles)
-  const rawList: { role: 'user' | 'model'; text: string; media?: { base64: string; mimeType: string } }[] = [];
+  const rawList: { role: 'user' | 'model'; text: string; media?: { base64: string; mimeType: string }; extraImages?: { base64: string; mimeType: string }[] }[] = [];
 
   for (const msg of history) {
     if (msg.sender === 'user') {
@@ -224,8 +225,11 @@ function buildContents(
     if (media) {
       lastItem.media = media;
     }
+    if (extraImages) {
+      lastItem.extraImages = extraImages;
+    }
   } else {
-    rawList.push({ role: 'user', text: message, media });
+    rawList.push({ role: 'user', text: message, media, extraImages });
   }
 
   // 2. Agrupar mensagens consecutivas do mesmo role para cumprir a regra de alternância do Gemini
@@ -243,6 +247,14 @@ function buildContents(
       )) {
         lastMerged.parts.push({
           inlineData: { mimeType: item.media.mimeType, data: item.media.base64 }
+        });
+      }
+
+      if (item.extraImages && item.extraImages.length > 0) {
+        item.extraImages.forEach(img => {
+          lastMerged.parts.push({
+            inlineData: { mimeType: img.mimeType, data: img.base64 }
+          });
         });
       }
       
@@ -263,6 +275,13 @@ function buildContents(
       )) {
         parts.push({
           inlineData: { mimeType: item.media.mimeType, data: item.media.base64 }
+        });
+      }
+      if (item.extraImages && item.extraImages.length > 0) {
+        item.extraImages.forEach(img => {
+          parts.push({
+            inlineData: { mimeType: img.mimeType, data: img.base64 }
+          });
         });
       }
       parts.push({ text: item.text });
@@ -385,13 +404,17 @@ export class AIService {
     const urlRegex = /https?:\/\/[^\s<>"{}|\\^`[\]]+/gi;
     const detectedUrls = message.match(urlRegex) || [];
     let urlContextBlocks: string[] = [];
+    let extractedImages: { base64: string; mimeType: string }[] = [];
 
     if (detectedUrls.length > 0) {
-      console.log(`[AIService] 🔗 ${detectedUrls.length} URL(s) detectado(s) na mensagem. A extrair conteúdo...`);
+      console.log(`[AIService] 🔗 ${detectedUrls.length} URL(s) detectado(s) na mensagem. A extrair conteúdo de texto e imagens...`);
       const urlFetches = detectedUrls.slice(0, 3).map(async (url) => {
-        const content = await DocumentService.extractTextFromUrl(url);
-        if (content) {
-          return `[Conteúdo da página ${url}]:\n${content}`;
+        const result = await DocumentService.extractPageContentAndImages(url);
+        if (result && result.text) {
+          if (result.images && result.images.length > 0) {
+            extractedImages.push(...result.images);
+          }
+          return `[Conteúdo da página ${url}]:\n${result.text}`;
         }
         return null;
       });
@@ -500,7 +523,7 @@ export class AIService {
     const fullKnowledge = `${org?.product_description || ''}\n\n${externalKnowledge}\n\n${availableAssets}`.trim();
     
     const systemPrompt = buildSystemPrompt(mode, { ...org, product_description: fullKnowledge } as any, botName, referral, timeSinceLastMessageHours);
-    const contents     = buildContents(history, enrichedMessage, media);
+    const contents     = buildContents(history, enrichedMessage, media, extractedImages);
 
     // 3. Payloads: com e sem Google Search
     const baseConfig = {
@@ -533,6 +556,18 @@ export class AIService {
             image_url: {
               url: `data:${media.mimeType};base64,${media.base64}`,
             },
+          });
+        }
+
+        if (extractedImages.length > 0) {
+          console.log(`[AIService] Incluindo ${extractedImages.length} imagem(ns) extraída(s) de links no payload do GPT-4o mini...`);
+          extractedImages.forEach((img) => {
+            lastUserContent.push({
+              type: 'image_url',
+              image_url: {
+                url: `data:${img.mimeType};base64,${img.base64}`,
+              },
+            });
           });
         }
 

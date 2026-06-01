@@ -34,28 +34,38 @@ router.post('/login', async (req, res) => {
 
         let orgId = user.id;
         let role = 'OWNER';
+        let displayName = '';
 
         // Check if user is an owner
-        const { data: org } = await supabaseAdmin.from('organizations').select('id').eq('id', user.id).maybeSingle();
+        const { data: org } = await supabaseAdmin.from('organizations').select('id, first_name').eq('id', user.id).maybeSingle();
 
-        if (!org) {
+        if (org) {
+            displayName = org.first_name || '';
+        } else {
             // Check if user is a team member
-            const { data: member } = await supabaseAdmin.from('team_members').select('org_id, role').eq('user_id', user.id).maybeSingle();
+            const { data: member } = await supabaseAdmin.from('team_members').select('org_id, role, name').eq('user_id', user.id).maybeSingle();
             if (member) {
                 orgId = member.org_id;
                 role = member.role;
+                displayName = member.name || '';
             } else {
                 // Auto-healing: Se for o proprietário principal mas a linha na tabela 'organizations' não existir (dados legados/incompletos)
                 console.log(`[AUTH LOGIN] Auto-healing: Criando organização em falta para o utilizador ${user.id}`);
+                const ownerName = user.user_metadata?.first_name || email.split('@')[0];
                 await supabaseAdmin.from('organizations').insert({
                     id: user.id,
                     owner_email: email,
-                    first_name: email.split('@')[0],
+                    first_name: ownerName,
                     name: 'Minha Organização',
                 });
                 orgId = user.id;
                 role = 'OWNER';
+                displayName = ownerName;
             }
+        }
+
+        if (!displayName) {
+            displayName = user.user_metadata?.first_name || user.user_metadata?.name || email.split('@')[0] || 'Agente';
         }
 
         // Verificar subscrição (exceto VIPs)
@@ -95,6 +105,7 @@ router.post('/login', async (req, res) => {
                 orgId: orgId,
                 email: user.email,
                 role: role,
+                name: displayName,
                 subscription: { status: subscriptionStatus, plan: subscriptionPlan }
             },
             JWT_SECRET,
@@ -104,7 +115,7 @@ router.post('/login', async (req, res) => {
         res.json({
             message: 'Login realizado com sucesso',
             token,
-            user: { id: user.id, orgId: orgId, email: user.email, role: role },
+            user: { id: user.id, orgId: orgId, email: user.email, role: role, name: displayName },
             subscription: { status: subscriptionStatus, plan: subscriptionPlan, daysLeft },
         });
     } catch (error: any) {

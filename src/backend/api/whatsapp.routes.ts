@@ -10,8 +10,10 @@ import { PushService } from '../services/push.service';
 import { getIo } from '../socket';
 import axios from 'axios';
 import fs from 'fs';
+import multer from 'multer';
 
 const router = Router();
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 // ─── Controlo de estado em memória ────────────────────────────────────────────
 
@@ -129,6 +131,8 @@ router.get('/history/:phone', requireAuth, async (req: AuthRequest, res) => {
       time: new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       timestamp: m.created_at,
       botName: m.metadata?.botName || undefined,
+      agentName: m.metadata?.agentName || undefined,
+      metadata: m.metadata || undefined,
     }));
 
     res.json(messages);
@@ -169,13 +173,31 @@ router.post('/send', requireAuth, async (req: AuthRequest, res) => {
 
     if (sentId) botSentMessages.add(sentId);
 
+    const agentName = req.user?.name || req.user?.email?.split('@')[0] || 'Agente';
+
     // Persistir no histórico
     await supabaseAdmin.from('conversation_history').insert({
       org_id: orgId,
       customer_phone: phone,
       sender: 'human',
       text: message,
+      metadata: {
+        agentName
+      }
     });
+
+    // Emitir via socket para sincronizar em tempo real com outros navegadores/membros da equipa
+    try {
+      getIo().to(`org:${orgId}`).emit('new_message', {
+        phone:     phone,
+        sender:    'human',
+        text:      message,
+        time:      new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        timestamp: new Date().toISOString(),
+        platform:  'whatsapp',
+        agentName: agentName
+      });
+    } catch (_) { /* silencioso */ }
 
     res.json({ message: 'Mensagem enviada com sucesso.', id: sentId });
   } catch (err: any) {
@@ -183,7 +205,158 @@ router.post('/send', requireAuth, async (req: AuthRequest, res) => {
   }
 });
 
-// ─── POST /api/whatsapp/config — Guardar configuração com validação Meta ──────
+// ─── POST /api/whatsapp/send-file — Envio manual de ficheiros pelo agente humano ────────
+router.post('/send-file', requireAuth, upload.single('file'), async (req: AuthRequest, res) => {
+  try {
+    const orgId = req.user?.orgId;
+    const { phone, message } = req.body;
+    const file = req.file;
+
+    if (!phone) {
+      return res.status(400).json({ error: 'phone é obrigatório.' });
+    }
+    if (!file) {
+      return res.status(400).json({ error: 'Nenhum ficheiro enviado.' });
+    }
+
+    const { data: config } = await supabaseAdmin
+      .from('whatsapp_config')
+      .select('phone_number_id, access_token')
+      .eq('org_id', orgId)
+      .eq('is_active', true)
+      .maybeSingle();
+
+    if (!config) return res.status(404).json({ error: 'Nenhuma configuração WhatsApp activa.' });
+
+    // Pausar a IA por 5 minutos quando o agente humano envia
+    const historyKey = `${orgId}:${phone}`;
+    aiPauses.set(historyKey, Date.now() + 5 * 60 * 1000);
+
+    // 1. Sanitizar o nome do ficheiro para o Supabase Storage
+    const sanitizedName = file.originalname
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-zA-Z0-9._-]/g, '_')
+      .replace(/_+/g, '_')
+      .replace(/^_|_$/g, '');
+
+    const fileNameOnStorage = `${orgId}/livechat_${Date.now()}_${sanitizedName}`;
+
+    // 2. Garantir que o bucket 'assets' existe (cria se necessário)
+    const { data: buckets } = await supabaseAdmin.storage.listBuckets();
+    const bucketExists = buckets?.some(b => b.name === 'assets');
+    if (!bucketExists) {
+      await supabaseAdmin.storage.createBucket('assets', { public: true });
+    }
+
+    // 3. Upload para o Supabase Storage
+    const { error: uploadError } = await supabaseAdmin.storage
+      .from('assets')
+      .upload(fileNameOnStorage, file.buffer, {
+        contentType: file.mimetype,
+        upsert: true,
+      });
+
+    if (uploadError) {
+      console.error('[LIVECHAT-FILE] Erro no upload para Storage:', uploadError.message);
+      return res.status(500).json({ error: `Erro no upload do ficheiro: ${uploadError.message}` });
+    }
+
+    // 4. Obter URL pública do ficheiro
+    const { data: { publicUrl } } = supabaseAdmin.storage
+      .from('assets')
+      .getPublicUrl(fileNameOnStorage);
+
+    // 5. Enviar via WhatsAppService.sendMediaByUrl
+    console.log(`[LIVECHAT-FILE] Enviando ficheiro "${file.originalname}" para ${phone} via Meta API...`);
+    const sentId = await WhatsAppService.sendMediaByUrl(
+      phone,
+      publicUrl,
+      file.mimetype,
+      file.originalname,
+      config.phone_number_id,
+      config.access_token
+    );
+
+    if (sentId) botSentMessages.add(sentId);
+
+    const agentName = req.user?.name || req.user?.email?.split('@')[0] || 'Agente';
+
+    const fileMsgText = `[Ficheiro: ${file.originalname}](${publicUrl})`;
+    const metadata = {
+      agentName,
+      mediaUrl: publicUrl,
+      fileName: file.originalname,
+      mimeType: file.mimetype
+    };
+
+    // 6. Persistir o ficheiro no histórico
+    await supabaseAdmin.from('conversation_history').insert({
+      org_id: orgId,
+      customer_phone: phone,
+      sender: 'human',
+      text: fileMsgText,
+      metadata
+    });
+
+    // 7. Emitir evento Socket do Ficheiro
+    try {
+      getIo().to(`org:${orgId}`).emit('new_message', {
+        phone:     phone,
+        sender:    'human',
+        text:      fileMsgText,
+        time:      new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        timestamp: new Date().toISOString(),
+        platform:  'whatsapp',
+        agentName: agentName,
+        metadata
+      });
+    } catch (_) { /* silencioso */ }
+
+    // 8. Se houver legenda, enviar legenda também
+    if (message && message.trim()) {
+      const captionSentId = await WhatsAppService.sendTextMessage(
+        config.phone_number_id,
+        phone,
+        message.trim(),
+        config.access_token
+      );
+      if (captionSentId) botSentMessages.add(captionSentId);
+
+      await supabaseAdmin.from('conversation_history').insert({
+        org_id: orgId,
+        customer_phone: phone,
+        sender: 'human',
+        text: message.trim(),
+        metadata: { agentName }
+      });
+
+      try {
+        getIo().to(`org:${orgId}`).emit('new_message', {
+          phone:     phone,
+          sender:    'human',
+          text:      message.trim(),
+          time:      new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          timestamp: new Date().toISOString(),
+          platform:  'whatsapp',
+          agentName: agentName
+        });
+      } catch (_) { /* silencioso */ }
+    }
+
+    res.json({ 
+      message: 'Ficheiro enviado com sucesso.', 
+      id: sentId,
+      fileUrl: publicUrl,
+      fileName: file.originalname
+    });
+
+  } catch (err: any) {
+    console.error('[LIVECHAT-FILE] Erro inesperado:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post('/config', requireAuth, async (req: AuthRequest, res) => {
   try {
     const orgId = req.user?.orgId;

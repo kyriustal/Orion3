@@ -9,6 +9,7 @@ export interface AuthRequest extends Request {
     orgId: string;
     email: string;
     role: string;
+    name?: string;
     subscription?: { status: string; plan: string; };
   };
 }
