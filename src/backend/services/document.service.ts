@@ -184,7 +184,8 @@ export class DocumentService {
             }
           });
 
-          const contentType = imgResponse.headers['content-type'] || 'image/jpeg';
+          const rawContentType = imgResponse.headers['content-type'];
+          const contentType = typeof rawContentType === 'string' ? rawContentType : 'image/jpeg';
           if (contentType.startsWith('image/')) {
             const buffer = Buffer.from(imgResponse.data);
             // Ignorar imagens extremamente pequenas (ex: tracking pixels < 1KB)
