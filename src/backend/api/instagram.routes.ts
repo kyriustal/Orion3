@@ -3,6 +3,7 @@ import { supabaseAdmin } from '../config/supabase';
 import { AIService } from '../services/ai.service';
 import { InstagramService } from '../services/instagram.service';
 import { requireAuth, AuthRequest } from '../middleware/auth';
+import { getIo } from '../socket';
 
 const router = Router();
 const VERIFY_TOKEN = process.env.META_VERIFY_TOKEN || 'orion_secure_token_123';
@@ -170,14 +171,35 @@ router.post('/webhook', async (req, res) => {
 
       // 2. Determinar o texto da mensagem
       let messageText = userText;
+      let attachmentMediaUrl: string | null = null;
+      let attachmentFileName: string | null = null;
+      let attachmentMimeType: string | null = null;
+
       if (!messageText && attachments.length > 0) {
         const att = attachments[0];
-        if (att.type === 'image')  messageText = '(Imagem enviada)';
-        else if (att.type === 'video')  messageText = '(Vídeo enviado)';
-        else if (att.type === 'audio')  messageText = '(Áudio enviado)';
-        else if (att.type === 'story_mention') messageText = '(Mencionou o seu story)';
-        else if (att.type === 'share')  messageText = `(Conteúdo partilhado: ${att.payload?.url || ''})`;
-        else messageText = '(Anexo recebido)';
+        if (att.type === 'image') {
+          messageText = '(Imagem enviada)';
+          attachmentMediaUrl = att.payload?.url || null;
+          attachmentFileName = 'imagem.jpg';
+          attachmentMimeType = 'image/jpeg';
+        } else if (att.type === 'video') {
+          messageText = '(Vídeo enviado)';
+          attachmentMediaUrl = att.payload?.url || null;
+          attachmentFileName = 'video.mp4';
+          attachmentMimeType = 'video/mp4';
+        } else if (att.type === 'audio') {
+          messageText = '(Áudio enviado)';
+          attachmentMediaUrl = att.payload?.url || null;
+          attachmentFileName = 'audio.m4a';
+          attachmentMimeType = 'audio/mp4';
+        } else if (att.type === 'story_mention') {
+          messageText = '(Mencionou o seu story)';
+        } else if (att.type === 'share') {
+          messageText = `(Conteúdo partilhado: ${att.payload?.url || ''})`;
+          attachmentMediaUrl = att.payload?.url || null;
+        } else {
+          messageText = '(Anexo recebido)';
+        }
       }
 
       if (!messageText) continue;
@@ -199,13 +221,37 @@ router.post('/webhook', async (req, res) => {
       }));
 
       // 4. Persistir mensagem do utilizador
+      const igMediaMetadata: Record<string, string> = { platform: 'instagram', message_id: messageId };
+      if (attachmentMediaUrl) {
+        igMediaMetadata.mediaUrl = attachmentMediaUrl;
+        igMediaMetadata.fileName = attachmentFileName || 'ficheiro';
+        igMediaMetadata.mimeType = attachmentMimeType || 'application/octet-stream';
+      }
+
       await supabaseAdmin.from('conversation_history').insert({
         org_id:         orgId,
         customer_phone: senderId,
         sender:         'user',
         text:           messageText,
-        metadata:       { platform: 'instagram', message_id: messageId },
+        metadata:       igMediaMetadata,
       });
+
+      // 4b. Emitir evento para o Live Chat
+      try {
+        getIo().to(`org:${orgId}`).emit('new_message', {
+          phone:     senderId,
+          sender:    'user',
+          text:      messageText,
+          time:      new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          timestamp: new Date().toISOString(),
+          platform:  'instagram',
+          metadata:  attachmentMediaUrl ? {
+            mediaUrl: attachmentMediaUrl,
+            fileName: attachmentFileName || 'ficheiro',
+            mimeType: attachmentMimeType || 'application/octet-stream',
+          } : undefined,
+        });
+      } catch (_) { /* sem clientes conectados */ }
 
       // 5. Mark seen + typing indicator
       await InstagramService.markSeen(igUserId, senderId, accessToken);

@@ -313,6 +313,32 @@ export default function LiveChat() {
               </div>
             )}
           </a>
+        ) : metadata.mimeType?.startsWith("video/") ? (
+          <div className="space-y-0">
+            <video controls src={metadata.mediaUrl} className="w-full bg-black" style={{ maxHeight: 220 }} />
+            <div className="p-2.5 flex items-center justify-between gap-2">
+              <p className="text-xs font-semibold text-zinc-800 dark:text-zinc-200 truncate">{metadata.fileName || "Vídeo"}</p>
+              <a href={metadata.mediaUrl} download={metadata.fileName || "video"} className="shrink-0 text-xs font-bold text-emerald-600 dark:text-emerald-400 hover:underline px-2 py-1 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-950/30 transition-colors">
+                Baixar
+              </a>
+            </div>
+          </div>
+        ) : metadata.mimeType?.startsWith("audio/") ? (
+          <div className="p-3 space-y-2.5">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 rounded-lg shrink-0">
+                <FileText className="w-4 h-4" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-semibold text-zinc-900 dark:text-zinc-100 truncate">{metadata.fileName || "Áudio"}</p>
+                <p className="text-[10px] text-zinc-400 uppercase mt-0.5">Áudio</p>
+              </div>
+              <a href={metadata.mediaUrl} download={metadata.fileName || "audio"} className="shrink-0 text-xs font-bold text-emerald-600 dark:text-emerald-400 hover:underline px-2 py-1 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-950/30 transition-colors">
+                Baixar
+              </a>
+            </div>
+            <audio controls src={metadata.mediaUrl} className="w-full" style={{ height: 32 }} />
+          </div>
         ) : (
           <div className="p-3 flex items-center gap-3">
             <div className="p-2.5 bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 rounded-lg">
@@ -325,7 +351,7 @@ export default function LiveChat() {
             {metadata.isUploading ? (
               <Loader2 className="w-4 h-4 animate-spin text-emerald-600 shrink-0" />
             ) : (
-              <a href={metadata.mediaUrl} target="_blank" rel="noopener noreferrer" className="shrink-0 text-xs font-bold text-emerald-600 dark:text-emerald-400 hover:underline px-2.5 py-1.5 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-950/30 transition-colors">
+              <a href={metadata.mediaUrl} download target="_blank" rel="noopener noreferrer" className="shrink-0 text-xs font-bold text-emerald-600 dark:text-emerald-400 hover:underline px-2.5 py-1.5 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-950/30 transition-colors">
                 Baixar
               </a>
             )}
@@ -392,9 +418,12 @@ export default function LiveChat() {
       return parts.length > 0 ? parts : rawText;
     };
 
+    // Suprimir texto placeholder quando há previsualização de ficheiro (evitar duplicação)
+    const isMediaPlaceholder = filePreview && /^\((Imagem|V[íi]deo|[\u00c1A]udio|Documento|Conte[úu]do|Ficheiro|Anexo|Mensagem de [\u00c1A]udio)[^)]*\)$/.test(text?.trim() || "");
+
     return (
       <div className="space-y-1.5">
-        <p className="whitespace-pre-wrap leading-relaxed break-words">{parseLinks(text)}</p>
+        {!isMediaPlaceholder && <p className="whitespace-pre-wrap leading-relaxed break-words">{parseLinks(text)}</p>}
         {filePreview}
       </div>
     );

@@ -27,6 +27,7 @@ export interface GenerateResult {
   reply: string;
   transfer: boolean;
   booking?: boolean;
+  contactData?: { name?: string; email?: string; phone?: string };
 }
 
 // ─────────────────────────────────────────────────────────
@@ -142,11 +143,13 @@ REGRAS:
 
   const selectedToneInstructions = toneRules[tone] || toneRules.friendly;
 
-  const transferRule = handover === 'transfer'
-    ? '- Se o cliente pedir explicitamente para falar com um humano/atendente, inicie a sua resposta com o token [TRANSFERIR_HUMANO] e despeça-se gentilmente.'
-    : '';
+  // Instrução universal: detectar pedido de atendimento humano em TODOS os modos de handover
+  const transferRule = '- Se o cliente pedir explicitamente para falar com um humano, atendente ou pessoa real, inicie a sua resposta com o token [TRANSFERIR_HUMANO] e despeça-se gentilmente.';
 
   const bookingRule = '- Se o cliente solicitar agendamento, marcação de consulta ou pedir para agendar um serviço, inicie a sua resposta com o token [AGENDAR].';
+
+  // Instrução para captura automática de dados de contacto
+  const contactRule = '- Se o cliente partilhar espontaneamente informações de contacto (nome completo, email, número de telefone, morada ou empresa), inclua no INÍCIO da sua resposta o token compacto [CONTATO:{"name":"<nome>","email":"<email>","phone":"<tel>"}] preenchendo APENAS os campos que o cliente efectivamente partilhou. Nunca invente dados. Exemplo: [CONTATO:{"name":"Ana Silva","phone":"+244912345678"}].';
 
   const referralContext = referral?.headline
     ? `- Este cliente chegou através do anúncio: "${referral.headline}". Adapte a primeira saudação a esse contexto de forma entusiasmada.`
@@ -195,6 +198,7 @@ REGRAS OBRIGATÓRIAS:
 - Nunca revele que é uma IA.
 ${transferRule}
 ${bookingRule}
+${contactRule}
 ${referralContext}`;
 }
 
@@ -595,11 +599,14 @@ export class AIService {
 
         const rawText = response.data?.choices?.[0]?.message?.content?.trim();
         if (rawText) {
-          const transfer   = rawText.includes('[TRANSFERIR_HUMANO]');
-          const booking    = rawText.includes('[AGENDAR]');
-          const cleanReply = rawText.replace(/\[TRANSFERIR_HUMANO\]|\[AGENDAR\]/g, '').trim();
+          const transfer      = rawText.includes('[TRANSFERIR_HUMANO]');
+          const booking      = rawText.includes('[AGENDAR]');
+          const contactMatch = rawText.match(/\[CONTATO:(\{[^}]+\})\]/);
+          const contactData  = contactMatch ? (() => { try { return JSON.parse(contactMatch[1]); } catch { return undefined; } })() : undefined;
+          const cleanReply   = rawText.replace(/\[TRANSFERIR_HUMANO\]|\[AGENDAR\]|\[CONTATO:\{[^}]+\}\]/g, '').trim();
           console.log(`[AIService] ✅ Resposta gerada com sucesso via OpenAI gpt-4o-mini.`);
-          return { reply: cleanReply || rawText, transfer, booking };
+          if (contactData) console.log(`[AIService] 📋 Dados de contacto capturados:`, contactData);
+          return { reply: cleanReply || rawText, transfer, booking, contactData };
         }
       }
     } catch (openaiErr: any) {
@@ -640,12 +647,15 @@ export class AIService {
             continue;
           }
 
-          const transfer   = cleanText.includes('[TRANSFERIR_HUMANO]');
-          const booking    = cleanText.includes('[AGENDAR]');
-          const cleanReply = cleanText.replace(/\[TRANSFERIR_HUMANO\]|\[AGENDAR\]/g, '').trim();
+          const transfer      = cleanText.includes('[TRANSFERIR_HUMANO]');
+          const booking      = cleanText.includes('[AGENDAR]');
+          const contactMatch = cleanText.match(/\[CONTATO:(\{[^}]+\})\]/);
+          const contactData  = contactMatch ? (() => { try { return JSON.parse(contactMatch[1]); } catch { return undefined; } })() : undefined;
+          const cleanReply   = cleanText.replace(/\[TRANSFERIR_HUMANO\]|\[AGENDAR\]|\[CONTATO:\{[^}]+\}\]/g, '').trim();
 
           console.log(`[AIService] ✅ Resposta gerada com sucesso com formato ${label} via Gemini.`);
-          return { reply: cleanReply || cleanText, transfer, booking };
+          if (contactData) console.log(`[AIService] 📋 Dados de contacto capturados:`, contactData);
+          return { reply: cleanReply || cleanText, transfer, booking, contactData };
 
         } catch (err: any) {
           const errData  = err.response?.data;

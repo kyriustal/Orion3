@@ -15,6 +15,55 @@ import multer from 'multer';
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
+// ─── Helper: Upload de média do cliente para o Supabase Storage ───────────────
+async function uploadClientMediaToStorage(
+  orgId: string,
+  base64Data: string,
+  mimeType: string,
+  originalFileName: string
+): Promise<string | null> {
+  try {
+    // Garantir que o bucket 'assets' existe
+    const { data: buckets } = await supabaseAdmin.storage.listBuckets();
+    if (!buckets?.some(b => b.name === 'assets')) {
+      await supabaseAdmin.storage.createBucket('assets', { public: true });
+    }
+
+    // Sanitizar nome do ficheiro
+    const sanitizedName = originalFileName
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-zA-Z0-9._-]/g, '_')
+      .replace(/_+/g, '_')
+      .replace(/^_|_$/g, '') || 'ficheiro';
+
+    // Extensão baseada no mimeType quando o nome não tem extensão útil
+    const ext = sanitizedName.includes('.') ? '' : (mimeType.split('/')[1] || 'bin');
+    const fileNameOnStorage = `${orgId}/client_${Date.now()}_${sanitizedName}${ext ? '.' + ext : ''}`;
+
+    const buffer = Buffer.from(base64Data, 'base64');
+
+    const { error: uploadError } = await supabaseAdmin.storage
+      .from('assets')
+      .upload(fileNameOnStorage, buffer, { contentType: mimeType, upsert: true });
+
+    if (uploadError) {
+      console.error('[CLIENT-MEDIA] Erro no upload para Storage:', uploadError.message);
+      return null;
+    }
+
+    const { data: { publicUrl } } = supabaseAdmin.storage
+      .from('assets')
+      .getPublicUrl(fileNameOnStorage);
+
+    console.log(`[CLIENT-MEDIA] ✅ Ficheiro do cliente guardado: ${publicUrl}`);
+    return publicUrl;
+  } catch (err: any) {
+    console.error('[CLIENT-MEDIA] Erro inesperado:', err.message);
+    return null;
+  }
+}
+
 // ─── Controlo de estado em memória ────────────────────────────────────────────
 
 /** Dedup — IDs de mensagens já processadas (limpa a cada 10 min) */
@@ -765,6 +814,10 @@ router.post('/webhook', async (req, res) => {
     let media: { base64: string; mimeType: string } | undefined;
     let isAudioMessage = false;
     let detectedLanguage = 'pt'; // Língua detectada no áudio do cliente (default: português)
+    // URL pública do ficheiro do cliente (após upload para Supabase Storage)
+    let clientMediaUrl: string | null = null;
+    let clientFileName: string | null = null;
+    let clientMimeType: string | null = null;
 
     if (incomingMsg.type === 'text') {
       userText = incomingMsg.text?.body || '';
@@ -773,7 +826,7 @@ router.post('/webhook', async (req, res) => {
       const mediaObj = incomingMsg[incomingMsg.type];
       const mediaId  = mediaObj?.id;
       const caption  = mediaObj?.caption || '';
-      const filename = mediaObj?.filename || 'ficheiro';
+      const filename = mediaObj?.filename || (incomingMsg.type === 'image' ? 'imagem.jpg' : incomingMsg.type === 'video' ? 'video.mp4' : incomingMsg.type === 'audio' ? 'audio.ogg' : 'ficheiro');
 
       if (mediaId) {
         console.log(`[WEBHOOK] Mídia (${incomingMsg.type}) detectada. A descarregar...`);
@@ -781,6 +834,11 @@ router.post('/webhook', async (req, res) => {
 
         if (mediaData) {
           media = mediaData;
+          clientMimeType = mediaData.mimeType;
+          clientFileName = filename;
+
+          // Iniciar upload para o Supabase Storage em paralelo com o processamento de texto
+          const uploadPromise = uploadClientMediaToStorage(orgId, mediaData.base64, mediaData.mimeType, filename);
 
           if (incomingMsg.type === 'audio') {
             // Transcrição de áudio via Whisper/Gemini — detecta língua automaticamente
@@ -818,6 +876,12 @@ router.post('/webhook', async (req, res) => {
           } else {
             userText = caption || `(Ficheiro de ${incomingMsg.type} enviado)`;
           }
+
+          // Aguardar o upload com timeout máximo de 8 segundos
+          clientMediaUrl = await Promise.race<string | null>([
+            uploadPromise,
+            new Promise<null>(resolve => setTimeout(() => resolve(null), 8000))
+          ]);
         }
       }
     }
@@ -850,11 +914,16 @@ router.post('/webhook', async (req, res) => {
     }
 
     // ── 8. Persistir mensagem do cliente ─────────────────────────────────────
+    const clientMediaMetadata = clientMediaUrl
+      ? { mediaUrl: clientMediaUrl, fileName: clientFileName || 'ficheiro', mimeType: clientMimeType || 'application/octet-stream' }
+      : undefined;
+
     await supabaseAdmin.from('conversation_history').insert({
       org_id: orgId,
       customer_phone: fromNumber,
       sender: 'user',
       text: dbText,
+      metadata: clientMediaMetadata,
     });
 
     // ── 8b. Emitir evento em tempo real para o Live Chat ──────────────────────
@@ -866,6 +935,7 @@ router.post('/webhook', async (req, res) => {
         time:      new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         timestamp: new Date().toISOString(),
         platform:  'whatsapp',
+        metadata:  clientMediaMetadata,
       });
     } catch (_) { /* sem clientes conectados */ }
 
