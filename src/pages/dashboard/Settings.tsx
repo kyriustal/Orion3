@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useLocation } from "react-router-dom";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/src/components/ui/card";
 import { Button } from "@/src/components/ui/button";
 import { Input } from "@/src/components/ui/input";
@@ -7,9 +8,11 @@ import { Save, Loader2, Key, User, Building2, Bot, ShieldCheck, Mail, Calendar, 
 import { toast } from "sonner";
 
 export default function Settings() {
+  const location = useLocation();
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [activeTab, setActiveTab] = useState<"personal" | "company" | "ai" | "calendar" | "security">("personal");
+  const [calendarConnected, setCalendarConnected] = useState<{ google: boolean; microsoft: boolean }>({ google: false, microsoft: false });
 
   const [settings, setSettings] = useState({
     name: "",
@@ -27,11 +30,41 @@ export default function Settings() {
     use_emojis: true,
     emoji_mode: "moderate", // 'none' | 'moderate' | 'adaptive'
     calendar_provider: "none", // 'none' | 'microsoft' | 'google' | 'other'
+    google_client_id: "",
+    google_client_secret: "",
+    microsoft_client_id: "",
+    microsoft_client_secret: "",
+    calendar_link: "",
   });
 
   const [pwd, setPwd] = useState({ current: "", new: "", confirm: "" });
   const [isChangingPwd, setIsChangingPwd] = useState(false);
 
+  // Detectar redirect de OAuth e mostrar feedback
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const tab = params.get('tab');
+    const success = params.get('success');
+    const error = params.get('error');
+    if (tab === 'calendar') {
+      setActiveTab('calendar');
+      if (success === 'google_connected') {
+        toast.success('Google Calendar conectado com sucesso!');
+        setCalendarConnected(prev => ({ ...prev, google: true }));
+      } else if (success === 'microsoft_connected') {
+        toast.success('Microsoft Calendar conectado com sucesso!');
+        setCalendarConnected(prev => ({ ...prev, microsoft: true }));
+      } else if (error === 'google_denied') {
+        toast.error('A conexão com o Google Calendar foi cancelada.');
+      } else if (error === 'microsoft_denied') {
+        toast.error('A conexão com o Microsoft Calendar foi cancelada.');
+      } else if (error === 'no_code') {
+        toast.error('Erro na autenticação. Tente novamente.');
+      }
+    }
+  }, [location.search]);
+
+  // Carregar definições ao montar
   useEffect(() => {
     fetchSettings();
   }, []);
@@ -49,6 +82,18 @@ export default function Settings() {
         ...data,
         emoji_mode: data.emoji_mode || 'moderate' // garantir valor padrão
       }));
+
+      // Buscar status do calendário
+      const calRes = await fetch("/api/settings/calendar/status", {
+        headers: { "Authorization": `Bearer ${localStorage.getItem("token")}` }
+      });
+      if (calRes.ok) {
+        const calData = await calRes.json();
+        setCalendarConnected({
+          google: calData.google_connected,
+          microsoft: calData.microsoft_connected
+        });
+      }
     } catch (error: any) {
       toast.error(error.message);
     } finally {
@@ -382,21 +427,37 @@ export default function Settings() {
                 </div>
                 {(settings as any).calendar_provider === 'microsoft' && (
                   <div className="flex flex-col items-end gap-2">
-                    <div className="flex items-center gap-1.5 text-xs text-amber-600 bg-amber-50 border border-amber-200 px-2 py-1 rounded-full">
-                      <XCircle className="w-3.5 h-3.5" />
-                      Não conectado
-                    </div>
+                    {calendarConnected.microsoft ? (
+                      <div className="flex items-center gap-1.5 text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-1 rounded-full">
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        Conectado
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-1.5 text-xs text-amber-600 bg-amber-50 border border-amber-200 px-2 py-1 rounded-full">
+                        <XCircle className="w-3.5 h-3.5" />
+                        Não conectado
+                      </div>
+                    )}
                     <Button
                       size="sm"
-                      className="text-xs h-7 bg-blue-600 hover:bg-blue-700 gap-1.5"
+                      className={`text-xs h-7 gap-1.5 ${
+                        calendarConnected.microsoft
+                          ? 'bg-zinc-600 hover:bg-zinc-700'
+                          : 'bg-blue-600 hover:bg-blue-700'
+                      }`}
                       onClick={(e) => {
                         e.stopPropagation();
-                        window.open('https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id=YOUR_MS_CLIENT_ID&response_type=code&scope=Calendars.ReadWrite', '_blank');
-                        toast.info('Funcionalidade de conexão Microsoft em breve. Configure o App ID no painel Azure.');
+                        if (!(settings as any).microsoft_client_id) {
+                          toast.error("Por favor, introduza o seu Microsoft Client ID nas configurações de calendário abaixo antes de conectar.");
+                          return;
+                        }
+                        const redirectUri = `${window.location.origin}/api/settings/calendar/microsoft/callback`;
+                        const state = (settings as any).id || '';
+                        window.open(`https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id=${(settings as any).microsoft_client_id}&response_type=code&redirect_uri=${encodeURIComponent(redirectUri)}&scope=Calendars.ReadWrite&state=${state}`, '_blank');
                       }}
                     >
                       <ExternalLink className="w-3 h-3" />
-                      Conectar conta Microsoft
+                      {calendarConnected.microsoft ? 'Reconectar' : 'Conectar conta Microsoft'}
                     </Button>
                   </div>
                 )}
@@ -425,25 +486,101 @@ export default function Settings() {
                 </div>
                 {(settings as any).calendar_provider === 'google' && (
                   <div className="flex flex-col items-end gap-2">
-                    <div className="flex items-center gap-1.5 text-xs text-amber-600 bg-amber-50 border border-amber-200 px-2 py-1 rounded-full">
-                      <XCircle className="w-3.5 h-3.5" />
-                      Não conectado
-                    </div>
+                    {calendarConnected.google ? (
+                      <div className="flex items-center gap-1.5 text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-1 rounded-full">
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        Conectado
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-1.5 text-xs text-amber-600 bg-amber-50 border border-amber-200 px-2 py-1 rounded-full">
+                        <XCircle className="w-3.5 h-3.5" />
+                        Não conectado
+                      </div>
+                    )}
                     <Button
                       size="sm"
-                      className="text-xs h-7 bg-emerald-600 hover:bg-emerald-700 gap-1.5"
+                      className={`text-xs h-7 gap-1.5 ${
+                        calendarConnected.google
+                          ? 'bg-zinc-600 hover:bg-zinc-700'
+                          : 'bg-emerald-600 hover:bg-emerald-700'
+                      }`}
                       onClick={(e) => {
                         e.stopPropagation();
-                        window.open('https://accounts.google.com/o/oauth2/v2/auth?client_id=YOUR_GOOGLE_CLIENT_ID&response_type=code&redirect_uri=http://localhost:3000/api/settings/calendar/callback&scope=https://www.googleapis.com/auth/calendar', '_blank');
-                        toast.info('Funcionalidade de conexão Google em breve. Configure as credenciais OAuth no Google Cloud Console.');
+                        if (!(settings as any).google_client_id) {
+                          toast.error("Por favor, introduza o seu Google Client ID nas configurações de calendário abaixo antes de conectar.");
+                          return;
+                        }
+                        const redirectUri = `${window.location.origin}/api/settings/calendar/google/callback`;
+                        const state = (settings as any).id || '';
+                        window.open(`https://accounts.google.com/o/oauth2/v2/auth?client_id=${(settings as any).google_client_id}&response_type=code&redirect_uri=${encodeURIComponent(redirectUri)}&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcalendar&access_type=offline&prompt=consent&state=${state}`, '_blank');
                       }}
                     >
                       <ExternalLink className="w-3 h-3" />
-                      Conectar conta Google
+                      {calendarConnected.google ? 'Reconectar' : 'Conectar conta Google'}
                     </Button>
                   </div>
                 )}
               </div>
+
+              {/* Se 'google' selecionado, mostrar campo de Client ID */}
+              {(settings as any).calendar_provider === 'google' && (
+                <Card className="border-emerald-200 bg-emerald-50/50">
+                  <CardContent className="pt-4 space-y-3">
+                    <div className="space-y-2">
+                      <Label className="text-xs font-bold text-emerald-700">Google Client ID (OAuth 2.0)</Label>
+                      <Input
+                        placeholder="Ex: 123456-abcdef.apps.googleusercontent.com"
+                        className="border-emerald-200 focus-visible:ring-emerald-400"
+                        value={(settings as any).google_client_id || ''}
+                        onChange={(e) => setSettings({ ...settings, google_client_id: e.target.value } as any)}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-xs font-bold text-emerald-700">Google Client Secret</Label>
+                      <Input
+                        type="password"
+                        placeholder="Sua chave secreta do cliente OAuth"
+                        className="border-emerald-200 focus-visible:ring-emerald-400"
+                        value={(settings as any).google_client_secret || ''}
+                        onChange={(e) => setSettings({ ...settings, google_client_secret: e.target.value } as any)}
+                      />
+                      <p className="text-[10px] text-emerald-600">
+                        Crie as credenciais no Google Cloud Console e adicione <strong>{window.location.origin}/api/settings/calendar/google/callback</strong> como URI de redirecionamento autorizado.
+                      </p>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Se 'microsoft' selecionado, mostrar campo de Client ID */}
+              {(settings as any).calendar_provider === 'microsoft' && (
+                <Card className="border-blue-200 bg-blue-50/50">
+                  <CardContent className="pt-4 space-y-3">
+                    <div className="space-y-2">
+                      <Label className="text-xs font-bold text-blue-700">Microsoft Application (client) ID</Label>
+                      <Input
+                        placeholder="Ex: abcdef12-3456-7890-abcd-ef1234567890"
+                        className="border-blue-200 focus-visible:ring-blue-400"
+                        value={(settings as any).microsoft_client_id || ''}
+                        onChange={(e) => setSettings({ ...settings, microsoft_client_id: e.target.value } as any)}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-xs font-bold text-blue-700">Microsoft Client Secret</Label>
+                      <Input
+                        type="password"
+                        placeholder="Segredo do cliente (Valor da chave secreta)"
+                        className="border-blue-200 focus-visible:ring-blue-400"
+                        value={(settings as any).microsoft_client_secret || ''}
+                        onChange={(e) => setSettings({ ...settings, microsoft_client_secret: e.target.value } as any)}
+                      />
+                      <p className="text-[10px] text-blue-600">
+                        Registe a aplicação no portal Microsoft Entra (Azure AD) e adicione <strong>{window.location.origin}/api/settings/calendar/microsoft/callback</strong> como URI de redirecionamento autorizado.
+                      </p>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
 
               {/* Outras plataformas */}
               <div

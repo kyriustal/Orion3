@@ -1,6 +1,12 @@
 -- Adicionar colunas de calendário à tabela organizations se não existirem
 ALTER TABLE organizations ADD COLUMN IF NOT EXISTS calendar_provider VARCHAR(50) DEFAULT 'none';
 ALTER TABLE organizations ADD COLUMN IF NOT EXISTS calendar_link TEXT;
+ALTER TABLE organizations ADD COLUMN IF NOT EXISTS google_client_id TEXT;
+ALTER TABLE organizations ADD COLUMN IF NOT EXISTS google_client_secret TEXT;
+ALTER TABLE organizations ADD COLUMN IF NOT EXISTS google_refresh_token TEXT;
+ALTER TABLE organizations ADD COLUMN IF NOT EXISTS microsoft_client_id TEXT;
+ALTER TABLE organizations ADD COLUMN IF NOT EXISTS microsoft_client_secret TEXT;
+ALTER TABLE organizations ADD COLUMN IF NOT EXISTS microsoft_refresh_token TEXT;
 
 -- Criar a tabela bookings se não existir
 CREATE TABLE IF NOT EXISTS bookings (
