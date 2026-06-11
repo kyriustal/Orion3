@@ -78,22 +78,29 @@ export default function DashboardLayout() {
       try {
         const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
         const ctx = new AudioContext();
-        const osc = ctx.createOscillator();
-        const gainNode = ctx.createGain();
         
-        osc.type = 'sine';
-        // Frequência suave (ding)
-        osc.frequency.setValueAtTime(880, ctx.currentTime);
-        osc.frequency.exponentialRampToValueAtTime(1760, ctx.currentTime + 0.1);
+        // Freqs para um arpejo elegante e longo (Major 7th chord: F4, A4, C5, E5)
+        const notes = [349.23, 440.00, 523.25, 659.25];
+        const duration = 2.0; // longo
         
-        gainNode.gain.setValueAtTime(0.1, ctx.currentTime);
-        gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
-        
-        osc.connect(gainNode);
-        gainNode.connect(ctx.destination);
-        
-        osc.start();
-        osc.stop(ctx.currentTime + 0.3);
+        notes.forEach((freq, index) => {
+          const osc = ctx.createOscillator();
+          const gainNode = ctx.createGain();
+          
+          osc.type = 'triangle'; // timbre mais suave e elegante
+          osc.frequency.setValueAtTime(freq, ctx.currentTime + index * 0.15); // arpejo cascata
+          
+          // Suavizar o som nas bordas
+          gainNode.gain.setValueAtTime(0, ctx.currentTime + index * 0.15);
+          gainNode.gain.linearRampToValueAtTime(0.08, ctx.currentTime + index * 0.15 + 0.05); // fade in
+          gainNode.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + index * 0.15 + duration); // fade out longo e suave
+          
+          osc.connect(gainNode);
+          gainNode.connect(ctx.destination);
+          
+          osc.start(ctx.currentTime + index * 0.15);
+          osc.stop(ctx.currentTime + index * 0.15 + duration);
+        });
       } catch (e) {
         console.warn('Audio play failed', e);
       }
