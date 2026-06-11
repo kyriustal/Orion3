@@ -3,13 +3,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter }
 import { Button } from "@/src/components/ui/button";
 import { Input } from "@/src/components/ui/input";
 import { Label } from "@/src/components/ui/label";
-import { Save, Loader2, Key, User, Building2, Bot, ShieldCheck, Mail } from "lucide-react";
+import { Save, Loader2, Key, User, Building2, Bot, ShieldCheck, Mail, Calendar, ExternalLink, CheckCircle2, XCircle, Clock } from "lucide-react";
 import { toast } from "sonner";
 
 export default function Settings() {
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  const [activeTab, setActiveTab] = useState<"personal" | "company" | "ai" | "security">("personal");
+  const [activeTab, setActiveTab] = useState<"personal" | "company" | "ai" | "calendar" | "security">("personal");
 
   const [settings, setSettings] = useState({
     name: "",
@@ -25,7 +25,8 @@ export default function Settings() {
     product_description: "",
     chatbot_name: "",
     use_emojis: true,
-    emoji_mode: "moderate" // 'none' | 'moderate' | 'adaptive'
+    emoji_mode: "moderate", // 'none' | 'moderate' | 'adaptive'
+    calendar_provider: "none", // 'none' | 'microsoft' | 'google' | 'other'
   });
 
   const [pwd, setPwd] = useState({ current: "", new: "", confirm: "" });
@@ -120,6 +121,7 @@ export default function Settings() {
     { id: "personal", label: "Dados Pessoais", icon: User },
     { id: "company", label: "Empresa", icon: Building2 },
     { id: "ai", label: "Chatbot (IA)", icon: Bot },
+    { id: "calendar", label: "Calendário", icon: Calendar },
     { id: "security", label: "Segurança", icon: ShieldCheck },
   ] as const;
 
@@ -130,7 +132,7 @@ export default function Settings() {
           <h2 className="text-2xl font-bold tracking-tight text-zinc-900">Configurações</h2>
           <p className="text-zinc-500">Gerencie sua conta e as preferências da Orion.</p>
         </div>
-        <Button onClick={handleSave} disabled={isSaving || activeTab === 'security'} className="bg-emerald-600 hover:bg-emerald-700 h-11 px-8">
+        <Button onClick={handleSave} disabled={isSaving || activeTab === 'security' || activeTab === 'calendar'} className="bg-emerald-600 hover:bg-emerald-700 h-11 px-8">
           {isSaving ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}
           Salvar Dados
         </Button>
@@ -340,6 +342,182 @@ export default function Settings() {
               </div>
             </CardContent>
           </Card>
+        )}
+
+        {activeTab === "calendar" && (
+          <div className="space-y-6 max-w-2xl">
+            <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl px-4 py-3">
+              <div className="flex items-start gap-3">
+                <Calendar className="w-5 h-5 text-blue-600 mt-0.5 shrink-0" />
+                <div>
+                  <p className="text-sm font-semibold text-blue-800">Calendário para Agendamentos Automáticos</p>
+                  <p className="text-xs text-blue-600 mt-1">
+                    Quando a IA ou um atendente humano marcar um agendamento com um cliente, os eventos serão criados automaticamente no calendário selecionado.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              {/* Microsoft Outlook / Teams */}
+              <div
+                onClick={() => setSettings({ ...settings, calendar_provider: 'microsoft' })}
+                className={`flex items-center gap-4 p-4 rounded-xl border-2 cursor-pointer transition-all ${
+                  (settings as any).calendar_provider === 'microsoft'
+                    ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-500'
+                    : 'border-zinc-200 bg-white hover:border-zinc-300 hover:bg-zinc-50'
+                }`}
+              >
+                <div className={`w-5 h-5 rounded-full border-2 flex-shrink-0 transition-all ${
+                  (settings as any).calendar_provider === 'microsoft' ? 'border-blue-500 bg-blue-500' : 'border-zinc-300'
+                }`} />
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xl">🪟</span>
+                    <p className={`text-sm font-semibold ${ (settings as any).calendar_provider === 'microsoft' ? 'text-blue-800' : 'text-zinc-800' }`}>
+                      Microsoft Outlook / Teams
+                    </p>
+                  </div>
+                  <p className="text-xs text-zinc-500 mt-0.5">Crie eventos no Outlook, Teams e Calendário Microsoft 365.</p>
+                </div>
+                {(settings as any).calendar_provider === 'microsoft' && (
+                  <div className="flex flex-col items-end gap-2">
+                    <div className="flex items-center gap-1.5 text-xs text-amber-600 bg-amber-50 border border-amber-200 px-2 py-1 rounded-full">
+                      <XCircle className="w-3.5 h-3.5" />
+                      Não conectado
+                    </div>
+                    <Button
+                      size="sm"
+                      className="text-xs h-7 bg-blue-600 hover:bg-blue-700 gap-1.5"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        window.open('https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id=YOUR_MS_CLIENT_ID&response_type=code&scope=Calendars.ReadWrite', '_blank');
+                        toast.info('Funcionalidade de conexão Microsoft em breve. Configure o App ID no painel Azure.');
+                      }}
+                    >
+                      <ExternalLink className="w-3 h-3" />
+                      Conectar conta Microsoft
+                    </Button>
+                  </div>
+                )}
+              </div>
+
+              {/* Google Calendar */}
+              <div
+                onClick={() => setSettings({ ...settings, calendar_provider: 'google' })}
+                className={`flex items-center gap-4 p-4 rounded-xl border-2 cursor-pointer transition-all ${
+                  (settings as any).calendar_provider === 'google'
+                    ? 'border-emerald-500 bg-emerald-50 ring-1 ring-emerald-500'
+                    : 'border-zinc-200 bg-white hover:border-zinc-300 hover:bg-zinc-50'
+                }`}
+              >
+                <div className={`w-5 h-5 rounded-full border-2 flex-shrink-0 transition-all ${
+                  (settings as any).calendar_provider === 'google' ? 'border-emerald-500 bg-emerald-500' : 'border-zinc-300'
+                }`} />
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xl">📅</span>
+                    <p className={`text-sm font-semibold ${ (settings as any).calendar_provider === 'google' ? 'text-emerald-800' : 'text-zinc-800' }`}>
+                      Google Calendar
+                    </p>
+                  </div>
+                  <p className="text-xs text-zinc-500 mt-0.5">Sincronize com o Google Calendar e Google Meet automaticamente.</p>
+                </div>
+                {(settings as any).calendar_provider === 'google' && (
+                  <div className="flex flex-col items-end gap-2">
+                    <div className="flex items-center gap-1.5 text-xs text-amber-600 bg-amber-50 border border-amber-200 px-2 py-1 rounded-full">
+                      <XCircle className="w-3.5 h-3.5" />
+                      Não conectado
+                    </div>
+                    <Button
+                      size="sm"
+                      className="text-xs h-7 bg-emerald-600 hover:bg-emerald-700 gap-1.5"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        window.open('https://accounts.google.com/o/oauth2/v2/auth?scope=https://www.googleapis.com/auth/calendar', '_blank');
+                        toast.info('Funcionalidade de conexão Google em breve. Configure as credenciais OAuth no Google Cloud Console.');
+                      }}
+                    >
+                      <ExternalLink className="w-3 h-3" />
+                      Conectar conta Google
+                    </Button>
+                  </div>
+                )}
+              </div>
+
+              {/* Outras plataformas */}
+              <div
+                onClick={() => setSettings({ ...settings, calendar_provider: 'other' })}
+                className={`flex items-center gap-4 p-4 rounded-xl border-2 cursor-pointer transition-all ${
+                  (settings as any).calendar_provider === 'other'
+                    ? 'border-violet-500 bg-violet-50 ring-1 ring-violet-500'
+                    : 'border-zinc-200 bg-white hover:border-zinc-300 hover:bg-zinc-50'
+                }`}
+              >
+                <div className={`w-5 h-5 rounded-full border-2 flex-shrink-0 transition-all ${
+                  (settings as any).calendar_provider === 'other' ? 'border-violet-500 bg-violet-500' : 'border-zinc-300'
+                }`} />
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xl">🔗</span>
+                    <p className={`text-sm font-semibold ${ (settings as any).calendar_provider === 'other' ? 'text-violet-800' : 'text-zinc-800' }`}>
+                      Outra Plataforma / Manual
+                    </p>
+                  </div>
+                  <p className="text-xs text-zinc-500 mt-0.5">Calendly, Cal.com, HubSpot, iCal, ou qualquer plataforma via link de agendamento personalizado.</p>
+                </div>
+                {(settings as any).calendar_provider === 'other' && (
+                  <div className="flex items-center gap-1.5 text-xs text-violet-700 bg-violet-50 border border-violet-200 px-2 py-1 rounded-full">
+                    <Clock className="w-3.5 h-3.5" />
+                    Configurar link
+                  </div>
+                )}
+              </div>
+
+              {/* Se 'other' selecionado, mostrar campo de link */}
+              {(settings as any).calendar_provider === 'other' && (
+                <Card className="border-violet-200 bg-violet-50/50">
+                  <CardContent className="pt-4 space-y-3">
+                    <div className="space-y-2">
+                      <Label className="text-xs font-bold text-violet-700">Link de Agendamento Externo</Label>
+                      <Input
+                        placeholder="Ex: https://calendly.com/seu-negocio ou https://cal.com/user/meeting"
+                        className="border-violet-200 focus-visible:ring-violet-400"
+                        value={(settings as any).calendar_link || ''}
+                        onChange={(e) => setSettings({ ...settings, calendar_link: e.target.value } as any)}
+                      />
+                      <p className="text-[10px] text-violet-500">A IA enviará este link ao cliente quando um agendamento for solicitado.</p>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Desativado */}
+              <div
+                onClick={() => setSettings({ ...settings, calendar_provider: 'none' })}
+                className={`flex items-center gap-4 p-3 rounded-xl border cursor-pointer transition-all ${
+                  (settings as any).calendar_provider === 'none' || !(settings as any).calendar_provider
+                    ? 'border-zinc-300 bg-zinc-50 ring-1 ring-zinc-300'
+                    : 'border-zinc-200 bg-white hover:border-zinc-300'
+                }`}
+              >
+                <div className={`w-4 h-4 rounded-full border-2 flex-shrink-0 ${
+                  (settings as any).calendar_provider === 'none' || !(settings as any).calendar_provider ? 'border-zinc-500 bg-zinc-500' : 'border-zinc-300'
+                }`} />
+                <div>
+                  <p className="text-sm font-medium text-zinc-600">🚫 Sem calendário (desativado)</p>
+                  <p className="text-xs text-zinc-400">Os agendamentos serão notificados manualmente via painel de Live Chat.</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end pt-2">
+              <Button onClick={handleSave} disabled={isSaving} className="bg-emerald-600 hover:bg-emerald-700 h-10 px-6">
+                {isSaving ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}
+                Guardar Preferência
+              </Button>
+            </div>
+          </div>
         )}
 
         {activeTab === "security" && (

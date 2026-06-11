@@ -117,6 +117,15 @@ export default function DashboardLayout() {
       });
     });
 
+    sock.on("proposal_alert", (data: any) => {
+      playNotificationSound();
+      toast.warning(`📎 Proposta Comercial Recebida`, {
+        description: `O cliente ${data.phone} enviou uma proposta comercial (${data.platform}).`,
+        duration: 10000,
+        action: { label: 'Abrir Chat', onClick: () => window.location.href = '/dashboard/live-chat' }
+      });
+    });
+
     return () => {
       sock.disconnect();
     };

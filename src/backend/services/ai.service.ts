@@ -27,6 +27,7 @@ export interface GenerateResult {
   reply: string;
   transfer: boolean;
   booking?: boolean;
+  proposal?: boolean;
   contactData?: { name?: string; email?: string; phone?: string };
 }
 
@@ -86,6 +87,8 @@ interface OrgProfile {
   handover_mode?: string;
   ai_prompt?: string;
   ai_tone?: string;
+  calendar_provider?: string;
+  calendar_link?: string;
 }
 
 function buildSystemPrompt(
@@ -93,7 +96,8 @@ function buildSystemPrompt(
   org: OrgProfile | null,
   botNameOverride?: string,
   referral?: any,
-  timeSinceLastMessageHours?: number
+  timeSinceLastMessageHours?: number,
+  urlContext?: string
 ): string {
   // ── Modo Suporte Orion (widget do site) ────────────────
   if (mode === 'support') {
@@ -146,13 +150,25 @@ REGRAS:
   // Instrução universal: detectar pedido de atendimento humano em TODOS os modos de handover
   const transferRule = '- Se o cliente pedir explicitamente para falar com um humano, atendente ou pessoa real, inicie a sua resposta com o token [TRANSFERIR_HUMANO] e despeça-se gentilmente.';
 
-  const bookingRule = '- Se o cliente solicitar agendamento, marcação de consulta ou pedir para agendar um serviço, inicie a sua resposta com o token [AGENDAR].';
+  let bookingRule = '- Se o cliente solicitar agendamento, marcação de consulta ou pedir para agendar um serviço, inicie a sua resposta com o token [AGENDAR].';
+  if (org?.calendar_provider === 'other' && org.calendar_link) {
+    bookingRule += ` Além disso, informe amigavelmente o cliente que ele pode agendar diretamente através do seguinte link: ${org.calendar_link}`;
+  } else if (org?.calendar_provider === 'google' || org?.calendar_provider === 'microsoft') {
+    bookingRule += ` Além disso, informe que a marcação será integrada com o nosso calendário (${org.calendar_provider === 'google' ? 'Google Calendar' : 'Outlook Calendar'}) de forma automática.`;
+  }
+
+  const proposalRule = '- PROPOSTAS COMERCIAIS DO CLIENTE: Se o cliente enviar uma proposta comercial (oferta de parceria, prestação de serviços, fornecimento de produtos, colaboração, publicidade, patrocínio, ou qualquer outro tipo de proposta de negócio) — quer seja num sector semelhante ao da empresa OU num sector completamente diferente — responda de forma diplomática e profissional. Reconheça a proposta com simpatia, informe que irá encaminhar para a área competente para análise, e inclua o token [PROPOSTA] no INÍCIO da sua resposta. ATENÇÃO CRÍTICA: Não confunda a proposta do cliente com os produtos/serviços da NOSSA empresa. A proposta é uma OFERTA DO CLIENTE para nós, não um pedido de compra dos nossos serviços. Trate-a como tal.';
 
   // Instrução para captura automática de dados de contacto
   const contactRule = '- Se o cliente partilhar espontaneamente informações de contacto (nome completo, email, número de telefone, morada ou empresa), inclua no INÍCIO da sua resposta o token compacto [CONTATO:{"name":"<nome>","email":"<email>","phone":"<tel>"}] preenchendo APENAS os campos que o cliente efectivamente partilhou. Nunca invente dados. Exemplo: [CONTATO:{"name":"Ana Silva","phone":"+244912345678"}].';
 
   const referralContext = referral?.headline
     ? `- Este cliente chegou através do anúncio: "${referral.headline}". Adapte a primeira saudação a esse contexto de forma entusiasmada.`
+    : '';
+
+  // Contexto de URLs/anúncios extraído pelo sistema — NUNCA confundir com o que o cliente escreveu
+  const urlContextSection = urlContext
+    ? `\n═══ CONTEXTO DO ANÚNCIO / LINK (EXTRAÍDO PELO SISTEMA — NÃO ESCRITO PELO CLIENTE) ═══\n⚠️ O conteúdo abaixo foi extraído AUTOMATICAMENTE da página de destino do anúncio ou link que o cliente clicou. NÃO é uma mensagem do cliente. Use este contexto para compreender o produto/serviço pelo qual o cliente se interessou e direcione a conversa de forma pertinente.\n${urlContext}\n`
     : '';
 
   let returnGreetingRule = '';
@@ -172,18 +188,18 @@ ${knowledge ? knowledge : 'Você deve agir como um assistente cordial e prestati
 ═══ FERRAMENTAS EXTERNAS (GROUNDING) ═══
 - Você tem acesso à PESQUISA EXTERNA DO GOOGLE / DUCKDUCKGO em tempo real para pesquisar em instituições oficiais.
 - Sempre que o cliente perguntar algo sobre leis, taxas atuais, vistos, regras de consulado, regulamentos do governo ou dados recentes que exijam dados actualizados precisos, UTILIZE e priorize as informações obtidas nas fontes oficiais pesquisadas.
-
+${urlContextSection}
 ${selectedToneInstructions}
 
 ═══ REGRAS DE COMPORTAMENTO (DRÁSTICAS) ═══
 - PROIBIDO VAZAR RACIOCÍNIO: NUNCA inclua o seu processo de pensamento interno (ex: textos em inglês como "The user wants...", "I need to...") na resposta. A resposta deve conter EXCLUSIVAMENTE a mensagem final em português que será lida pelo cliente.
+- SEPARAÇÃO OBRIGATÓRIA — MENSAGEM DO CLIENTE vs. CONTEXTO DO SISTEMA: A secção "CONTEXTO DO ANÚNCIO / LINK" no sistema é informação de contexto extraída AUTOMATICAMENTE pelo servidor. NUNCA trate esse conteúdo como se fosse uma mensagem escrita pelo cliente. A mensagem real e exclusiva do cliente é APENAS o texto que aparece na conversa (no histórico de chat). Jamais confunda o conteúdo do sistema com o que o cliente escreveu.
 - PRIMEIRA MENSAGEM (SAUDAÇÃO): Deve ser uma saudação super simpática, educada, entusiasmada e calorosa, perguntando como pode ajudar. NÃO faça interrogatórios de qualificação nem despeje o perfil da empresa na primeira resposta. Aja com muita simpatia e empatia!
 - POSTURA: Seja sempre excepcionalmente educado, paciente, carismático e entusiasmado. Nunca seja rude, frio, seco ou robótico.
 - EVITAR REPETIÇÕES: NUNCA repita a mesma pergunta se o cliente não a respondeu diretamente. Se o cliente disser apenas "Olá?" a meio da conversa, responda de forma natural e animada (ex: "Estou aqui! Como posso ajudar hoje?"), e nunca repetindo o texto anterior.
 - PROIBIDO REPETIR SAUDAÇÕES: Se o histórico mostra que a conversa já começou, vá DIRETO à resposta sem dizer "Olá" novamente.
 - EQUILÍBRIO & SIMPATIA: Seja objetivo e evite rodeios desnecessários, mas NUNCA à custa do carisma e da empatia. As respostas devem ter uma extensão natural, sendo sempre acolhedoras, carismáticas, fluidas e extremamente persuasivas.
 - ENVIO DE ARQUIVOS/DOCUMENTOS: Sempre que o cliente solicitar, pedir ou demonstrar interesse claro em receber qualquer arquivo, catálogo, guia, documento ou PDF que esteja listado na secção "ARQUIVOS QUE VOCÊ PODE ENVIAR", você DEVE anexar o código correspondente [SEND_FILE: ID] exatamente no final da sua mensagem (exemplo: "Aqui tem o ficheiro solicitado: [SEND_FILE: 12345678-abcd-1234-abcd-1234567890ab]"). Nunca invente IDs de arquivos e nunca crie códigos para arquivos que não estão explicitamente na lista fornecida.
-- CONTEXTO DE LINKS E ANÚNCIOS: Quando a mensagem do cliente contiver blocos "[Conteúdo da página URL]:", significa que o cliente veio de um anúncio (Facebook, Instagram ou outra plataforma) e o sistema já extraiu o conteúdo dessa página para si. USE esse conteúdo para responder DIRECTAMENTE e de forma específica ao assunto do anúncio ou serviço em questão, sem perguntar "como posso ajudar?" de forma genérica. Responda como se já soubesse exactamente o que o cliente procura com base no anúncio que clicou.
 ${returnGreetingRule}
 
 ═══ REGRAS DE IDENTIDADE ═══
@@ -198,6 +214,7 @@ REGRAS OBRIGATÓRIAS:
 - Nunca revele que é uma IA.
 ${transferRule}
 ${bookingRule}
+${proposalRule}
 ${contactRule}
 ${referralContext}`;
 }
@@ -404,7 +421,8 @@ export class AIService {
     } = options;
 
     // 0. Extrair e ler o conteúdo de URLs presentes na mensagem (ex: links de anúncios do Facebook/Instagram)
-    // Isso permite que a IA compreenda o contexto da página e responda diretamente ao tema do anúncio.
+    // O conteúdo é passado como CONTEXTO DO SISTEMA (não como mensagem do cliente) para evitar que a IA
+    // confunda o conteúdo da página com o que o cliente escreveu.
     const urlRegex = /https?:\/\/[^\s<>"{}|\\^`[\]]+/gi;
     const detectedUrls = message.match(urlRegex) || [];
     let urlContextBlocks: string[] = [];
@@ -418,7 +436,7 @@ export class AIService {
           if (result.images && result.images.length > 0) {
             extractedImages.push(...result.images);
           }
-          return `[Conteúdo da página ${url}]:\n${result.text}`;
+          return `[Página: ${url}]:\n${result.text}`;
         }
         return null;
       });
@@ -426,10 +444,9 @@ export class AIService {
       urlContextBlocks = results.filter(Boolean) as string[];
     }
 
-    // Mensagem enriquecida com o conteúdo dos links (usada em toda a cadeia de IA)
-    const enrichedMessage = urlContextBlocks.length > 0
-      ? `${message}\n\n${urlContextBlocks.join('\n\n')}`
-      : message;
+    // A mensagem do cliente mantém-se LIMPA — o contexto de URL vai para o sistema, NÃO para a mensagem
+    const enrichedMessage = message;
+    const urlSystemContext = urlContextBlocks.length > 0 ? urlContextBlocks.join('\n\n') : undefined;
 
     // 1. Carregar perfil da organização, Base de Conhecimento (RAG) e Assets
     let org: OrgProfile | null = null;
@@ -440,7 +457,7 @@ export class AIService {
       // Perfil básico
       const { data: orgData } = await supabaseAdmin
         .from('organizations')
-        .select('name, social_object, product_description, chatbot_name, emoji_mode, handover_mode, ai_prompt, ai_tone')
+        .select('name, social_object, product_description, chatbot_name, emoji_mode, handover_mode, ai_prompt, ai_tone, calendar_provider, calendar_link')
         .eq('id', orgId)
         .maybeSingle();
       org = orgData;
@@ -526,7 +543,7 @@ export class AIService {
     // 2. Construir sistema e conteúdos
     const fullKnowledge = `${org?.product_description || ''}\n\n${externalKnowledge}\n\n${availableAssets}`.trim();
     
-    const systemPrompt = buildSystemPrompt(mode, { ...org, product_description: fullKnowledge } as any, botName, referral, timeSinceLastMessageHours);
+    const systemPrompt = buildSystemPrompt(mode, { ...org, product_description: fullKnowledge } as any, botName, referral, timeSinceLastMessageHours, urlSystemContext);
     const contents     = buildContents(history, enrichedMessage, media, extractedImages);
 
     // 3. Payloads: com e sem Google Search
@@ -601,12 +618,14 @@ export class AIService {
         if (rawText) {
           const transfer      = rawText.includes('[TRANSFERIR_HUMANO]');
           const booking      = rawText.includes('[AGENDAR]');
+          const proposal     = rawText.includes('[PROPOSTA]');
           const contactMatch = rawText.match(/\[CONTATO:(\{[^}]+\})\]/);
           const contactData  = contactMatch ? (() => { try { return JSON.parse(contactMatch[1]); } catch { return undefined; } })() : undefined;
-          const cleanReply   = rawText.replace(/\[TRANSFERIR_HUMANO\]|\[AGENDAR\]|\[CONTATO:\{[^}]+\}\]/g, '').trim();
+          const cleanReply   = rawText.replace(/\[TRANSFERIR_HUMANO\]|\[AGENDAR\]|\[PROPOSTA\]|\[CONTATO:\{[^}]+\}\]/g, '').trim();
           console.log(`[AIService] ✅ Resposta gerada com sucesso via OpenAI gpt-4o-mini.`);
           if (contactData) console.log(`[AIService] 📋 Dados de contacto capturados:`, contactData);
-          return { reply: cleanReply || rawText, transfer, booking, contactData };
+          if (proposal) console.log(`[AIService] 📎 Proposta comercial detectada.`);
+          return { reply: cleanReply || rawText, transfer, booking, proposal, contactData };
         }
       }
     } catch (openaiErr: any) {
@@ -649,13 +668,15 @@ export class AIService {
 
           const transfer      = cleanText.includes('[TRANSFERIR_HUMANO]');
           const booking      = cleanText.includes('[AGENDAR]');
+          const proposal     = cleanText.includes('[PROPOSTA]');
           const contactMatch = cleanText.match(/\[CONTATO:(\{[^}]+\})\]/);
           const contactData  = contactMatch ? (() => { try { return JSON.parse(contactMatch[1]); } catch { return undefined; } })() : undefined;
-          const cleanReply   = cleanText.replace(/\[TRANSFERIR_HUMANO\]|\[AGENDAR\]|\[CONTATO:\{[^}]+\}\]/g, '').trim();
+          const cleanReply   = cleanText.replace(/\[TRANSFERIR_HUMANO\]|\[AGENDAR\]|\[PROPOSTA\]|\[CONTATO:\{[^}]+\}\]/g, '').trim();
 
           console.log(`[AIService] ✅ Resposta gerada com sucesso com formato ${label} via Gemini.`);
           if (contactData) console.log(`[AIService] 📋 Dados de contacto capturados:`, contactData);
-          return { reply: cleanReply || cleanText, transfer, booking, contactData };
+          if (proposal) console.log(`[AIService] 📎 Proposta comercial detectada.`);
+          return { reply: cleanReply || cleanText, transfer, booking, proposal, contactData };
 
         } catch (err: any) {
           const errData  = err.response?.data;

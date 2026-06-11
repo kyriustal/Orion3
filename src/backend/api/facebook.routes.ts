@@ -187,13 +187,19 @@ router.post('/webhook', async (req, res) => {
         mode: 'simulation',
       });
 
-      // ── Disparar notificações de Booking ou Handover ──
-      if (aiResult.transfer || aiResult.booking) {
-        const alertType  = aiResult.transfer ? 'handover' : 'booking';
-        const alertTitle = aiResult.transfer ? '🚨 Pedido de Atendimento Humano' : '📅 Novo Pedido de Agendamento';
+      // ── Disparar notificações de Booking, Handover ou Proposal ──
+      if (aiResult.transfer || aiResult.booking || aiResult.proposal) {
+        const alertType  = aiResult.transfer ? 'handover' : aiResult.booking ? 'booking' : 'proposal';
+        const alertTitle = aiResult.transfer 
+          ? '🚨 Pedido de Atendimento Humano' 
+          : aiResult.booking
+          ? '📅 Novo Pedido de Agendamento'
+          : '📎 Proposta Comercial Recebida';
         const alertBody  = aiResult.transfer
           ? `Mensageiro (${senderId}) quer falar com um assistente.`
-          : `Mensageiro (${senderId}) solicitou um agendamento.`;
+          : aiResult.booking
+          ? `Mensageiro (${senderId}) solicitou um agendamento.`
+          : `Mensageiro (${senderId}) enviou uma proposta comercial.`;
         
         // 1. Enviar email para admins/owners
         EmailService.sendAlertNotification(orgId, alertType, senderId, 'Cliente Facebook', userText).catch(e => console.error('[ALERTA FB] Erro ao enviar email:', e.message));
@@ -208,7 +214,8 @@ router.post('/webhook', async (req, res) => {
 
         // 3. Emitir evento Socket para notificação no painel (browser aberto)
         try {
-          getIo().to(`org:${orgId}`).emit(alertType === 'handover' ? 'handover_alert' : 'booking_alert', {
+          const socketEvent = alertType === 'handover' ? 'handover_alert' : alertType === 'booking' ? 'booking_alert' : 'proposal_alert';
+          getIo().to(`org:${orgId}`).emit(socketEvent, {
             phone: senderId,
             message: userText,
             type: alertType,

@@ -546,13 +546,19 @@ async function triggerAIResponse(params: {
       throw new Error('Resposta da IA vazia.');
     }
 
-    // ── Disparar notificações de Booking ou Handover ──
-    if (aiResult.transfer || aiResult.booking) {
-      const alertType = aiResult.transfer ? 'handover' : 'booking';
-      const alertTitle = aiResult.transfer ? '🚨 Pedido de Atendimento Humano' : '📅 Novo Pedido de Agendamento';
+    // ── Disparar notificações de Booking, Handover ou Proposal ──
+    if (aiResult.transfer || aiResult.booking || aiResult.proposal) {
+      const alertType = aiResult.transfer ? 'handover' : aiResult.booking ? 'booking' : 'proposal';
+      const alertTitle = aiResult.transfer 
+        ? '🚨 Pedido de Atendimento Humano' 
+        : aiResult.booking
+        ? '📅 Novo Pedido de Agendamento'
+        : '📎 Proposta Comercial Recebida';
       const alertBody  = aiResult.transfer
         ? `O cliente ${fromNumber} quer falar com um assistente.`
-        : `O cliente ${fromNumber} solicitou um agendamento.`;
+        : aiResult.booking
+        ? `O cliente ${fromNumber} solicitou um agendamento.`
+        : `O cliente ${fromNumber} enviou uma proposta comercial.`;
       
       // 1. Enviar email para admins/owners
       EmailService.sendAlertNotification(orgId, alertType, fromNumber, 'Cliente', message).catch(e => console.error('[ALERTA] Erro ao enviar email:', e.message));
@@ -567,7 +573,8 @@ async function triggerAIResponse(params: {
 
       // 3. Emitir evento Socket para notificação sonora no painel (browser aberto)
       try {
-        getIo().to(`org:${orgId}`).emit(alertType === 'handover' ? 'handover_alert' : 'booking_alert', {
+        const socketEvent = alertType === 'handover' ? 'handover_alert' : alertType === 'booking' ? 'booking_alert' : 'proposal_alert';
+        getIo().to(`org:${orgId}`).emit(socketEvent, {
           phone: fromNumber,
           message: message,
           type: alertType,
