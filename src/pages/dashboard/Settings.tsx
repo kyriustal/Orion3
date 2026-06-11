@@ -434,7 +434,7 @@ export default function Settings() {
                       className="text-xs h-7 bg-emerald-600 hover:bg-emerald-700 gap-1.5"
                       onClick={(e) => {
                         e.stopPropagation();
-                        window.open('https://accounts.google.com/o/oauth2/v2/auth?scope=https://www.googleapis.com/auth/calendar', '_blank');
+                        window.open('https://accounts.google.com/o/oauth2/v2/auth?client_id=YOUR_GOOGLE_CLIENT_ID&response_type=code&redirect_uri=http://localhost:3000/api/settings/calendar/callback&scope=https://www.googleapis.com/auth/calendar', '_blank');
                         toast.info('Funcionalidade de conexão Google em breve. Configure as credenciais OAuth no Google Cloud Console.');
                       }}
                     >
