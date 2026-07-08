@@ -102,8 +102,77 @@ export function getUniqueDeepseekApiKeys(): string[] {
     allKeys.push(...parts);
   });
 
-  return Array.from(new Set(allKeys.filter(k => k.length > 10)));
+  const keys = Array.from(new Set(allKeys.filter(k => k.length > 10)));
+
+  // Aviso de configuração no arranque
+  if (keys.length === 0) {
+    console.warn('[AIService] ⚠️  DEEPSEEK_API_KEY não configurada — Deepseek desativado como motor principal!');
+  } else {
+    console.log(`[AIService] ✅ Deepseek configurado com ${keys.length} chave(s).`);
+  }
+
+  return keys;
 }
+
+// Verificação de configuração no arranque do módulo
+(function checkAIConfig() {
+  const dsKeys = [
+    process.env.DEEPSEEK_API_KEY,
+    process.env.DEEPSEEK_API_KEY_2,
+  ].filter(k => k && k.trim().length > 10);
+  const geminiKeys = [
+    process.env.GEMINI_API_KEY,
+    process.env.GEMINI_API_KEY_2,
+  ].filter(k => k && k.trim().length > 10);
+  console.log(`[AIService] 🔑 Configuração: Deepseek=${dsKeys.length} chave(s) | Gemini=${geminiKeys.length} chave(s) | OpenAI=${process.env.OPENAI_API_KEY ? '1 chave' : 'não configurado'}`);
+})();
+
+/**
+ * Executa uma requisição POST para a API do Gemini com rotação de chaves e retentativas em caso de falha de quota/autenticação.
+ */
+export async function postGeminiWithRetry(
+  endpointPath: string,
+  payload: any,
+  timeout = 30000
+): Promise<any> {
+  const keys = getUniqueApiKeys();
+  if (keys.length === 0) {
+    throw new Error('[GeminiRetry] Nenhuma GEMINI_API_KEY configurada.');
+  }
+
+  let lastError = '';
+  // Rotação inicial no tempo para distribuir quota base
+  const baseIdx = Math.floor(Date.now() / 60_000);
+
+  for (let attempt = 0; attempt < keys.length; attempt++) {
+    const idx = (baseIdx + attempt) % keys.length;
+    const apiKey = keys[idx];
+    const url = `${GEMINI_BASE}/${endpointPath}?key=${apiKey}`;
+    const masked = apiKey.substring(0, 8) + '...' + apiKey.substring(apiKey.length - 4);
+
+    try {
+      console.log(`[GeminiRetry] Enviando requisição para Gemini com chave index ${idx} (${masked})...`);
+      const response = await axios.post(url, payload, {
+        headers: { 'Content-Type': 'application/json' },
+        timeout,
+      });
+      return response.data;
+    } catch (err: any) {
+      const status = err.response?.status ?? 'N/A';
+      const errMsg = err.response?.data?.error?.message || err.message;
+      lastError = `Chave ${idx} (HTTP ${status}): ${errMsg}`;
+      console.warn(`[GeminiRetry] Falha na chave index ${idx}:`, lastError);
+
+      if (status === 429 || status === 403 || status === 400) {
+        continue;
+      }
+      continue;
+    }
+  }
+
+  throw new Error(`[GeminiRetry] Todas as chaves do Gemini falharam. Último erro: ${lastError}`);
+}
+
 
 
 // 笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏
@@ -468,6 +537,45 @@ async function performWebSearch(query: string): Promise<string> {
 // 笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏
 export class AIService {
 
+  /**
+   * Descreve ou transcreve uma imagem usando o Gemini multimodal com rotação de chaves.
+   */
+  static async describeImageWithGemini(base64: string, mimeType: string): Promise<string> {
+    try {
+      console.log(`[AIService] Descrevendo imagem (${mimeType}) com Gemini...`);
+      const responseData = await postGeminiWithRetry(`${GEMINI_MODEL}:generateContent`, {
+        contents: [{
+          parts: [
+            {
+              inlineData: {
+                mimeType,
+                data: base64,
+              }
+            },
+            {
+              text: 'Descreva esta imagem detalhadamente em português, identificando qualquer texto escrito, documentos, informações relevantes, etc. Retorne apenas a descrição direta da imagem para ser usada como contexto.'
+            }
+          ]
+        }],
+        generationConfig: {
+          temperature: 0.2,
+          maxOutputTokens: 1000,
+        }
+      });
+
+      const text = responseData?.candidates?.[0]?.content?.parts
+        ?.filter((p: any) => !p.thought)
+        ?.map((p: any) => p.text ?? '')
+        ?.join('')
+        ?.trim() || '';
+
+      return text;
+    } catch (err: any) {
+      console.error('[AIService] Falha ao descrever imagem com Gemini:', err.message);
+      return '';
+    }
+  }
+
   static async generateResponse(options: GenerateOptions): Promise<GenerateResult> {
     const {
       message,
@@ -505,9 +613,67 @@ export class AIService {
       urlContextBlocks = results.filter(Boolean) as string[];
     }
 
-    // A mensagem do cliente mantﾃｩm-se LIMPA 窶� o contexto de URL vai para o sistema, Nﾃグ para a mensagem
-    const enrichedMessage = message;
+    // Pré-processar media (áudio, documentos, imagens) → texto, via Gemini
+    let enrichedMessage = message;
+    let mediaForAI: { base64: string; mimeType: string } | undefined = media;
+
+    if (mediaForAI) {
+      if (mediaForAI.mimeType.startsWith('audio/')) {
+        console.log(`[AIService] Transcrevendo áudio via Gemini antes de enviar para Deepseek...`);
+        try {
+          const { AudioService } = await import('./audio.service');
+          const stt = await AudioService.speechToTextFromBase64(mediaForAI.base64, mediaForAI.mimeType);
+          if (stt?.text) {
+            enrichedMessage = `${enrichedMessage}\n\n[Áudio transcrito]:\n${stt.text}`.trim();
+          }
+        } catch (e: any) {
+          console.warn('[AIService] Falha ao transcrever áudio:', e.message);
+        }
+        mediaForAI = undefined; // já convertido para texto
+      } else if (
+        mediaForAI.mimeType.includes('pdf') ||
+        mediaForAI.mimeType.includes('word') ||
+        mediaForAI.mimeType.includes('docx') ||
+        mediaForAI.mimeType.startsWith('text/')
+      ) {
+        console.log(`[AIService] Extraindo texto de documento via Gemini antes de enviar para Deepseek...`);
+        try {
+          const docText = await DocumentService.extractTextFromBase64(mediaForAI.base64, mediaForAI.mimeType);
+          if (docText) {
+            enrichedMessage = `${enrichedMessage}\n\n[Documento anexo]:\n${docText}`.trim();
+          }
+        } catch (e: any) {
+          console.warn('[AIService] Falha ao extrair documento:', e.message);
+        }
+        mediaForAI = undefined;
+      } else if (mediaForAI.mimeType.startsWith('image/')) {
+        console.log(`[AIService] Descrevendo imagem via Gemini antes de enviar para Deepseek...`);
+        try {
+          const description = await AIService.describeImageWithGemini(mediaForAI.base64, mediaForAI.mimeType);
+          if (description) {
+            enrichedMessage = `${enrichedMessage}\n\n[Imagem anexa - descrição]:\n${description}`.trim();
+          }
+        } catch (e: any) {
+          console.warn('[AIService] Falha ao descrever imagem:', e.message);
+        }
+        mediaForAI = undefined;
+      }
+    }
+
+    // Descrever imagens extraídas de URLs com Gemini
+    if (extractedImages.length > 0) {
+      console.log(`[AIService] Descrevendo ${extractedImages.length} imagem(ns) extraída(s) de URLs com Gemini...`);
+      for (const img of extractedImages.slice(0, 3)) {
+        try {
+          const desc = await AIService.describeImageWithGemini(img.base64, img.mimeType);
+          if (desc) enrichedMessage = `${enrichedMessage}\n\n[Imagem de URL - descrição]:\n${desc}`.trim();
+        } catch (_) { /* silêncio */ }
+      }
+      extractedImages = [];
+    }
+
     const urlSystemContext = urlContextBlocks.length > 0 ? urlContextBlocks.join('\n\n') : undefined;
+
 
     // 1. Carregar perfil da organizaﾃｧﾃ｣o, Base de Conhecimento (RAG) e Assets
     let org: OrgProfile | null = null;
@@ -569,7 +735,7 @@ export class AIService {
       externalKnowledge = `${snippetsText}\n\n${externalKnowledge}\n\n${searchResults}`.trim();
     }
 
-    // 笏笏 Funﾃｧﾃ｣o auxiliar: limpar texto e extrair apenas a resposta final 笏笏笏笏笏笏笏笏
+    // 笏€笏€ Funﾃｧﾃ｣o auxiliar: limpar texto e extrair apenas a resposta final 笏€笏€笏€笏€笏€笏€笏€笏€
     function extractCleanText(parts: any[]): string {
       // 1. Filtrar partes de "pensamento" da API (thought=true, code, etc.)
       const textParts = parts
@@ -624,81 +790,33 @@ export class AIService {
     // 3.5. Tentar Deepseek Primeiro (Se a chave estiver configurada)
     // ------------------------------------------------------------------------------------------------------------------
     const dsKeys = getUniqueDeepseekApiKeys();
-    if (dsKeys.length > 0) {
+    if (dsKeys.length === 0) {
+      console.warn(`[AIService] ⚠️  Aviso: DEEPSEEK_API_KEY não configurada. Pulando para motor secundário.`);
+    } else {
       console.log(`[AIService] Tentando Deepseek como motor principal (${dsKeys.length} chave(s) configurada(s))...`);
       const dsModel = process.env.DEEPSEEK_MODEL || 'deepseek-chat';
       const dsBaseUrl = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com/v1';
 
-      // Pre-processamento multimodal para o Deepseek:
-      // Se a mídia for um áudio, transcrevemos
-      // Se for um documento, extraímos o texto
-      let dsEnrichedMessage = enrichedMessage;
-      let dsMedia: { base64: string; mimeType: string } | undefined = media;
-
-      if (dsMedia) {
-        if (dsMedia.mimeType.startsWith('audio/')) {
-          console.log(`[AIService] Transcrevendo áudio para Deepseek...`);
-          const stt = await AudioService.speechToTextFromBase64(dsMedia.base64, dsMedia.mimeType);
-          if (stt && stt.text) {
-            dsEnrichedMessage = `${dsEnrichedMessage}\n\n[Áudio anexo transcrito]:\n${stt.text}`.trim();
-          }
-          dsMedia = undefined; // não enviar áudio binário
-        } else if (
-          dsMedia.mimeType.includes('pdf') ||
-          dsMedia.mimeType.includes('word') ||
-          dsMedia.mimeType.includes('docx') ||
-          dsMedia.mimeType.startsWith('text/')
-        ) {
-          console.log(`[AIService] Extraindo texto de documento para Deepseek...`);
-          const docText = await DocumentService.extractTextFromBase64(dsMedia.base64, dsMedia.mimeType);
-          if (docText) {
-            dsEnrichedMessage = `${dsEnrichedMessage}\n\n[Documento anexo]:\n${docText}`.trim();
-          }
-          dsMedia = undefined; // nﾃ｣o enviar documento binﾃ｡rio
-        }
-      }
-
-      const lastUserContent: any[] = [{ type: 'text', text: dsEnrichedMessage }];
-
-      if (dsMedia && dsMedia.mimeType.startsWith('image/')) {
-        console.log(`[AIService] Incluindo imagem (${dsMedia.mimeType}) no payload do Deepseek...`);
-        lastUserContent.push({
-          type: 'image_url',
-          image_url: {
-            url: `data:${dsMedia.mimeType};base64,${dsMedia.base64}`,
-          },
-        });
-      }
-
-      if (extractedImages.length > 0) {
-        console.log(`[AIService] Incluindo ${extractedImages.length} imagem(ns) extraﾃｭda(s) de links no payload do Deepseek...`);
-        extractedImages.forEach((img) => {
-          lastUserContent.push({
-            type: 'image_url',
-            image_url: {
-              url: `data:${img.mimeType};base64,${img.base64}`,
-            },
-          });
-        });
-      }
-
+      // enrichedMessage já contém áudio/imagem/documento convertidos para texto (pré-processado acima)
       const deepseekMessages = [
         { role: 'system', content: systemPrompt },
         ...history.map(h => ({
           role: h.sender === 'user' ? 'user' : 'assistant',
           content: h.text,
         })),
-        { role: 'user', content: lastUserContent.length > 1 ? lastUserContent : dsEnrichedMessage },
+        { role: 'user', content: enrichedMessage },
       ];
 
+
       for (let attempt = 0; attempt < dsKeys.length; attempt++) {
-        // Rotaﾃｧﾃ｣o inicial no tempo + deslocamento por tentativa
+        // Rotação inicial no tempo + deslocamento por tentativa
         const baseIdx = Math.floor(Date.now() / 60_000);
         const idx = (baseIdx + attempt) % dsKeys.length;
         const deepseekKey = dsKeys[idx];
+        const maskedKey = deepseekKey.substring(0, 8) + '...' + deepseekKey.substring(deepseekKey.length - 4);
 
         try {
-          console.log(`[AIService] Enviando requisiﾃｧﾃ｣o Deepseek com chave index ${idx} (tentativa ${attempt + 1}/${dsKeys.length})...`);
+          console.log(`[AIService] 🔄 Deepseek — chave index ${idx} (${maskedKey}), tentativa ${attempt + 1}/${dsKeys.length}...`);
           const response = await axios.post(`${dsBaseUrl}/chat/completions`, {
             model: dsModel,
             messages: deepseekMessages,
@@ -709,28 +827,43 @@ export class AIService {
               'Content-Type': 'application/json',
               'Authorization': `Bearer ${deepseekKey}`,
             },
-            timeout: 25_000,
+            timeout: 30_000,
           });
 
           const rawText = response.data?.choices?.[0]?.message?.content?.trim();
           if (rawText) {
             const confirm      = rawText.includes('[CONFIRMAR_INFORMAÇÃO]');
-            const transfer      = rawText.includes('[TRANSFERIR_HUMANO]');
+            const transfer     = rawText.includes('[TRANSFERIR_HUMANO]');
             const booking      = rawText.includes('[AGENDAR]');
             const proposal     = rawText.includes('[PROPOSTA]');
             const contactMatch = rawText.match(/\[CONTATO:(\{[^}]+\})\]/);
             const contactData  = contactMatch ? (() => { try { return JSON.parse(contactMatch[1]); } catch { return undefined; } })() : undefined;
             const cleanReply   = rawText.replace(/\[TRANSFERIR_HUMANO\]|\[AGENDAR\]|\[PROPOSTA\]|\[CONFIRMAR_INFORMAÇÃO\]|\[CONTATO:\{[^}]+\}\]/g, '').trim();
-            console.log(`[AIService] 笨� Resposta gerada com sucesso via Deepseek (chave index ${idx}).`);
-            if (contactData) console.log(`[AIService] �搭 Dados de contacto capturados:`, contactData);
-            if (proposal) console.log(`[AIService] �梼 Proposta comercial detectada.`);
+            console.log(`[AIService] ✅ Resposta Deepseek (chave index ${idx}) — ${cleanReply.length} chars.`);
+            if (contactData) console.log(`[AIService] 📇 Dados de contacto capturados:`, contactData);
+            if (proposal) console.log(`[AIService] 📎 Proposta comercial detectada.`);
             return { reply: cleanReply || rawText, transfer, booking, proposal, contactData, confirm };
+          } else {
+            console.warn(`[AIService] ⚠️  Deepseek (chave index ${idx}) retornou resposta vazia.`);
           }
         } catch (deepseekErr: any) {
-          const errData = deepseekErr.response?.data;
+          const httpStatus = deepseekErr.response?.status ?? 'N/A';
+          const errData    = deepseekErr.response?.data;
+          const isTimeout  = deepseekErr.code === 'ECONNABORTED' || deepseekErr.message?.includes('timeout');
           lastError = errData?.error?.message || deepseekErr.message;
-          console.error(`[AIService] 笶� Deepseek com chave index ${idx} falhou:`, lastError);
-          if (errData) console.error(`[AIService] Detalhe API Deepseek:`, JSON.stringify(errData).substring(0, 400));
+
+          if (isTimeout) {
+            console.error(`[AIService] ⏱️  Deepseek TIMEOUT (chave index ${idx}, ${maskedKey}) após 30s.`);
+          } else {
+            console.error(`[AIService] ❌ Deepseek HTTP ${httpStatus} (chave index ${idx}, ${maskedKey}): ${lastError}`);
+            if (errData) {
+              const errBody = typeof errData === 'string' ? errData : JSON.stringify(errData);
+              console.error(`[AIService]    ↳ Body: ${errBody.substring(0, 500)}`);
+            }
+            if (httpStatus === 401 || httpStatus === 402) {
+              console.error(`[AIService]    ↳ ATENÇÃO: Saldo ou chave inválida. Verifique: https://platform.deepseek.com`);
+            }
+          }
         }
       }
     }

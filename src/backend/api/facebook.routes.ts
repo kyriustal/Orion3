@@ -6,6 +6,8 @@ import { requireAuth, AuthRequest } from '../middleware/auth';
 import { EmailService } from '../services/email.service';
 import { PushService } from '../services/push.service';
 import { getIo } from '../socket';
+import { AudioService } from '../services/audio.service';
+import axios from 'axios';
 
 const router = Router();
 const VERIFY_TOKEN = process.env.META_VERIFY_TOKEN || 'orion_secure_token_123';
@@ -125,9 +127,50 @@ router.post('/webhook', async (req, res) => {
 
       const senderId = messaging.sender.id;
       const pageId   = entry.id;
-      const userText = messaging.message.text;
 
-      if (!userText?.trim()) continue;
+      let userText = messaging.message.text || '';
+      let media: { base64: string; mimeType: string } | undefined = undefined;
+
+      const attachments = messaging.message.attachments || [];
+      if (attachments.length > 0) {
+        const att = attachments[0];
+        const attUrl = att.payload?.url;
+        if (attUrl) {
+          try {
+            console.log(`[FB WEBHOOK] Descarregando anexo do tipo ${att.type}: ${attUrl.substring(0, 60)}...`);
+            const response = await axios.get(attUrl, { responseType: 'arraybuffer' });
+            const mimeType = (response.headers['content-type'] as string) || (att.type === 'image' ? 'image/jpeg' : att.type === 'audio' ? 'audio/ogg' : 'application/octet-stream');
+            const base64 = Buffer.from(response.data).toString('base64');
+            media = { base64, mimeType };
+
+            if (att.type === 'audio') {
+              console.log(`[FB WEBHOOK] Transcrevendo áudio recebido do Facebook...`);
+              const sttResult = await AudioService.speechToTextFromBase64(base64, mimeType as string);
+              if (sttResult) {
+                userText = `[Mensagem de Áudio]: ${sttResult.text}`;
+                console.log(`[FB WEBHOOK] Áudio transcrito: "${sttResult.text.substring(0, 80)}"`);
+                media = undefined;
+              } else {
+                userText = '';
+                console.warn(`[FB WEBHOOK] STT falhou. A passar media raw ao AIService para nova tentativa via Gemini.`);
+              }
+            } else if (!userText) {
+              userText = att.type === 'image' ? '(Imagem enviada)' : `(Anexo do tipo ${att.type})`;
+            }
+          } catch (err: any) {
+            console.error(`[FB WEBHOOK] Erro ao descarregar/processar anexo:`, err.message);
+          }
+        }
+      }
+
+      if (!userText?.trim() && !media) continue;
+
+      const referral = messaging.referral || messaging.message?.referral || null;
+      if (referral) {
+        console.log(`[FB WEBHOOK] 📣 Mensagem de anúncio detectada. Referral:`, JSON.stringify(referral).substring(0, 200));
+      }
+
+      console.log(`[FB WEBHOOK] ▶ Nova mensagem | sender=${senderId} | page=${pageId} | text="${(userText || '').substring(0, 80)}" | media=${media ? media.mimeType : 'none'}`);
 
       // 1. Buscar configuração da página
       const { data: config } = await supabaseAdmin
@@ -171,21 +214,33 @@ router.post('/webhook', async (req, res) => {
         org_id: orgId,
         customer_phone: senderId,
         sender: 'user',
-        text: userText,
-        metadata: { platform: 'facebook' },
+        text: userText || '[media]',
+        metadata: { platform: 'facebook', referral: referral || undefined },
       });
 
       // 4. Indicador de digitação
       await FacebookService.sendTypingIndicator(pageId, senderId, accessToken, 'typing_on');
 
       // 5. Gerar resposta com IA
-      const aiResult = await AIService.generateResponse({
-        message: userText,
-        orgId,
-        history,
-        botName: botName || 'Assistente',
-        mode: 'simulation',
-      });
+      let aiResult;
+      try {
+        aiResult = await AIService.generateResponse({
+          message: userText || '',
+          orgId,
+          history,
+          botName: botName || 'Assistente',
+          mode: 'simulation',
+          media,
+          referral: referral || undefined,
+        });
+        console.log(`[FB WEBHOOK] ✅ Resposta gerada para sender=${senderId}: "${aiResult.reply.substring(0, 80)}"`);
+      } catch (aiErr: any) {
+        console.error(`[FB WEBHOOK] ❌ AIService lançou excepção para sender=${senderId}:`, aiErr.message);
+        try {
+          await FacebookService.sendMessage(pageId, senderId, 'Desculpe, tive um problema técnico momentâneo. Por favor, tente novamente em instantes. 🙏', accessToken);
+        } catch (_) { /* silencioso */ }
+        continue;
+      }
 
       // ── Disparar notificações de Booking, Handover ou Proposal ──
       if (aiResult.transfer || aiResult.booking || aiResult.proposal) {

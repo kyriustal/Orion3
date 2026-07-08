@@ -2,7 +2,7 @@ import axios from 'axios';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { getApiKey } from './ai.service';
+import { getApiKey, postGeminiWithRetry } from './ai.service';
 
 const GEMINI_MODEL = 'gemini-2.5-flash';
 const GEMINI_BASE  = 'https://generativelanguage.googleapis.com/v1beta/models';
@@ -64,24 +64,14 @@ export class AudioService {
     }
 
     // ─────────────────────────────────────────────────────────
-    // 2. Fallback para Gemini 2.5 Flash
+    // 2. Fallback para Gemini 2.5 Flash com Rotação de Chaves
     // ─────────────────────────────────────────────────────────
-    let apiKey: string;
-    try {
-      apiKey = getApiKey(0);
-    } catch (err) {
-      console.warn('[AudioService] Nenhuma chave Gemini ativa disponível:', err);
-      return null;
-    }
-
     // Normalizar mimeType para formatos suportados pelo Gemini
     const supportedTypes = ['audio/ogg', 'audio/mpeg', 'audio/mp4', 'audio/wav', 'audio/webm', 'audio/ogg; codecs=opus'];
     const normalizedMime = mimeType.includes('ogg') ? 'audio/ogg' : mimeType;
 
     try {
-      const url = `${GEMINI_BASE}/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
-
-      const response = await axios.post(url, {
+      const responseData = await postGeminiWithRetry(`${GEMINI_MODEL}:generateContent`, {
         contents: [{
           parts: [
             {
@@ -99,12 +89,9 @@ export class AudioService {
           temperature: 0,
           maxOutputTokens: 512,
         },
-      }, {
-        headers: { 'Content-Type': 'application/json' },
-        timeout: 30_000,
       });
 
-      const text: string = response.data?.candidates?.[0]?.content?.parts
+      const text: string = responseData?.candidates?.[0]?.content?.parts
         ?.filter((p: any) => !p.thought)
         ?.map((p: any) => p.text ?? '')
         ?.join('')
@@ -115,7 +102,7 @@ export class AudioService {
       return { text, language: 'pt' }; // Gemini fallback assume PT (não reporta língua)
 
     } catch (err: any) {
-      console.error('[AudioService] Erro na transcrição:', err.response?.data?.error?.message || err.message);
+      console.error('[AudioService] Erro na transcrição Gemini com chaves rotativas:', err.message);
       return null;
     }
   }

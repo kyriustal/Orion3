@@ -4,6 +4,8 @@ import { AIService } from '../services/ai.service';
 import { InstagramService } from '../services/instagram.service';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import { getIo } from '../socket';
+import { AudioService } from '../services/audio.service';
+import axios from 'axios';
 
 const router = Router();
 const VERIFY_TOKEN = process.env.META_VERIFY_TOKEN || 'orion_secure_token_123';
@@ -169,36 +171,62 @@ router.post('/webhook', async (req, res) => {
 
       const botName = org?.chatbot_name || config.display_name || 'Assistente';
 
-      // 2. Determinar o texto da mensagem
+      // 2. Determinar o texto da mensagem e descarregar anexos se aplicável
       let messageText = userText;
       let attachmentMediaUrl: string | null = null;
       let attachmentFileName: string | null = null;
       let attachmentMimeType: string | null = null;
+      let media: { base64: string; mimeType: string } | undefined = undefined;
 
-      if (!messageText && attachments.length > 0) {
+      if (attachments.length > 0) {
         const att = attachments[0];
-        if (att.type === 'image') {
-          messageText = '(Imagem enviada)';
-          attachmentMediaUrl = att.payload?.url || null;
-          attachmentFileName = 'imagem.jpg';
-          attachmentMimeType = 'image/jpeg';
-        } else if (att.type === 'video') {
-          messageText = '(Vídeo enviado)';
-          attachmentMediaUrl = att.payload?.url || null;
-          attachmentFileName = 'video.mp4';
-          attachmentMimeType = 'video/mp4';
-        } else if (att.type === 'audio') {
-          messageText = '(Áudio enviado)';
-          attachmentMediaUrl = att.payload?.url || null;
-          attachmentFileName = 'audio.m4a';
-          attachmentMimeType = 'audio/mp4';
-        } else if (att.type === 'story_mention') {
-          messageText = '(Mencionou o seu story)';
-        } else if (att.type === 'share') {
-          messageText = `(Conteúdo partilhado: ${att.payload?.url || ''})`;
-          attachmentMediaUrl = att.payload?.url || null;
-        } else {
-          messageText = '(Anexo recebido)';
+        const attUrl = att.payload?.url;
+        if (attUrl) {
+          attachmentMediaUrl = attUrl;
+          if (att.type === 'image') {
+            attachmentFileName = 'imagem.jpg';
+            attachmentMimeType = 'image/jpeg';
+            if (!messageText) messageText = '(Imagem enviada)';
+          } else if (att.type === 'video') {
+            attachmentFileName = 'video.mp4';
+            attachmentMimeType = 'video/mp4';
+            if (!messageText) messageText = '(Vídeo enviado)';
+          } else if (att.type === 'audio') {
+            attachmentFileName = 'audio.m4a';
+            attachmentMimeType = 'audio/mp4';
+            if (!messageText) messageText = '(Áudio enviado)';
+          } else if (att.type === 'story_mention') {
+            if (!messageText) messageText = '(Mencionou o seu story)';
+          } else if (att.type === 'share') {
+            if (!messageText) messageText = `(Conteúdo partilhado: ${att.payload?.url || ''})`;
+          } else {
+            if (!messageText) messageText = '(Anexo recebido)';
+          }
+
+          if (att.type === 'audio' || att.type === 'image' || att.type === 'video') {
+            try {
+              console.log(`[INSTAGRAM WEBHOOK] Descarregando anexo ${att.type}: ${attUrl.substring(0, 60)}...`);
+              const response = await axios.get(attUrl, { responseType: 'arraybuffer' });
+              const mimeType = (response.headers['content-type'] as string) || attachmentMimeType || 'application/octet-stream';
+              const base64 = Buffer.from(response.data).toString('base64');
+              media = { base64, mimeType };
+
+              if (att.type === 'audio') {
+                console.log(`[INSTAGRAM WEBHOOK] Transcrevendo áudio recebido do Instagram...`);
+                const sttResult = await AudioService.speechToTextFromBase64(base64, mimeType as string);
+                if (sttResult) {
+                  messageText = `[Mensagem de Áudio]: ${sttResult.text}`;
+                  console.log(`[INSTAGRAM WEBHOOK] Áudio transcrito: "${sttResult.text.substring(0, 80)}"`);
+                  media = undefined; // Já transcrito; evitar duplo processamento no AIService
+                } else {
+                  messageText = ''; // Passar media raw ao AIService para nova tentativa via Gemini
+                  console.warn(`[INSTAGRAM WEBHOOK] STT falhou. A passar media raw ao AIService.`);
+                }
+              }
+            } catch (err: any) {
+              console.error(`[INSTAGRAM WEBHOOK] Erro ao descarregar/processar anexo:`, err.message);
+            }
+          }
         }
       }
 
@@ -268,6 +296,7 @@ router.post('/webhook', async (req, res) => {
           history,
           botName:  botName || 'Assistente',
           mode:     'simulation',
+          media,
         });
 
         aiReply  = aiResult.reply;
