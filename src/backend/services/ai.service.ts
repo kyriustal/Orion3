@@ -735,157 +735,146 @@ export class AIService {
       }
     }
 
-    // 笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏
-    // 4. Tentar OpenAI gpt-4o-mini Primeiro (Se a chave estiver configurada)
-    // 笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏
-
+    // 4. Tentar OpenAI gpt-4o-mini (Se a chave estiver configurada)
     try {
       const openaiKey = process.env.OPENAI_API_KEY?.replace(/^["']|["']$/g, '')?.trim();
       if (openaiKey && openaiKey.length > 10) {
-        console.log(`[AIService] Tentando OpenAI gpt-4o-mini como motor principal...`);
-
-        // Suporte multimodal para imagens no GPT-4o mini
+        console.log(`[AIService] Tentando OpenAI gpt-4o-mini...`);
         const lastUserContent: any[] = [{ type: 'text', text: enrichedMessage }];
-
         if (media && media.mimeType.startsWith('image/')) {
-          console.log(`[AIService] Incluindo imagem (${media.mimeType}) no payload do GPT-4o mini...`);
-          lastUserContent.push({
-            type: 'image_url',
-            image_url: {
-              url: `data:${media.mimeType};base64,${media.base64}`,
-            },
-          });
+          lastUserContent.push({ type: 'image_url', image_url: { url: `data:${media.mimeType};base64,${media.base64}` } });
         }
-
-        if (extractedImages.length > 0) {
-          console.log(`[AIService] Incluindo ${extractedImages.length} imagem(ns) extraﾃｭda(s) de links no payload do GPT-4o mini...`);
-          extractedImages.forEach((img) => {
-            lastUserContent.push({
-              type: 'image_url',
-              image_url: {
-                url: `data:${img.mimeType};base64,${img.base64}`,
-              },
-            });
-          });
-        }
-
+        extractedImages.forEach((img) => lastUserContent.push({ type: 'image_url', image_url: { url: `data:${img.mimeType};base64,${img.base64}` } }));
         const openaiMessages = [
           { role: 'system', content: systemPrompt },
-          ...history.map(h => ({
-            role: h.sender === 'user' ? 'user' : 'assistant',
-            content: h.text,
-          })),
+          ...history.map(h => ({ role: h.sender === 'user' ? 'user' : 'assistant', content: h.text })),
           { role: 'user', content: lastUserContent.length > 1 ? lastUserContent : enrichedMessage },
         ];
-
         const response = await axios.post('https://api.openai.com/v1/chat/completions', {
-          model: 'gpt-4o-mini',
-          messages: openaiMessages,
-          temperature: 0.4,
-          max_tokens: 1500,
+          model: 'gpt-4o-mini', messages: openaiMessages, temperature: 0.4, max_tokens: 1500,
         }, {
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${openaiKey}`,
-          },
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiKey}` },
           timeout: 25_000,
         });
-
         const rawText = response.data?.choices?.[0]?.message?.content?.trim();
         if (rawText) {
           const confirm      = rawText.includes('[CONFIRMAR_INFORMAÇÃO]');
-          const transfer      = rawText.includes('[TRANSFERIR_HUMANO]');
+          const transfer     = rawText.includes('[TRANSFERIR_HUMANO]');
           const booking      = rawText.includes('[AGENDAR]');
           const proposal     = rawText.includes('[PROPOSTA]');
           const contactMatch = rawText.match(/\[CONTATO:(\{[^}]+\})\]/);
           const contactData  = contactMatch ? (() => { try { return JSON.parse(contactMatch[1]); } catch { return undefined; } })() : undefined;
           const cleanReply   = rawText.replace(/\[TRANSFERIR_HUMANO\]|\[AGENDAR\]|\[PROPOSTA\]|\[CONFIRMAR_INFORMAÇÃO\]|\[CONTATO:\{[^}]+\}\]/g, '').trim();
-          console.log(`[AIService] 笨� Resposta gerada com sucesso via OpenAI gpt-4o-mini.`);
-          if (contactData) console.log(`[AIService] �搭 Dados de contacto capturados:`, contactData);
-          if (proposal) console.log(`[AIService] �梼 Proposta comercial detectada.`);
+          console.log(`[AIService] ✅ Resposta via OpenAI gpt-4o-mini.`);
           return { reply: cleanReply || rawText, transfer, booking, proposal, contactData, confirm };
         }
       }
     } catch (openaiErr: any) {
       const errData = openaiErr.response?.data;
       lastError = errData?.error?.message || openaiErr.message;
-      console.error(`[AIService] 笶� OpenAI falhou:`, lastError);
-      if (errData) console.error(`[AIService] Detalhe API OpenAI:`, JSON.stringify(errData).substring(0, 400));
+      console.error(`[AIService] ❌ OpenAI falhou:`, lastError);
     }
 
-    // 笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏
-    // 5. Fallback automﾃ｡tico para Gemini 2.5 Flash
-    // 笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏
+    // 5. Fallback automático para Gemini 2.5 Flash
+    // Percorre TODAS as chaves até encontrar uma funcional
+    const geminiKeys = getUniqueApiKeys();
     try {
-      console.log(`[AIService] Avanﾃｧando para fallback Gemini 2.5 Flash...`);
-      const apiKey = getApiKey(0);
-      const url    = `${GEMINI_BASE}/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
-
-      const attempts = [
-        { label: 'com google_search',  payload: payloadWithSearch  },
-        { label: 'com googleSearch',   payload: payloadWithSearch2 },
-        { label: 'sem tools',          payload: payloadNoSearch    },
-      ];
-
-      for (const { label, payload } of attempts) {
-        try {
-          console.log(`[AIService] Tentando chave Gemini ativa 窶� formato ${label}...`);
-
-          const response = await axios.post(url, payload, {
-            headers: { 'Content-Type': 'application/json' },
-            timeout: 35_000,
-          });
-
-          const parts: any[] = response.data?.candidates?.[0]?.content?.parts ?? [];
-          const cleanText = extractCleanText(parts);
-
-          if (!cleanText) {
-            console.warn(`[AIService] Resposta vazia apﾃｳs limpeza no formato ${label}.`);
-            continue;
+      if (geminiKeys.length > 0) {
+        console.log(`[AIService] Avançando para fallback Gemini (${geminiKeys.length} chaves)...`);
+        for (let keyIdx = 0; keyIdx < geminiKeys.length; keyIdx++) {
+          const apiKey = geminiKeys[keyIdx];
+          const url    = `${GEMINI_BASE}/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
+          const masked = apiKey.substring(0, 8) + '...' + apiKey.substring(apiKey.length - 4);
+          const formats = [
+            { label: 'com google_search',  payload: payloadWithSearch  },
+            { label: 'com googleSearch',   payload: payloadWithSearch2 },
+            { label: 'sem tools',          payload: payloadNoSearch    },
+          ];
+          let keyFailed = false;
+          for (const { label, payload } of formats) {
+            try {
+              console.log(`[AIService] Gemini key ${keyIdx} (${masked}) — ${label}...`);
+              const response = await axios.post(url, payload, {
+                headers: { 'Content-Type': 'application/json' },
+                timeout: 30_000,
+              });
+              const parts: any[] = response.data?.candidates?.[0]?.content?.parts ?? [];
+              const cleanText = extractCleanText(parts);
+              if (!cleanText) { continue; }
+              const confirm      = cleanText.includes('[CONFIRMAR_INFORMAÇÃO]');
+              const transfer     = cleanText.includes('[TRANSFERIR_HUMANO]');
+              const booking      = cleanText.includes('[AGENDAR]');
+              const proposal     = cleanText.includes('[PROPOSTA]');
+              const contactMatch = cleanText.match(/\[CONTATO:(\{[^}]+\})\]/);
+              const contactData  = contactMatch ? (() => { try { return JSON.parse(contactMatch[1]); } catch { return undefined; } })() : undefined;
+              const cleanReply   = cleanText.replace(/\[TRANSFERIR_HUMANO\]|\[AGENDAR\]|\[PROPOSTA\]|\[CONFIRMAR_INFORMAÇÃO\]|\[CONTATO:\{[^}]+\}\]/g, '').trim();
+              console.log(`[AIService] ✅ Resposta via Gemini key ${keyIdx}.`);
+              return { reply: cleanReply || cleanText, transfer, booking, proposal, contactData, confirm };
+            } catch (err: any) {
+              const errData = err.response?.data;
+              lastError     = errData?.error?.message || err.message;
+              const status  = err.response?.status ?? 'N/A';
+              console.error(`[AIService] ❌ Gemini key ${keyIdx} — ${label} (HTTP ${status}): ${lastError}`);
+              // Chave bloqueada ou quota esgotada → saltar para a próxima
+              if (status === 403 || status === 429 ||
+                  lastError.toLowerCase().includes('denied') ||
+                  lastError.toLowerCase().includes('not valid')) {
+                keyFailed = true;
+                break;
+              }
+            }
           }
-
-          const confirm      = cleanText.includes('[CONFIRMAR_INFORMAÇÃO]');
-          const transfer      = cleanText.includes('[TRANSFERIR_HUMANO]');
-          const booking      = cleanText.includes('[AGENDAR]');
-          const proposal     = cleanText.includes('[PROPOSTA]');
-          const contactMatch = cleanText.match(/\[CONTATO:(\{[^}]+\})\]/);
-          const contactData  = contactMatch ? (() => { try { return JSON.parse(contactMatch[1]); } catch { return undefined; } })() : undefined;
-          const cleanReply   = cleanText.replace(/\[TRANSFERIR_HUMANO\]|\[AGENDAR\]|\[PROPOSTA\]|\[CONFIRMAR_INFORMAÇÃO\]|\[CONTATO:\{[^}]+\}\]/g, '').trim();
- 
-          console.log(`[AIService] 笨� Resposta gerada com sucesso com formato ${label} via Gemini.`);
-          if (contactData) console.log(`[AIService] �搭 Dados de contacto capturados:`, contactData);
-          if (proposal) console.log(`[AIService] �梼 Proposta comercial detectada.`);
-          return { reply: cleanReply || cleanText, transfer, booking, proposal, contactData, confirm };
-
-        } catch (err: any) {
-          const errData  = err.response?.data;
-          lastError      = errData?.error?.message || err.message;
-          const status   = err.response?.status ?? 'N/A';
-          console.error(`[AIService] 笶� Gemini formato ${label} falhou (HTTP ${status}): ${lastError}`);
-          if (errData) console.error(`[AIService] Detalhe API Gemini:`, JSON.stringify(errData).substring(0, 400));
-          
-          if (status === 429) {
-            console.warn(`[AIService] 笞��� Quota esgotada (429) na chave Gemini. Interrompendo tentativas Gemini.`);
-            break;
+          if (keyFailed) {
+            console.warn(`[AIService] Chave Gemini index ${keyIdx} bloqueada/sem quota. A tentar próxima...`);
+            continue;
           }
         }
       }
     } catch (geminiErr: any) {
-      console.error(`[AIService] Falha crﾃｭtica no fallback Gemini:`, geminiErr.message);
+      console.error(`[AIService] Falha crítica no fallback Gemini:`, geminiErr.message);
     }
 
-    // 6. ﾃ嗟timo recurso: resposta genﾃｩrica (apenas quando houver erro)
-    if (lastError) {
-      console.error(`[AIService] 笞��� Todos os caminhos falharam. Gerando resposta genﾃｩrica. ﾃ嗟timo erro: ${lastError}`);
-      return {
-        reply: 'Desculpe, nﾃ｣o consegui processar sua mensagem neste momento. Por favor, tente novamente em breve.',
-        transfer: false,
-      };
+    // 5.5 Último fallback absoluto: Deepseek
+    const fallbackDsKeys = getUniqueDeepseekApiKeys();
+    if (fallbackDsKeys.length > 0) {
+      console.log(`[AIService] [ULTIMO FALLBACK] Tentando Deepseek...`);
+      const dsModel   = process.env.DEEPSEEK_MODEL   || 'deepseek-chat';
+      const dsBaseUrl = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com/v1';
+      const dsMessages = [
+        { role: 'system', content: systemPrompt },
+        ...history.map(h => ({ role: h.sender === 'user' ? 'user' : 'assistant', content: h.text })),
+        { role: 'user', content: enrichedMessage },
+      ];
+      for (let attempt = 0; attempt < fallbackDsKeys.length; attempt++) {
+        try {
+          const response = await axios.post(`${dsBaseUrl}/chat/completions`, {
+            model: dsModel, messages: dsMessages, temperature: 0.4, max_tokens: 1500,
+          }, {
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${fallbackDsKeys[attempt]}` },
+            timeout: 25_000,
+          });
+          const rawText = response.data?.choices?.[0]?.message?.content?.trim();
+          if (rawText) {
+            const confirm      = rawText.includes('[CONFIRMAR_INFORMAÇÃO]');
+            const transfer     = rawText.includes('[TRANSFERIR_HUMANO]');
+            const booking      = rawText.includes('[AGENDAR]');
+            const proposal     = rawText.includes('[PROPOSTA]');
+            const contactMatch = rawText.match(/\[CONTATO:(\{[^}]+\})\]/);
+            const contactData  = contactMatch ? (() => { try { return JSON.parse(contactMatch[1]); } catch { return undefined; } })() : undefined;
+            const cleanReply   = rawText.replace(/\[TRANSFERIR_HUMANO\]|\[AGENDAR\]|\[PROPOSTA\]|\[CONFIRMAR_INFORMAÇÃO\]|\[CONTATO:\{[^}]+\}\]/g, '').trim();
+            console.log(`[AIService] ✅ Fallback Deepseek OK (key ${attempt}).`);
+            return { reply: cleanReply || rawText, transfer, booking, proposal, contactData, confirm };
+          }
+        } catch (dsErr: any) {
+          console.error(`[AIService] Falha no fallback Deepseek key ${attempt}:`, dsErr.message);
+        }
+      }
     }
-    // Caso inesperado sem erro registrado, devolver mensagem padrﾃ｣o neutra
-    console.warn(`[AIService] Nenhum erro registrado, mas chegou ao fallback. Resposta padrﾃ｣o.`);
+
+    // 6. Último recurso: resposta genérica
+    console.error(`[AIService] ❌ Todos os caminhos falharam. Último erro: ${lastError}`);
     return {
-      reply: 'Desculpe, nﾃ｣o consegui processar sua mensagem neste momento. Por favor, tente novamente em breve.',
+      reply: 'Desculpe, não consegui processar a sua mensagem neste momento. Por favor, tente novamente em breve.',
       transfer: false,
     };
   }
