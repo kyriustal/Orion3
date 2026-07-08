@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import { supabaseAdmin } from '../config/supabase';
-import { AIService, getUniqueApiKeys } from '../services/ai.service';
+import { AIService, getUniqueApiKeys, CustomerProfile } from '../services/ai.service';
 import { WhatsAppService } from '../services/whatsapp.service';
 import { AudioService } from '../services/audio.service';
 import { DocumentService } from '../services/document.service';
@@ -551,6 +551,40 @@ async function triggerAIResponse(params: {
     const pastDbHistory = dbHistory ? dbHistory.slice(1) : [];
     const history = pastDbHistory.reverse().map(h => ({ sender: h.sender, text: h.text }));
 
+    // ── Carregar perfil do cliente (memória de longo prazo) ─────────────────────
+    let customerProfile: CustomerProfile | undefined;
+    try {
+      // 1. Buscar dados do contacto já capturados (nome, email)
+      const { data: existingContact } = await supabaseAdmin
+        .from('contacts')
+        .select('name, email, phone')
+        .eq('org_id', orgId)
+        .eq('phone', fromNumber)
+        .maybeSingle();
+
+      // 2. Verificar se é cliente recorrente (histórico anterior às últimas 24h)
+      const { count: oldHistoryCount } = await supabaseAdmin
+        .from('conversation_history')
+        .select('id', { count: 'exact', head: true })
+        .eq('org_id', orgId)
+        .eq('customer_phone', fromNumber)
+        .lt('created_at', last24h);
+
+      const isReturning = (oldHistoryCount ?? 0) > 0;
+
+      if (existingContact || isReturning) {
+        customerProfile = {
+          name:        existingContact?.name  || undefined,
+          email:       existingContact?.email || undefined,
+          phone:       fromNumber,
+          isReturning,
+        };
+        console.log(`[MEMÓRIA] Cliente ${fromNumber}: nome="${customerProfile.name || 'desconhecido'}", recorrente=${isReturning}`);
+      }
+    } catch (memErr: any) {
+      console.warn('[MEMÓRIA] Erro ao carregar perfil do cliente (não crítico):', memErr.message);
+    }
+
     // Gerar resposta com IA (Gemini 2.5 Flash + Thinking)
     const aiResult = await AIService.generateResponse({
       message,
@@ -561,6 +595,7 @@ async function triggerAIResponse(params: {
       media,
       referral,
       timeSinceLastMessageHours,
+      customerProfile,
     });
 
     if (!aiResult?.reply) {
@@ -692,6 +727,45 @@ async function triggerAIResponse(params: {
         metadata:  aiResult.confirm ? { confirm: true } : undefined,
       });
     } catch (_) { /* silencioso */ }
+
+    // ── Persistir dados de contacto capturados pela IA na tabela `contacts` ─────
+    if (aiResult.contactData && (aiResult.contactData.name || aiResult.contactData.email)) {
+      try {
+        const cd = aiResult.contactData;
+        // Upsert: apenas actualiza campos que a IA devolveu (não sobrescreve com vazios)
+        const updateFields: Record<string, string> = {};
+        if (cd.name)  updateFields.name  = cd.name;
+        if (cd.email) updateFields.email = cd.email;
+
+        const { data: existingForUpsert } = await supabaseAdmin
+          .from('contacts')
+          .select('id, name, email')
+          .eq('org_id', orgId)
+          .eq('phone', fromNumber)
+          .maybeSingle();
+
+        if (existingForUpsert) {
+          // Actualizar apenas os campos que ainda não estão preenchidos (ou forçar)
+          const patch: Record<string, string> = {};
+          if (cd.name  && !existingForUpsert.name)  patch.name  = cd.name;
+          if (cd.email && !existingForUpsert.email) patch.email = cd.email;
+          if (Object.keys(patch).length > 0) {
+            await supabaseAdmin.from('contacts').update(patch).eq('id', existingForUpsert.id);
+            console.log(`[MEMÓRIA] Contacto ${fromNumber} actualizado:`, patch);
+          }
+        } else {
+          await supabaseAdmin.from('contacts').insert({
+            org_id: orgId,
+            phone:  fromNumber,
+            ...updateFields,
+            source: 'whatsapp',
+          });
+          console.log(`[MEMÓRIA] Novo contacto criado para ${fromNumber}:`, updateFields);
+        }
+      } catch (contactErr: any) {
+        console.warn('[MEMÓRIA] Erro ao persistir dados de contacto (não crítico):', contactErr.message);
+      }
+    }
 
     // Enviar mensagem
     let sentMsgId: string | null = null;

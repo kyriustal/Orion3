@@ -13,6 +13,13 @@ export interface ChatMessage {
   text: string;
 }
 
+export interface CustomerProfile {
+  name?: string;
+  email?: string;
+  phone?: string;
+  isReturning?: boolean; // tem histórico anterior às últimas 24h
+}
+
 export interface GenerateOptions {
   message: string;
   orgId: string;
@@ -22,6 +29,7 @@ export interface GenerateOptions {
   media?: { base64: string; mimeType: string };
   referral?: any;
   timeSinceLastMessageHours?: number;
+  customerProfile?: CustomerProfile;
 }
 
 export interface GenerateResult {
@@ -120,7 +128,8 @@ function buildSystemPrompt(
   botNameOverride?: string,
   referral?: any,
   timeSinceLastMessageHours?: number,
-  urlContext?: string
+  urlContext?: string,
+  customerProfile?: CustomerProfile
 ): string {
   // 笏笏 Modo Suporte Orion (widget do site) 笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏笏
   if (mode === 'support') {
@@ -191,15 +200,31 @@ REGRAS:
 
   // Contexto de URLs/anﾃｺncios extraﾃｭdo pelo sistema 窶� NUNCA confundir com o que o cliente escreveu
   const urlContextSection = urlContext
-    ? `\n笊絶武笊� CONTEXTO DO ANﾃ哢CIO / LINK (EXTRAﾃ好O PELO SISTEMA 窶� Nﾃグ ESCRITO PELO CLIENTE) 笊絶武笊申n笞��� O conteﾃｺdo abaixo foi extraﾃｭdo AUTOMATICAMENTE da pﾃ｡gina de destino do anﾃｺncio ou link que o cliente clicou. Nﾃグ ﾃｩ uma mensagem do cliente. Use este contexto para compreender o produto/serviﾃｧo pelo qual o cliente se interessou e direcione a conversa de forma pertinente.\n${urlContext}\n`
+    ? `\n笊絶武笊 CONTEXTO DO ANﾃ哢CIO / LINK (EXTRAﾃ好O PELO SISTEMA 窶 Nﾃグ ESCRITO PELO CLIENTE) 笊絶武笊申n笞 O conteﾃｺdo abaixo foi extraﾃｭdo AUTOMATICAMENTE da pﾃ｡gina de destino do anﾃｺncio ou link que o cliente clicou. Nﾃグ ﾃｩ uma mensagem do cliente. Use este contexto para compreender o produto/serviﾃｧo pelo qual o cliente se interessou e direcione a conversa de forma pertinente.\n${urlContext}\n`
     : '';
 
   let returnGreetingRule = '';
   if (timeSinceLastMessageHours !== undefined && timeSinceLastMessageHours >= 1) {
-    returnGreetingRule = `- O cliente esteve inativo por mais de 1 hora. Se a nova mensagem dele for uma saudaﾃｧﾃ｣o (ex: "Olﾃ｡", "Bom dia"), dﾃｪ uma saudaﾃｧﾃ｣o calorosa e breve, pergunte como pode ajudar e retome o assunto de forma cativante.`;
+    returnGreetingRule = `- O cliente esteve inativo por mais de 1 hora. Se a nova mensagem dele for uma saudação (ex: "Olá", "Bom dia"), dê uma saudação calorosa e breve, pergunte como pode ajudar e retome o assunto de forma cativante.`;
+  }
+
+  // Secção de memória do cliente (injectada apenas quando há dados conhecidos)
+  let customerMemorySection = '';
+  if (customerProfile && (customerProfile.name || customerProfile.email || customerProfile.isReturning)) {
+    const lines: string[] = [];
+    if (customerProfile.name)  lines.push(`- Nome do cliente: ${customerProfile.name}`);
+    if (customerProfile.email) lines.push(`- Email do cliente: ${customerProfile.email}`);
+    if (customerProfile.isReturning) {
+      lines.push(`- Cliente recorrente: Sim (já manteve conversas anteriores com a empresa)`);
+      lines.push(`- INSTRUÇÕES CRÍTICAS: NÃO trate este cliente como novo. NÃO apresente a empresa como se fosse o primeiro contacto. NÃO peça informações (nome, email) que já foram partilhadas. Use o nome dele de forma natural e personalizada na conversa.`);
+    } else if (customerProfile.name) {
+      lines.push(`- INSTRUÇÃO: O cliente já partilhou o nome nesta sessão. Use-o naturalmente na conversa.`);
+    }
+    customerMemorySection = `\n═══ MEMÓRIA DO CLIENTE (DADOS CONHECIDOS) ═══\n${lines.join('\n')}\n`;
   }
 
   return `Você é ${botName}, assistente virtual oficial da empresa "${companyName}".
+${customerMemorySection}
 ${sector ? `Sector de actividade: ${sector}.` : ''}
 
 ═══ SUA PERSONALIDADE E COMPORTAMENTO (DEFINIDOS PELO USUÁRIO NO PAINEL) ═══
@@ -445,6 +470,7 @@ export class AIService {
       media,
       referral,
       timeSinceLastMessageHours,
+      customerProfile,
     } = options;
 
     // 0. Extrair e ler o conteﾃｺdo de URLs presentes na mensagem (ex: links de anﾃｺncios do Facebook/Instagram)
@@ -570,7 +596,7 @@ export class AIService {
     // 2. Construir sistema e conteﾃｺdos
     const fullKnowledge = `${org?.product_description || ''}\n\n${externalKnowledge}\n\n${availableAssets}`.trim();
     
-    const systemPrompt = buildSystemPrompt(mode, { ...org, product_description: fullKnowledge } as any, botName, referral, timeSinceLastMessageHours, urlSystemContext);
+    const systemPrompt = buildSystemPrompt(mode, { ...org, product_description: fullKnowledge } as any, botName, referral, timeSinceLastMessageHours, urlSystemContext, customerProfile);
     const contents     = buildContents(history, enrichedMessage, media, extractedImages);
 
     // 3. Payloads: com e sem Google Search
