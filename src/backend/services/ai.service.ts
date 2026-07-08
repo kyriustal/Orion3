@@ -212,13 +212,19 @@ REGRAS:
   let customerMemorySection = '';
   if (customerProfile && (customerProfile.name || customerProfile.email || customerProfile.isReturning)) {
     const lines: string[] = [];
-    if (customerProfile.name)  lines.push(`- Nome do cliente: ${customerProfile.name}`);
+    // Obter apenas o primeiro nome
+    const firstName = customerProfile.name ? customerProfile.name.trim().split(/\s+/)[0] : '';
+    if (firstName) lines.push(`- Nome do cliente: ${firstName}`);
     if (customerProfile.email) lines.push(`- Email do cliente: ${customerProfile.email}`);
     if (customerProfile.isReturning) {
       lines.push(`- Cliente recorrente: Sim (já manteve conversas anteriores com a empresa)`);
-      lines.push(`- INSTRUÇÕES CRÍTICAS: NÃO trate este cliente como novo. NÃO apresente a empresa como se fosse o primeiro contacto. NÃO peça informações (nome, email) que já foram partilhadas. Use o nome dele de forma natural e personalizada na conversa.`);
-    } else if (customerProfile.name) {
-      lines.push(`- INSTRUÇÃO: O cliente já partilhou o nome nesta sessão. Use-o naturalmente na conversa.`);
+      lines.push(`- INSTRUÇÕES CRÍTICAS DE TRATAMENTO E NOME:
+  * Trate o cliente EXCLUSIVAMENTE pelo primeiro nome ("${firstName}"). Nunca use o apelido ou nome completo.
+  * Identifique e deduza o género do cliente a partir do primeiro nome ("${firstName}") para usar corretamente os títulos "Sr. ${firstName}" ou "Sra. ${firstName}". Se tiver dúvidas sobre o género, trate apenas por "${firstName}" de forma direta e sem título.
+  * NÃO o trate como novo cliente. Não apresente a empresa como se fosse o primeiro contacto.
+  * Não peça informações de contacto que já constam na lista.`);
+    } else if (firstName) {
+      lines.push(`- INSTRUÇÃO: Trate o cliente exclusivamente pelo primeiro nome ("${firstName}"). Identifique o género do nome para usar "Sr. ${firstName}" ou "Sra. ${firstName}" (ou apenas "${firstName}" em caso de dúvida).`);
     }
     customerMemorySection = `\n═══ MEMÓRIA DO CLIENTE (DADOS CONHECIDOS) ═══\n${lines.join('\n')}\n`;
   }
@@ -249,6 +255,7 @@ ${selectedToneInstructions}
 - PRIMEIRA MENSAGEM (SAUDAÇÃO): Deve ser uma saudação super simpática, diretamente. Se o cliente disser apenas "Olá?" a meio da conversa, responda de forma natural e animada (ex: "Estou aqui! Como posso ajudar hoje?"), e nunca repetindo o texto anterior.
 - PROIBIDO REPETIR SAUDAÇÕES: Se o histórico mostra que a conversa já começou, vá direto à resposta sem dizer "Olá" novamente.
 - ENVIO DE ARQUIVOS/DOCUMENTOS: Sempre que o cliente solicitar, pedir ou demonstrar interesse claro em receber qualquer arquivo, catﾃ｡logo, guia, documento ou PDF que esteja listado na secﾃｧﾃ｣o "ARQUIVOS QUE VOCﾃ� PODE ENVIAR", vocﾃｪ DEVE anexar o cﾃｳdigo correspondente [SEND_FILE: ID] exatamente no final da sua mensagem (exemplo: "Aqui tem o ficheiro solicitado: [SEND_FILE: 12345678-abcd-1234-abcd-1234567890ab]"). Nunca invente IDs de arquivos e nunca crie cﾃｳdigos para arquivos que nﾃ｣o estﾃ｣o explicitamente na lista fornecida.
+- RESPOSTAS CURTAS E PRECISAS (MANDATÓRIO): As suas respostas devem ser diretas, curtas e precisas, evitando parágrafos longos ou explicações excessivas. Apenas escreva respostas longas se for estritamente necessário para explicar um processo detalhado. Economize o tempo do utilizador.
 ${returnGreetingRule}
 
 笊絶武笊� REGRAS DE IDENTIDADE 笊絶武笊�
