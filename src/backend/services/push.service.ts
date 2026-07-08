@@ -19,7 +19,7 @@ export interface PushAlertPayload {
   badge?: string;
   tag?: string;
   url?: string;
-  type: 'handover' | 'booking' | 'proposal';
+  type: 'handover' | 'booking' | 'proposal' | 'confirmation';
 }
 
 export class PushService {
