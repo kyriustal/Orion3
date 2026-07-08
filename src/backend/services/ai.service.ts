@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { supabaseAdmin } from '../config/supabase';
 import { DocumentService } from './document.service';
+import { AudioService } from './audio.service';
 
 // As variáveis de ambiente são carregadas em ../config/supabase.ts e server.ts
 
@@ -74,6 +75,27 @@ export function getApiKey(attempt = 0): string {
   
   return key;
 }
+
+/** Obter lista de todas as chaves Deepseek válidas e únicas */
+export function getUniqueDeepseekApiKeys(): string[] {
+  const rawKeys = [
+    process.env.DEEPSEEK_API_KEY,
+    process.env.DEEPSEEK_API_KEY_2,
+    process.env.DEEPSEEK_API_KEY_3,
+    process.env.DEEPSEEK_API_KEY_4,
+  ].filter(Boolean) as string[];
+
+  const allKeys: string[] = [];
+  rawKeys.forEach(k => {
+    // Remover aspas de toda a string antes de fazer o split
+    const cleanStr = k.trim().replace(/^["']|["']$/g, '');
+    const parts = cleanStr.split(',').map(s => s.trim().replace(/^["']|["']$/g, ''));
+    allKeys.push(...parts);
+  });
+
+  return Array.from(new Set(allKeys.filter(k => k.length > 10)));
+}
+
 
 // ─────────────────────────────────────────────────────────
 //  Construção do System Prompt
@@ -557,11 +579,126 @@ export class AIService {
     const payloadWithSearch2 = { ...baseConfig, tools: [{ googleSearch: {} }] }; // fallback de formato
     const payloadNoSearch    = { ...baseConfig };
 
-    let lastError = '';
+        let lastError = '';
+
+    // ─────────────────────────────────────────────────────────
+    // 3.5. Tentar Deepseek Primeiro (Se a chave estiver configurada)
+    // ─────────────────────────────────────────────────────────
+    const dsKeys = getUniqueDeepseekApiKeys();
+    if (dsKeys.length > 0) {
+      console.log(`[AIService] Tentando Deepseek como motor principal (${dsKeys.length} chave(s) configurada(s))...`);
+      const dsModel = process.env.DEEPSEEK_MODEL || 'deepseek-chat';
+      const dsBaseUrl = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com/v1';
+
+      // Pre-processamento multimodal para o Deepseek:
+      // Se a mídia for um áudio, transcrevemos
+      // Se for um documento, extraímos o texto
+      let dsEnrichedMessage = enrichedMessage;
+      let dsMedia: { base64: string; mimeType: string } | undefined = media;
+
+      if (dsMedia) {
+        if (dsMedia.mimeType.startsWith('audio/')) {
+          console.log(`[AIService] Transcrevendo áudio para Deepseek...`);
+          const stt = await AudioService.speechToTextFromBase64(dsMedia.base64, dsMedia.mimeType);
+          if (stt && stt.text) {
+            dsEnrichedMessage = `${dsEnrichedMessage}\n\n[Áudio anexo transcrito]:\n${stt.text}`.trim();
+          }
+          dsMedia = undefined; // não enviar áudio binário
+        } else if (
+          dsMedia.mimeType.includes('pdf') ||
+          dsMedia.mimeType.includes('word') ||
+          dsMedia.mimeType.includes('docx') ||
+          dsMedia.mimeType.startsWith('text/')
+        ) {
+          console.log(`[AIService] Extraindo texto de documento para Deepseek...`);
+          const docText = await DocumentService.extractTextFromBase64(dsMedia.base64, dsMedia.mimeType);
+          if (docText) {
+            dsEnrichedMessage = `${dsEnrichedMessage}\n\n[Documento anexo]:\n${docText}`.trim();
+          }
+          dsMedia = undefined; // não enviar documento binário
+        }
+      }
+
+      const lastUserContent: any[] = [{ type: 'text', text: dsEnrichedMessage }];
+
+      if (dsMedia && dsMedia.mimeType.startsWith('image/')) {
+        console.log(`[AIService] Incluindo imagem (${dsMedia.mimeType}) no payload do Deepseek...`);
+        lastUserContent.push({
+          type: 'image_url',
+          image_url: {
+            url: `data:${dsMedia.mimeType};base64,${dsMedia.base64}`,
+          },
+        });
+      }
+
+      if (extractedImages.length > 0) {
+        console.log(`[AIService] Incluindo ${extractedImages.length} imagem(ns) extraída(s) de links no payload do Deepseek...`);
+        extractedImages.forEach((img) => {
+          lastUserContent.push({
+            type: 'image_url',
+            image_url: {
+              url: `data:${img.mimeType};base64,${img.base64}`,
+            },
+          });
+        });
+      }
+
+      const deepseekMessages = [
+        { role: 'system', content: systemPrompt },
+        ...history.map(h => ({
+          role: h.sender === 'user' ? 'user' : 'assistant',
+          content: h.text,
+        })),
+        { role: 'user', content: lastUserContent.length > 1 ? lastUserContent : dsEnrichedMessage },
+      ];
+
+      for (let attempt = 0; attempt < dsKeys.length; attempt++) {
+        // Rotação inicial no tempo + deslocamento por tentativa
+        const baseIdx = Math.floor(Date.now() / 60_000);
+        const idx = (baseIdx + attempt) % dsKeys.length;
+        const deepseekKey = dsKeys[idx];
+
+        try {
+          console.log(`[AIService] Enviando requisição Deepseek com chave index ${idx} (tentativa ${attempt + 1}/${dsKeys.length})...`);
+          const response = await axios.post(`${dsBaseUrl}/chat/completions`, {
+            model: dsModel,
+            messages: deepseekMessages,
+            temperature: 0.4,
+            max_tokens: 1500,
+          }, {
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${deepseekKey}`,
+            },
+            timeout: 25_000,
+          });
+
+          const rawText = response.data?.choices?.[0]?.message?.content?.trim();
+          if (rawText) {
+            const transfer      = rawText.includes('[TRANSFERIR_HUMANO]');
+            const booking      = rawText.includes('[AGENDAR]');
+            const proposal     = rawText.includes('[PROPOSTA]');
+            const contactMatch = rawText.match(/\[CONTATO:(\{[^}]+\})\]/);
+            const contactData  = contactMatch ? (() => { try { return JSON.parse(contactMatch[1]); } catch { return undefined; } })() : undefined;
+            const cleanReply   = rawText.replace(/\[TRANSFERIR_HUMANO\]|\[AGENDAR\]|\[PROPOSTA\]|\[CONTATO:\{[^}]+\}\]/g, '').trim();
+            console.log(`[AIService] ✅ Resposta gerada com sucesso via Deepseek (chave index ${idx}).`);
+            if (contactData) console.log(`[AIService] 📋 Dados de contacto capturados:`, contactData);
+            if (proposal) console.log(`[AIService] 📎 Proposta comercial detectada.`);
+            return { reply: cleanReply || rawText, transfer, booking, proposal, contactData };
+          }
+        } catch (deepseekErr: any) {
+          const errData = deepseekErr.response?.data;
+          lastError = errData?.error?.message || deepseekErr.message;
+          console.error(`[AIService] ❌ Deepseek com chave index ${idx} falhou:`, lastError);
+          if (errData) console.error(`[AIService] Detalhe API Deepseek:`, JSON.stringify(errData).substring(0, 400));
+        }
+      }
+    }
 
     // ─────────────────────────────────────────────────────────
     // 4. Tentar OpenAI gpt-4o-mini Primeiro (Se a chave estiver configurada)
     // ─────────────────────────────────────────────────────────
+
     try {
       const openaiKey = process.env.OPENAI_API_KEY?.replace(/^["']|["']$/g, '')?.trim();
       if (openaiKey && openaiKey.length > 10) {
@@ -716,6 +853,20 @@ export class AIService {
    */
   static async translateText(text: string, targetLanguage: string): Promise<string> {
     try {
+      const deepseekKey = process.env.DEEPSEEK_API_KEY?.replace(/^["']|["']$/g, '')?.trim();
+      if (deepseekKey && deepseekKey.length > 10) {
+        const dsModel = process.env.DEEPSEEK_MODEL || 'deepseek-chat';
+        const dsBaseUrl = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com/v1';
+        const response = await axios.post(`${dsBaseUrl}/chat/completions`, {
+          model: dsModel,
+          messages: [{ role: 'user', content: `Traduza o seguinte texto para ${targetLanguage}. Retorne APENAS a tradução, sem comentários:\n\n${text}` }],
+          temperature: 0.3,
+        }, {
+          headers: { 'Authorization': `Bearer ${deepseekKey}` }
+        });
+        return response.data?.choices?.[0]?.message?.content?.trim() || text;
+      }
+
       const openaiKey = process.env.OPENAI_API_KEY?.replace(/^["']|["']$/g, '')?.trim();
       if (openaiKey && openaiKey.length > 10) {
         const response = await axios.post('https://api.openai.com/v1/chat/completions', {

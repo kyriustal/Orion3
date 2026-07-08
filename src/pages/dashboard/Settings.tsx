@@ -531,6 +531,7 @@ export default function Settings() {
                       <Input
                         placeholder="Ex: 123456-abcdef.apps.googleusercontent.com"
                         className="border-emerald-200 focus-visible:ring-emerald-400"
+                        autoComplete="off"
                         value={(settings as any).google_client_id || ''}
                         onChange={(e) => setSettings({ ...settings, google_client_id: e.target.value } as any)}
                       />
@@ -541,6 +542,7 @@ export default function Settings() {
                         type="password"
                         placeholder="Sua chave secreta do cliente OAuth"
                         className="border-emerald-200 focus-visible:ring-emerald-400"
+                        autoComplete="new-password"
                         value={(settings as any).google_client_secret || ''}
                         onChange={(e) => setSettings({ ...settings, google_client_secret: e.target.value } as any)}
                       />
@@ -561,6 +563,7 @@ export default function Settings() {
                       <Input
                         placeholder="Ex: abcdef12-3456-7890-abcd-ef1234567890"
                         className="border-blue-200 focus-visible:ring-blue-400"
+                        autoComplete="off"
                         value={(settings as any).microsoft_client_id || ''}
                         onChange={(e) => setSettings({ ...settings, microsoft_client_id: e.target.value } as any)}
                       />
@@ -571,6 +574,7 @@ export default function Settings() {
                         type="password"
                         placeholder="Segredo do cliente (Valor da chave secreta)"
                         className="border-blue-200 focus-visible:ring-blue-400"
+                        autoComplete="new-password"
                         value={(settings as any).microsoft_client_secret || ''}
                         onChange={(e) => setSettings({ ...settings, microsoft_client_secret: e.target.value } as any)}
                       />
