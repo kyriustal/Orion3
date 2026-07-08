@@ -6,7 +6,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { io, Socket } from "socket.io-client";
 import { toast } from "sonner";
 type Message = { id: number; sender: "user" | "bot" | "human"; text: string; time: string; timestamp?: string; botName?: string; agentName?: string; metadata?: any; };
-type Chat = { id: string; phone: string; name: string; lastMessage: string; time: string; timestamp: string; platform?: string; unread?: number; };
+type Chat = { id: string; phone: string; name: string; lastMessage: string; time: string; timestamp: string; platform?: string; unread?: number; needs_confirm?: boolean; };
 
 const formatSeparatorDate = (timestampStr?: string) => {
   if (!timestampStr) return "Hoje";
@@ -120,9 +120,31 @@ export default function LiveChat() {
     sock.on("new_message", (data: { phone: string; sender: string; text: string; time: string; timestamp: string; platform?: string; botName?: string; agentName?: string; metadata?: any; }) => {
       setChats(prev => {
         const exists = prev.find(c => c.id === data.phone);
-        if (exists) return prev.map(c => c.id === data.phone ? { ...c, lastMessage: data.text, time: data.time, unread: (c.unread || 0) + 1 } : c);
+        const hasConfirm = data.metadata?.confirm === true;
+        const isHuman = data.sender === "human";
+
+        if (exists) {
+          return prev.map(c => c.id === data.phone ? { 
+            ...c, 
+            lastMessage: data.text, 
+            time: data.time, 
+            unread: (c.unread || 0) + 1,
+            needs_confirm: isHuman ? false : (hasConfirm || c.needs_confirm)
+          } : c);
+        }
+        
         const nameDisplay = data.platform === 'instagram' ? `Instagram (@${data.phone})` : data.platform === 'facebook' ? `Messenger (${data.phone.slice(-6)})` : `WhatsApp (${data.phone})`;
-        return [{ id: data.phone, phone: data.phone, name: nameDisplay, lastMessage: data.text, time: data.time, timestamp: data.timestamp, platform: data.platform, unread: 1 }, ...prev];
+        return [{ 
+          id: data.phone, 
+          phone: data.phone, 
+          name: nameDisplay, 
+          lastMessage: data.text, 
+          time: data.time, 
+          timestamp: data.timestamp, 
+          platform: data.platform, 
+          unread: 1,
+          needs_confirm: isHuman ? false : hasConfirm
+        }, ...prev];
       });
 
       setActiveChatId(activeId => {
@@ -452,18 +474,18 @@ export default function LiveChat() {
             const previewDate = formatChatPreviewDate(chat.timestamp, chat.time);
             const isToday = chat.timestamp && new Date(chat.timestamp).toDateString() === new Date().toDateString();
             return (
-              <div key={chat.id} onClick={() => selectChat(chat)} className={`p-4 border-b border-zinc-50 cursor-pointer transition-colors relative ${activeChatId === chat.phone ? "bg-emerald-50 border-l-2 border-l-emerald-500" : "hover:bg-zinc-50"}`}>
+              <div key={chat.id} onClick={() => selectChat(chat)} className={`p-4 border-b border-zinc-50 cursor-pointer transition-colors relative ${activeChatId === chat.phone ? (chat.needs_confirm ? "bg-orange-50 border-l-2 border-l-orange-500" : "bg-emerald-50 border-l-2 border-l-emerald-500") : (chat.needs_confirm ? "bg-orange-50/70 hover:bg-orange-50 border-l-2 border-l-orange-400" : "hover:bg-zinc-50")}`}>
                 <div className="flex justify-between items-start mb-1">
                   <div className="flex items-center gap-1.5 min-w-0">
-                    <Smartphone className="w-3 h-3 text-emerald-500 shrink-0" />
+                    <Smartphone className={`w-3 h-3 shrink-0 ${chat.needs_confirm ? "text-orange-500" : "text-emerald-500"}`} />
                     <h3 className="font-medium text-sm text-zinc-900 truncate max-w-[120px]">{chat.name}</h3>
                   </div>
                   <div className="flex items-center gap-1 shrink-0 ml-1">
-                    <span className={`text-[10px] font-medium ${isToday ? 'text-zinc-400' : 'text-emerald-600'}`}>{previewDate}</span>
-                    {(chat.unread || 0) > 0 && <span className="w-5 h-5 bg-emerald-500 text-white text-[10px] rounded-full flex items-center justify-center font-bold">{chat.unread}</span>}
+                    <span className={`text-[10px] font-medium ${isToday ? (chat.needs_confirm ? 'text-orange-600' : 'text-zinc-400') : (chat.needs_confirm ? 'text-orange-700' : 'text-emerald-600')}`}>{previewDate}</span>
+                    {(chat.unread || 0) > 0 && <span className={`w-5 h-5 text-white text-[10px] rounded-full flex items-center justify-center font-bold ${chat.needs_confirm ? "bg-orange-500" : "bg-emerald-500"}`}>{chat.unread}</span>}
                   </div>
                 </div>
-                <p className="text-xs text-zinc-400 truncate">{chat.lastMessage}</p>
+                <p className={`text-xs truncate ${chat.needs_confirm ? "text-orange-700/80 font-medium" : "text-zinc-400"}`}>{chat.lastMessage}</p>
               </div>
             );
           })}

@@ -130,8 +130,24 @@ router.get('/chats', requireAuth, async (req: AuthRequest, res) => {
     if (error) throw error;
 
     const chatsMap = new Map<string, any>();
+    const phoneConfirmStatus = new Map<string, boolean>();
+
     (history || []).forEach(item => {
       if (!item.customer_phone || item.customer_phone === 'null') return;
+      
+      // Se ainda não decidimos se precisa de confirmação para este número:
+      if (!phoneConfirmStatus.has(item.customer_phone)) {
+        if (item.sender === 'human') {
+          // Se a mensagem mais recente (antes de ver um confirm do bot) for de um humano,
+          // significa que o humano já respondeu, então limpamos o status de confirmação.
+          phoneConfirmStatus.set(item.customer_phone, false);
+        } else if (item.sender === 'bot' && item.metadata?.confirm === true) {
+          // Se encontramos uma mensagem do bot que precisa de confirmação antes de qualquer resposta humana,
+          // o chat fica marcado como precisando de confirmação.
+          phoneConfirmStatus.set(item.customer_phone, true);
+        }
+      }
+
       if (!chatsMap.has(item.customer_phone)) {
         const platform = item.metadata?.platform || 'whatsapp';
         let nameDisplay = `WhatsApp (${item.customer_phone})`;
@@ -147,9 +163,14 @@ router.get('/chats', requireAuth, async (req: AuthRequest, res) => {
           timestamp: item.created_at,
           lastSender: item.sender,
           platform: platform,
+          needs_confirm: false,
         });
       }
     });
+
+    for (const [phone, chat] of chatsMap.entries()) {
+      chat.needs_confirm = phoneConfirmStatus.get(phone) || false;
+    }
 
     res.json(Array.from(chatsMap.values()));
   } catch (err: any) {
@@ -546,19 +567,31 @@ async function triggerAIResponse(params: {
       throw new Error('Resposta da IA vazia.');
     }
 
-    // ── Disparar notificações de Booking, Handover ou Proposal ──
-    if (aiResult.transfer || aiResult.booking || aiResult.proposal) {
-      const alertType = aiResult.transfer ? 'handover' : aiResult.booking ? 'booking' : 'proposal';
+    // ── Disparar notificações de Booking, Handover, Proposal ou Confirmation ──
+    if (aiResult.transfer || aiResult.booking || aiResult.proposal || aiResult.confirm) {
+      const alertType = aiResult.transfer 
+        ? 'handover' 
+        : aiResult.booking 
+        ? 'booking' 
+        : aiResult.proposal 
+        ? 'proposal' 
+        : 'confirmation';
+        
       const alertTitle = aiResult.transfer 
         ? '🚨 Pedido de Atendimento Humano' 
         : aiResult.booking
         ? '📅 Novo Pedido de Agendamento'
-        : '📎 Proposta Comercial Recebida';
+        : aiResult.proposal
+        ? '📎 Proposta Comercial Recebida'
+        : '⚠️ Dúvida Sem Resposta - Confirmar Informações';
+
       const alertBody  = aiResult.transfer
         ? `O cliente ${fromNumber} quer falar com um assistente.`
         : aiResult.booking
         ? `O cliente ${fromNumber} solicitou um agendamento.`
-        : `O cliente ${fromNumber} enviou uma proposta comercial.`;
+        : aiResult.proposal
+        ? `O cliente ${fromNumber} enviou uma proposta comercial.`
+        : `O cliente ${fromNumber} fez uma pergunta fora da base de dados.`;
       
       // 1. Enviar email para admins/owners
       EmailService.sendAlertNotification(orgId, alertType, fromNumber, 'Cliente', message).catch(e => console.error('[ALERTA] Erro ao enviar email:', e.message));
@@ -573,7 +606,13 @@ async function triggerAIResponse(params: {
 
       // 3. Emitir evento Socket para notificação sonora no painel (browser aberto)
       try {
-        const socketEvent = alertType === 'handover' ? 'handover_alert' : alertType === 'booking' ? 'booking_alert' : 'proposal_alert';
+        const socketEvent = alertType === 'handover' 
+          ? 'handover_alert' 
+          : alertType === 'booking' 
+          ? 'booking_alert' 
+          : alertType === 'proposal' 
+          ? 'proposal_alert' 
+          : 'confirmation_alert';
         getIo().to(`org:${orgId}`).emit(socketEvent, {
           phone: fromNumber,
           message: message,
@@ -582,10 +621,10 @@ async function triggerAIResponse(params: {
         });
       } catch (_) { /* silencioso */ }
 
-      // Se for transferência para humano, pausar a IA por 24h automaticamente
-      if (aiResult.transfer) {
+      // Se for transferência para humano ou confirmação de informação, pausar a IA por 24h automaticamente
+      if (aiResult.transfer || aiResult.confirm) {
         aiPauses.set(historyKey, Date.now() + 24 * 60 * 60 * 1000);
-        console.log(`[IA] Handover detectado. IA pausada automaticamente por 24h para ${fromNumber}`);
+        console.log(`[IA] Handover/Confirmação detectado. IA pausada automaticamente por 24h para ${fromNumber}`);
       }
     }
 
@@ -637,6 +676,7 @@ async function triggerAIResponse(params: {
       customer_phone: fromNumber,
       sender: 'bot',
       text: ptReplyText,
+      metadata: aiResult.confirm ? { confirm: true } : undefined,
     });
 
     // Emitir resposta da IA para o Live Chat em tempo real em PORTUGUÊS
@@ -649,6 +689,7 @@ async function triggerAIResponse(params: {
         time:      new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         timestamp: new Date().toISOString(),
         platform:  'whatsapp',
+        metadata:  aiResult.confirm ? { confirm: true } : undefined,
       });
     } catch (_) { /* silencioso */ }
 

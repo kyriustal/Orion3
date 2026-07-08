@@ -238,7 +238,7 @@ export class EmailService {
   /**
    * Envia um alerta de handover ou agendamento para os administradores da organização.
    */
-  static async sendAlertNotification(orgId: string, type: 'handover' | 'booking' | 'proposal', customerPhone: string, customerName: string = 'Cliente', messageText: string = ''): Promise<void> {
+  static async sendAlertNotification(orgId: string, type: 'handover' | 'booking' | 'proposal' | 'confirmation', customerPhone: string, customerName: string = 'Cliente', messageText: string = ''): Promise<void> {
     try {
       // Obter nome da organização e e-mails dos admins/owners
       const { data: orgData } = await supabaseAdmin
@@ -246,48 +246,52 @@ export class EmailService {
         .select('name')
         .eq('id', orgId)
         .maybeSingle();
-
+ 
       const { data: teamMembers } = await supabaseAdmin
         .from('team_members')
         .select('email, name, role')
         .eq('org_id', orgId)
         .in('role', ['OWNER', 'ADMIN', 'AGENT']);
-
+ 
       if (!teamMembers || teamMembers.length === 0) {
         console.warn(`[EmailService] Nenhum membro da equipa encontrado para notificar na org ${orgId}`);
         return;
       }
-
+ 
       const orgName = orgData?.name || 'sua organização';
       const host = process.env.SMTP_HOST;
       const port = parseInt(process.env.SMTP_PORT || '587', 10);
       const user = process.env.SMTP_USER;
       const pass = process.env.SMTP_PASS;
       const from = process.env.SMTP_FROM || 'Orion Platform <no-reply@orion.com>';
-
+ 
       if (!user || !pass) {
         console.warn(`[EmailService] SMTP não configurado. Simulação de envio de alerta de ${type} para org ${orgId}.`);
         return;
       }
-
+ 
       const transporter = nodemailer.createTransport({
         host,
         port,
         secure: port === 465,
         auth: { user, pass },
       });
-
+ 
       const title = type === 'handover' 
         ? '🚨 Pedido de Atendimento Humano' 
         : type === 'booking'
         ? '📅 Novo Pedido de Agendamento'
-        : '📎 Proposta Comercial Recebida';
+        : type === 'proposal'
+        ? '📎 Proposta Comercial Recebida'
+        : '⚠️ A CONFIRMAR INFORMAÇÃO';
       const description = type === 'handover' 
         ? 'A Inteligência Artificial detetou que um cliente solicitou falar com um assistente humano.'
         : type === 'booking'
         ? 'Um cliente demonstrou interesse em agendar um serviço ou consulta.'
-        : 'A Inteligência Artificial detetou que o cliente enviou uma proposta comercial (serviço, parceria ou produto).';
-
+        : type === 'proposal'
+        ? 'A Inteligência Artificial detetou que o cliente enviou uma proposta comercial (serviço, parceria ou produto).'
+        : 'A Inteligência Artificial detetou uma pergunta sem dados na base de conhecimento e informou que confirmará as informações.';
+ 
       const htmlContent = `
       <!DOCTYPE html>
       <html>
@@ -296,7 +300,7 @@ export class EmailService {
         <style>
           body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f3f4f6; margin: 0; padding: 0; }
           .container { max-width: 600px; margin: 40px auto; background: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
-          .header { background: ${type === 'handover' ? 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)' : type === 'booking' ? 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)' : 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)'}; padding: 30px 20px; text-align: center; color: #ffffff; }
+          .header { background: ${type === 'handover' ? 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)' : type === 'booking' ? 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)' : type === 'proposal' ? 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)' : 'linear-gradient(135deg, #f97316 0%, #ea580c 100%)'}; padding: 30px 20px; text-align: center; color: #ffffff; }
           .header h1 { margin: 0; font-size: 24px; }
           .content { padding: 30px; color: #1f2937; }
           .card { background-color: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 20px; margin: 20px 0; }
