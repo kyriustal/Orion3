@@ -5,9 +5,9 @@ import {
   Send, User, Bot, AlertCircle, MessageCircle, Loader2, Pause, Play, 
   Wifi, WifiOff, Smartphone, ArrowLeft, Paperclip, FileText, X, 
   Mic, MicOff, Camera, Video, Square, Trash2, Check, RefreshCw, 
-  Volume2, FileSpreadsheet, Film, Image as ImageIcon 
+  Volume2, FileSpreadsheet, Film, Image as ImageIcon, Search, ChevronUp, ChevronDown 
 } from "lucide-react";
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { io, Socket } from "socket.io-client";
 import { toast } from "sonner";
 
@@ -93,6 +93,47 @@ export default function LiveChat() {
   const videoChunksRef = useRef<Blob[]>([]);
   const videoTimerRef = useRef<any>(null);
   const videoElementRef = useRef<HTMLVideoElement | null>(null);
+
+  // Estados para Pesquisa de Conversas e Mensagens
+  const [chatSearchQuery, setChatSearchQuery] = useState("");
+  const [isMessageSearchOpen, setIsMessageSearchOpen] = useState(false);
+  const [messageSearchQuery, setMessageSearchQuery] = useState("");
+  const [searchResultIndex, setSearchResultIndex] = useState(0);
+  const messageRefs = useRef<{ [key: string | number]: HTMLDivElement | null }>({});
+
+  const filteredChats = useMemo(() => {
+    if (!chatSearchQuery.trim()) return chats;
+    const q = chatSearchQuery.toLowerCase().trim();
+    return chats.filter(chat =>
+      chat.phone.toLowerCase().includes(q) ||
+      chat.name.toLowerCase().includes(q) ||
+      (chat.lastMessage && chat.lastMessage.toLowerCase().includes(q))
+    );
+  }, [chats, chatSearchQuery]);
+
+  const matchingMessageIndices = useMemo(() => {
+    if (!messageSearchQuery.trim()) return [];
+    const q = messageSearchQuery.toLowerCase().trim();
+    const result: number[] = [];
+    messages.forEach((msg, idx) => {
+      if (msg.text && msg.text.toLowerCase().includes(q)) {
+        result.push(idx);
+      } else if (msg.metadata?.fileName && msg.metadata.fileName.toLowerCase().includes(q)) {
+        result.push(idx);
+      }
+    });
+    return result;
+  }, [messages, messageSearchQuery]);
+
+  useEffect(() => {
+    if (matchingMessageIndices.length > 0 && searchResultIndex < matchingMessageIndices.length) {
+      const targetIdx = matchingMessageIndices[searchResultIndex];
+      const targetMsg = messages[targetIdx];
+      if (targetMsg && messageRefs.current[targetMsg.id]) {
+        messageRefs.current[targetMsg.id]?.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    }
+  }, [searchResultIndex, matchingMessageIndices, messages]);
 
   // Limpar URLs de pré-visualizações
   useEffect(() => {
@@ -398,6 +439,9 @@ export default function LiveChat() {
     setShowMobileList(false);
     setChats(prev => prev.map(c => c.id === chat.id ? { ...c, unread: 0 } : c));
     setMessages([]);
+    setIsMessageSearchOpen(false);
+    setMessageSearchQuery("");
+    setSearchResultIndex(0);
     try {
       const res = await fetch(`/api/whatsapp/history/${chat.phone}`, { headers: { Authorization: `Bearer ${token()}` } });
       const data = await res.json();
@@ -654,23 +698,40 @@ export default function LiveChat() {
     <div className="flex h-[calc(100vh-8rem)] gap-4">
       {/* Lista de Conversas */}
       <Card className={`w-full lg:w-80 flex flex-col shrink-0 ${!showMobileList ? "hidden lg:flex" : "flex"}`}>
-        <CardHeader className="p-4 border-b border-zinc-100">
+        <CardHeader className="p-4 border-b border-zinc-100 space-y-3">
           <div className="flex items-center justify-between">
             <CardTitle className="text-base">Conversas</CardTitle>
             <span className={`flex items-center gap-1 text-xs px-2 py-1 rounded-full font-medium ${isConnected ? "bg-emerald-50 text-emerald-600" : "bg-zinc-100 text-zinc-400"}`}>
               {isConnected ? <><Wifi className="w-3 h-3" />Tempo real</> : <><WifiOff className="w-3 h-3" />Offline</>}
             </span>
           </div>
+          {/* Caixa de Pesquisa de Conversas / Números */}
+          <div className="relative">
+            <Search className="w-4 h-4 absolute left-3 top-2.5 text-zinc-400" />
+            <Input 
+              value={chatSearchQuery} 
+              onChange={e => setChatSearchQuery(e.target.value)} 
+              placeholder="Pesquisar por número ou nome..." 
+              className="pl-9 pr-8 h-9 text-xs bg-zinc-50 border-zinc-200" 
+            />
+            {chatSearchQuery && (
+              <button onClick={() => setChatSearchQuery("")} className="absolute right-2.5 top-2.5 text-zinc-400 hover:text-zinc-600">
+                <X className="w-4 h-4" />
+              </button>
+            )}
+          </div>
         </CardHeader>
         <CardContent className="flex-1 overflow-y-auto p-0">
           {isLoading ? (
             <div className="flex items-center justify-center h-full"><Loader2 className="w-6 h-6 animate-spin text-emerald-600" /></div>
-          ) : chats.length === 0 ? (
+          ) : filteredChats.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full p-8 text-center">
               <MessageCircle className="w-12 h-12 mb-3 opacity-10" />
-              <p className="text-sm text-zinc-400">Aguardando mensagens...</p>
+              <p className="text-sm text-zinc-400">
+                {chatSearchQuery ? `Nenhuma conversa encontrada para "${chatSearchQuery}"` : "Aguardando mensagens..."}
+              </p>
             </div>
-          ) : chats.map(chat => {
+          ) : filteredChats.map(chat => {
             const previewDate = formatChatPreviewDate(chat.timestamp, chat.time);
             const isToday = chat.timestamp && new Date(chat.timestamp).toDateString() === new Date().toDateString();
             return (
@@ -705,10 +766,66 @@ export default function LiveChat() {
                 <p className="text-xs text-zinc-400 mt-0.5 truncate">{activeChat.phone}</p>
               </div>
             </div>
-            <button onClick={toggleAi} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs font-medium shrink-0 transition-all ${isAiActive ? "bg-emerald-50 border-emerald-200 text-emerald-700" : "bg-amber-50 border-amber-200 text-amber-700"}`}>
-              {isAiActive ? <><Play className="w-3 h-3" />IA Activa</> : <><Pause className="w-3 h-3" />IA Pausada</>}
-            </button>
+            <div className="flex items-center gap-2">
+              {/* Botão para ativar pesquisa na conversa */}
+              <button 
+                onClick={() => {
+                  setIsMessageSearchOpen(!isMessageSearchOpen);
+                  if (isMessageSearchOpen) setMessageSearchQuery("");
+                }} 
+                className={`p-2 rounded-full border text-xs font-medium shrink-0 transition-all ${isMessageSearchOpen ? "bg-emerald-50 border-emerald-300 text-emerald-700" : "hover:bg-zinc-100 border-zinc-200 text-zinc-600"}`}
+                title="Pesquisar mensagens nesta conversa"
+              >
+                <Search className="w-4 h-4" />
+              </button>
+
+              <button onClick={toggleAi} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs font-medium shrink-0 transition-all ${isAiActive ? "bg-emerald-50 border-emerald-200 text-emerald-700" : "bg-amber-50 border-amber-200 text-amber-700"}`}>
+                {isAiActive ? <><Play className="w-3 h-3" />IA Activa</> : <><Pause className="w-3 h-3" />IA Pausada</>}
+              </button>
+            </div>
           </CardHeader>
+
+          {/* Barra de Pesquisa de Mensagens na Conversa */}
+          {isMessageSearchOpen && (
+            <div className="px-4 py-2 bg-emerald-50/60 border-b border-emerald-100 flex items-center gap-2 animate-in slide-in-from-top-2 duration-200 shrink-0">
+              <Search className="w-4 h-4 text-emerald-600 shrink-0" />
+              <Input 
+                value={messageSearchQuery} 
+                onChange={e => { setMessageSearchQuery(e.target.value); setSearchResultIndex(0); }} 
+                placeholder="Pesquisar mensagens nesta conversa..." 
+                className="h-8 text-xs bg-white border-emerald-200 focus-visible:ring-emerald-500 flex-1" 
+                autoFocus
+              />
+              {messageSearchQuery && (
+                <span className="text-xs font-semibold text-emerald-800 shrink-0 min-w-[70px] text-center">
+                  {matchingMessageIndices.length > 0 ? `${searchResultIndex + 1} de ${matchingMessageIndices.length}` : "0 resultados"}
+                </span>
+              )}
+              <button 
+                disabled={matchingMessageIndices.length === 0} 
+                onClick={() => setSearchResultIndex(prev => (prev > 0 ? prev - 1 : matchingMessageIndices.length - 1))} 
+                className="p-1.5 rounded hover:bg-emerald-100 text-emerald-700 disabled:opacity-30 transition-colors"
+                title="Mensagem anterior"
+              >
+                <ChevronUp className="w-4 h-4" />
+              </button>
+              <button 
+                disabled={matchingMessageIndices.length === 0} 
+                onClick={() => setSearchResultIndex(prev => (prev < matchingMessageIndices.length - 1 ? prev + 1 : 0))} 
+                className="p-1.5 rounded hover:bg-emerald-100 text-emerald-700 disabled:opacity-30 transition-colors"
+                title="Próxima mensagem"
+              >
+                <ChevronDown className="w-4 h-4" />
+              </button>
+              <button 
+                onClick={() => { setIsMessageSearchOpen(false); setMessageSearchQuery(""); }} 
+                className="p-1.5 hover:bg-emerald-100 rounded text-emerald-700 transition-colors"
+                title="Fechar pesquisa"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          )}
 
           <CardContent className="flex-1 overflow-y-auto p-4 space-y-4 bg-zinc-50/30">
             {!isAiActive && (
@@ -722,8 +839,10 @@ export default function LiveChat() {
                 new Date(msg.timestamp).toDateString() !== new Date(messages[i - 1].timestamp!).toDateString()
               );
 
+              const isSearchTarget = matchingMessageIndices.length > 0 && matchingMessageIndices[searchResultIndex] === i;
+
               return (
-                <div key={`${msg.id}-${i}`} className="space-y-4">
+                <div key={`${msg.id}-${i}`} ref={el => { messageRefs.current[msg.id] = el; }} className="space-y-4">
                   {showSeparator && (
                     <div className="relative flex items-center justify-center my-6">
                       <div className="absolute inset-0 flex items-center" aria-hidden="true">
@@ -737,7 +856,7 @@ export default function LiveChat() {
                     </div>
                   )}
                   <div className={`flex ${msg.sender === "user" ? "justify-start" : "justify-end"} animate-in fade-in`}>
-                    <div className={`max-w-[72%] rounded-2xl px-4 py-2.5 text-sm shadow-sm ${msg.sender === "user" ? "bg-white border border-zinc-100 text-zinc-900 rounded-tl-sm" : msg.sender === "bot" ? "bg-emerald-50 border border-emerald-100 text-emerald-900 rounded-tr-sm" : "bg-zinc-800 text-white rounded-tr-sm"}`}>
+                    <div className={`max-w-[72%] rounded-2xl px-4 py-2.5 text-sm shadow-sm transition-all ${isSearchTarget ? "ring-2 ring-amber-400 ring-offset-2 scale-[1.01]" : ""} ${msg.sender === "user" ? "bg-white border border-zinc-100 text-zinc-900 rounded-tl-sm" : msg.sender === "bot" ? "bg-emerald-50 border border-emerald-100 text-emerald-900 rounded-tr-sm" : "bg-zinc-800 text-white rounded-tr-sm"}`}>
                       <div className="flex items-center gap-1.5 mb-1 opacity-60">
                         {msg.sender === "user" ? <User className="w-3 h-3" /> : (msg.sender === "bot" ? <Bot className="w-3 h-3" /> : <User className="w-3 h-3" />)}
                         <span className="text-[10px] font-semibold uppercase tracking-wider">
