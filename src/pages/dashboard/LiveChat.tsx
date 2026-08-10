@@ -1,10 +1,16 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/src/components/ui/card";
 import { Button } from "@/src/components/ui/button";
 import { Input } from "@/src/components/ui/input";
-import { Send, User, Bot, AlertCircle, MessageCircle, Loader2, Pause, Play, Wifi, WifiOff, Smartphone, ArrowLeft, Paperclip, FileText, X } from "lucide-react";
+import { 
+  Send, User, Bot, AlertCircle, MessageCircle, Loader2, Pause, Play, 
+  Wifi, WifiOff, Smartphone, ArrowLeft, Paperclip, FileText, X, 
+  Mic, MicOff, Camera, Video, Square, Trash2, Check, RefreshCw, 
+  Volume2, FileSpreadsheet, Film, Image as ImageIcon 
+} from "lucide-react";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { io, Socket } from "socket.io-client";
 import { toast } from "sonner";
+
 type Message = { id: number; sender: "user" | "bot" | "human"; text: string; time: string; timestamp?: string; botName?: string; agentName?: string; metadata?: any; };
 type Chat = { id: string; phone: string; name: string; lastMessage: string; time: string; timestamp: string; platform?: string; unread?: number; needs_confirm?: boolean; };
 
@@ -25,7 +31,6 @@ const formatSeparatorDate = (timestampStr?: string) => {
   }
 };
 
-// Para a previsualização da lista de conversas: hora se hoje, "Ontem" se ontem, data curta se mais antigo
 const formatChatPreviewDate = (timestampStr?: string, fallbackTime?: string) => {
   if (!timestampStr) return fallbackTime || "";
   const date = new Date(timestampStr);
@@ -35,14 +40,18 @@ const formatChatPreviewDate = (timestampStr?: string, fallbackTime?: string) => 
   yesterday.setDate(today.getDate() - 1);
 
   if (date.toDateString() === today.toDateString()) {
-    // Hoje: mostrar apenas a hora
     return date.toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' });
   } else if (date.toDateString() === yesterday.toDateString()) {
     return "Ontem";
   } else {
-    // Mais antigo: mostrar dia e mês abreviado (ex: "24 mai")
     return date.toLocaleDateString('pt-PT', { day: 'numeric', month: 'short' });
   }
+};
+
+const formatTimer = (seconds: number) => {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
 };
 
 export default function LiveChat() {
@@ -58,32 +67,54 @@ export default function LiveChat() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const token = () => localStorage.getItem("token") || "";
 
+  // Seleção e pré-visualização de ficheiros
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [filePreviewUrl, setFilePreviewUrl] = useState<string | null>(null);
   const [isSendingFile, setIsSendingFile] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Limpar pré-visualizações para evitar memory leaks
+  // Estados de Gravação de Áudio (Microfone)
+  const [isRecordingAudio, setIsRecordingAudio] = useState(false);
+  const [audioDuration, setAudioDuration] = useState(0);
+  const audioRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioStreamRef = useRef<MediaStream | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const audioTimerRef = useRef<any>(null);
+
+  // Estados de Gravação de Vídeo (Webcam Modal)
+  const [isVideoModalOpen, setIsVideoModalOpen] = useState(false);
+  const [isRecordingVideo, setIsRecordingVideo] = useState(false);
+  const [videoDuration, setVideoDuration] = useState(0);
+  const [videoPreviewBlob, setVideoPreviewBlob] = useState<Blob | null>(null);
+  const [videoPreviewLocalUrl, setVideoPreviewLocalUrl] = useState<string | null>(null);
+
+  const videoRecorderRef = useRef<MediaRecorder | null>(null);
+  const videoStreamRef = useRef<MediaStream | null>(null);
+  const videoChunksRef = useRef<Blob[]>([]);
+  const videoTimerRef = useRef<any>(null);
+  const videoElementRef = useRef<HTMLVideoElement | null>(null);
+
+  // Limpar URLs de pré-visualizações
   useEffect(() => {
     return () => {
-      if (filePreviewUrl) {
-        URL.revokeObjectURL(filePreviewUrl);
-      }
+      if (filePreviewUrl) URL.revokeObjectURL(filePreviewUrl);
+      if (videoPreviewLocalUrl) URL.revokeObjectURL(videoPreviewLocalUrl);
     };
-  }, [filePreviewUrl]);
+  }, [filePreviewUrl, videoPreviewLocalUrl]);
 
+  // Gestão de selecção de ficheiro
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (file.size > 10 * 1024 * 1024) {
-      toast.error("O ficheiro excede o limite de 10 MB.");
+    if (file.size > 25 * 1024 * 1024) {
+      toast.error("O ficheiro excede o limite de 25 MB.");
       return;
     }
 
     setSelectedFile(file);
 
-    if (file.type.startsWith("image/")) {
+    if (file.type.startsWith("image/") || file.type.startsWith("video/") || file.type.startsWith("audio/")) {
       const previewUrl = URL.createObjectURL(file);
       setFilePreviewUrl(previewUrl);
     } else {
@@ -99,6 +130,164 @@ export default function LiveChat() {
     }
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
+    }
+  };
+
+  // ─── Gravação de Áudio ────────────────────────────────────────────────────────
+  const startAudioRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioStreamRef.current = stream;
+      const recorder = new MediaRecorder(stream);
+      audioRecorderRef.current = recorder;
+      audioChunksRef.current = [];
+
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+
+      recorder.start(200);
+      setIsRecordingAudio(true);
+      setAudioDuration(0);
+      audioTimerRef.current = setInterval(() => setAudioDuration(d => d + 1), 1000);
+    } catch (err: any) {
+      toast.error("Não foi possível aceder ao microfone: " + (err.message || "Permissão negada"));
+    }
+  };
+
+  const stopAudioRecording = (shouldSave: boolean = true) => {
+    if (audioTimerRef.current) clearInterval(audioTimerRef.current);
+
+    if (audioRecorderRef.current && isRecordingAudio) {
+      audioRecorderRef.current.onstop = () => {
+        audioStreamRef.current?.getTracks().forEach(t => t.stop());
+        setIsRecordingAudio(false);
+
+        if (shouldSave && audioChunksRef.current.length > 0) {
+          const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+          const file = new File([blob], `audio_gravacao_${Date.now()}.webm`, { type: 'audio/webm' });
+          setSelectedFile(file);
+          const previewUrl = URL.createObjectURL(blob);
+          setFilePreviewUrl(previewUrl);
+          toast.success("Áudio gravado! Clique em Enviar para disparar.");
+        }
+      };
+      audioRecorderRef.current.stop();
+    } else {
+      audioStreamRef.current?.getTracks().forEach(t => t.stop());
+      setIsRecordingAudio(false);
+    }
+  };
+
+  // ─── Gravação de Vídeo (Modal) ────────────────────────────────────────────────
+  const openVideoModal = async () => {
+    setIsVideoModalOpen(true);
+    setVideoPreviewBlob(null);
+    setVideoPreviewLocalUrl(null);
+    setIsRecordingVideo(false);
+    setVideoDuration(0);
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 1280 }, height: { ideal: 720 } },
+        audio: true
+      });
+      videoStreamRef.current = stream;
+      setTimeout(() => {
+        if (videoElementRef.current) {
+          videoElementRef.current.srcObject = stream;
+          videoElementRef.current.play().catch(() => {});
+        }
+      }, 100);
+    } catch (err: any) {
+      toast.error("Não foi possível aceder à câmara: " + (err.message || "Permissão negada"));
+      setIsVideoModalOpen(false);
+    }
+  };
+
+  const closeVideoModal = () => {
+    if (videoTimerRef.current) clearInterval(videoTimerRef.current);
+    if (videoRecorderRef.current && videoRecorderRef.current.state !== 'inactive') {
+      videoRecorderRef.current.stop();
+    }
+    videoStreamRef.current?.getTracks().forEach(t => t.stop());
+    setIsVideoModalOpen(false);
+    setIsRecordingVideo(false);
+    setVideoPreviewBlob(null);
+    if (videoPreviewLocalUrl) {
+      URL.revokeObjectURL(videoPreviewLocalUrl);
+      setVideoPreviewLocalUrl(null);
+    }
+  };
+
+  const startVideoRecording = () => {
+    if (!videoStreamRef.current) return;
+    try {
+      const recorder = new MediaRecorder(videoStreamRef.current);
+      videoRecorderRef.current = recorder;
+      videoChunksRef.current = [];
+
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) videoChunksRef.current.push(e.data);
+      };
+
+      recorder.start(200);
+      setIsRecordingVideo(true);
+      setVideoDuration(0);
+      videoTimerRef.current = setInterval(() => setVideoDuration(d => d + 1), 1000);
+    } catch (err: any) {
+      toast.error("Erro ao iniciar gravação de vídeo: " + err.message);
+    }
+  };
+
+  const stopVideoRecording = () => {
+    if (videoTimerRef.current) clearInterval(videoTimerRef.current);
+    if (videoRecorderRef.current && isRecordingVideo) {
+      videoRecorderRef.current.onstop = () => {
+        setIsRecordingVideo(false);
+        const blob = new Blob(videoChunksRef.current, { type: 'video/webm' });
+        setVideoPreviewBlob(blob);
+        const previewUrl = URL.createObjectURL(blob);
+        setVideoPreviewLocalUrl(previewUrl);
+      };
+      videoRecorderRef.current.stop();
+    }
+  };
+
+  const confirmVideoRecording = () => {
+    if (!videoPreviewBlob) return;
+    const file = new File([videoPreviewBlob], `video_gravacao_${Date.now()}.webm`, { type: 'video/webm' });
+    setSelectedFile(file);
+    if (videoPreviewLocalUrl) {
+      setFilePreviewUrl(videoPreviewLocalUrl);
+    }
+    closeVideoModal();
+    toast.success("Vídeo gravado com sucesso. Clique em Enviar para disparar.");
+  };
+
+  const retakeVideo = async () => {
+    if (videoPreviewLocalUrl) {
+      URL.revokeObjectURL(videoPreviewLocalUrl);
+      setVideoPreviewLocalUrl(null);
+    }
+    setVideoPreviewBlob(null);
+    setIsRecordingVideo(false);
+    setVideoDuration(0);
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 1280 }, height: { ideal: 720 } },
+        audio: true
+      });
+      videoStreamRef.current = stream;
+      setTimeout(() => {
+        if (videoElementRef.current) {
+          videoElementRef.current.srcObject = stream;
+          videoElementRef.current.play().catch(() => {});
+        }
+      }, 100);
+    } catch (err: any) {
+      toast.error("Erro ao reiniciar câmara: " + err.message);
     }
   };
 
@@ -150,7 +339,6 @@ export default function LiveChat() {
       setActiveChatId(activeId => {
         if (activeId === data.phone) {
           setMessages(prev => {
-            // Evitar duplicações detetando se a mensagem humana já existe na lista
             if (data.sender === "human") {
               const isDuplicate = prev.some(msg => 
                 msg.sender === "human" && 
@@ -158,7 +346,6 @@ export default function LiveChat() {
                 Math.abs(new Date(msg.timestamp || '').getTime() - new Date(data.timestamp).getTime()) < 10000
               );
               if (isDuplicate) {
-                // Atualiza o nome do agente se ainda não estiver definido
                 return prev.map(msg => 
                   (msg.sender === "human" && msg.text === data.text && !msg.agentName) 
                   ? { ...msg, agentName: data.agentName } 
@@ -337,38 +524,51 @@ export default function LiveChat() {
           </a>
         ) : metadata.mimeType?.startsWith("video/") ? (
           <div className="space-y-0">
-            <video controls src={metadata.mediaUrl} className="w-full bg-black" style={{ maxHeight: 220 }} />
-            <div className="p-2.5 flex items-center justify-between gap-2">
-              <p className="text-xs font-semibold text-zinc-800 dark:text-zinc-200 truncate">{metadata.fileName || "Vídeo"}</p>
+            <video controls src={metadata.mediaUrl} className="w-full bg-black rounded-t-xl" style={{ maxHeight: 220 }} />
+            <div className="p-2.5 flex items-center justify-between gap-2 bg-white dark:bg-zinc-900">
+              <div className="flex items-center gap-2 min-w-0">
+                <Film className="w-4 h-4 text-emerald-600 shrink-0" />
+                <p className="text-xs font-semibold text-zinc-800 dark:text-zinc-200 truncate">{metadata.fileName || "Vídeo"}</p>
+              </div>
               <a href={metadata.mediaUrl} download={metadata.fileName || "video"} className="shrink-0 text-xs font-bold text-emerald-600 dark:text-emerald-400 hover:underline px-2 py-1 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-950/30 transition-colors">
                 Baixar
               </a>
             </div>
           </div>
         ) : metadata.mimeType?.startsWith("audio/") ? (
-          <div className="p-3 space-y-2.5">
+          <div className="p-3 space-y-2 bg-white dark:bg-zinc-900">
             <div className="flex items-center gap-2.5">
               <div className="p-2 bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 rounded-lg shrink-0">
-                <FileText className="w-4 h-4" />
+                <Volume2 className="w-4 h-4" />
               </div>
               <div className="min-w-0 flex-1">
                 <p className="text-xs font-semibold text-zinc-900 dark:text-zinc-100 truncate">{metadata.fileName || "Áudio"}</p>
-                <p className="text-[10px] text-zinc-400 uppercase mt-0.5">Áudio</p>
+                <p className="text-[10px] text-zinc-400 uppercase mt-0.5">Mensagem de Áudio</p>
               </div>
               <a href={metadata.mediaUrl} download={metadata.fileName || "audio"} className="shrink-0 text-xs font-bold text-emerald-600 dark:text-emerald-400 hover:underline px-2 py-1 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-950/30 transition-colors">
                 Baixar
               </a>
             </div>
-            <audio controls src={metadata.mediaUrl} className="w-full" style={{ height: 32 }} />
+            <audio controls src={metadata.mediaUrl} className="w-full" style={{ height: 36 }} />
           </div>
         ) : (
-          <div className="p-3 flex items-center gap-3">
+          <div className="p-3 flex items-center gap-3 bg-white dark:bg-zinc-900">
             <div className="p-2.5 bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 rounded-lg">
-              <FileText className="w-5 h-5" />
+              {metadata.fileName?.toLowerCase().endsWith(".pdf") ? (
+                <FileText className="w-5 h-5 text-red-500" />
+              ) : metadata.fileName?.toLowerCase().match(/\.(doc|docx)$/) ? (
+                <FileText className="w-5 h-5 text-blue-500" />
+              ) : metadata.fileName?.toLowerCase().match(/\.(xls|xlsx)$/) ? (
+                <FileSpreadsheet className="w-5 h-5 text-emerald-600" />
+              ) : (
+                <FileText className="w-5 h-5 text-emerald-600" />
+              )}
             </div>
             <div className="min-w-0 flex-1">
               <p className="text-xs font-semibold text-zinc-900 dark:text-zinc-100 truncate">{metadata.fileName || "Documento"}</p>
-              <p className="text-[10px] text-zinc-400 uppercase mt-0.5">{metadata.mimeType?.split("/")[1] || "ficheiro"}</p>
+              <p className="text-[10px] text-zinc-400 uppercase mt-0.5">
+                {metadata.fileName ? metadata.fileName.split('.').pop()?.toUpperCase() : (metadata.mimeType?.split("/")[1] || "ficheiro")}
+              </p>
             </div>
             {metadata.isUploading ? (
               <Loader2 className="w-4 h-4 animate-spin text-emerald-600 shrink-0" />
@@ -440,7 +640,6 @@ export default function LiveChat() {
       return parts.length > 0 ? parts : rawText;
     };
 
-    // Suprimir texto placeholder quando há previsualização de ficheiro (evitar duplicação)
     const isMediaPlaceholder = filePreview && /^\((Imagem|V[íi]deo|[\u00c1A]udio|Documento|Conte[úu]do|Ficheiro|Anexo|Mensagem de [\u00c1A]udio)[^)]*\)$/.test(text?.trim() || "");
 
     return (
@@ -453,6 +652,7 @@ export default function LiveChat() {
 
   return (
     <div className="flex h-[calc(100vh-8rem)] gap-4">
+      {/* Lista de Conversas */}
       <Card className={`w-full lg:w-80 flex flex-col shrink-0 ${!showMobileList ? "hidden lg:flex" : "flex"}`}>
         <CardHeader className="p-4 border-b border-zinc-100">
           <div className="flex items-center justify-between">
@@ -492,6 +692,7 @@ export default function LiveChat() {
         </CardContent>
       </Card>
 
+      {/* Janela Ativa do Chat */}
       {activeChat ? (
         <Card className={`flex-1 flex flex-col overflow-hidden w-full ${showMobileList ? "hidden lg:flex" : "flex"}`}>
           <CardHeader className="p-4 border-b border-zinc-100 flex flex-row items-center justify-between space-y-0 shrink-0 gap-2">
@@ -564,41 +765,131 @@ export default function LiveChat() {
             <div ref={messagesEndRef} />
           </CardContent>
 
+          {/* Barra de Envio e Anexos */}
           <div className="p-4 border-t border-zinc-100 bg-white shrink-0">
+            {/* Pré-visualização do Ficheiro Selecionado / Gravado */}
             {selectedFile && (
-              <div className="mb-3 p-2 bg-zinc-50 border border-zinc-200 rounded-xl flex items-center justify-between gap-3 animate-in slide-in-from-bottom-2 duration-200">
-                <div className="flex items-center gap-2.5 min-w-0">
-                  {filePreviewUrl ? (
-                    <div className="w-10 h-10 rounded-lg overflow-hidden border border-zinc-200 bg-white shrink-0">
+              <div className="mb-3 p-2.5 bg-zinc-50 border border-zinc-200 rounded-xl flex items-center justify-between gap-3 animate-in slide-in-from-bottom-2 duration-200">
+                <div className="flex items-center gap-3 min-w-0 flex-1">
+                  {selectedFile.type.startsWith("image/") && filePreviewUrl ? (
+                    <div className="w-12 h-12 rounded-lg overflow-hidden border border-zinc-200 bg-white shrink-0">
                       <img src={filePreviewUrl} alt="Preview" className="w-full h-full object-cover" />
                     </div>
+                  ) : selectedFile.type.startsWith("video/") && filePreviewUrl ? (
+                    <div className="w-16 h-12 rounded-lg overflow-hidden border border-zinc-200 bg-black shrink-0 relative">
+                      <video src={filePreviewUrl} className="w-full h-full object-cover" />
+                      <div className="absolute inset-0 flex items-center justify-center bg-black/30">
+                        <Film className="w-4 h-4 text-white" />
+                      </div>
+                    </div>
+                  ) : selectedFile.type.startsWith("audio/") ? (
+                    <div className="p-2.5 bg-emerald-50 text-emerald-600 rounded-lg shrink-0 border border-emerald-100">
+                      <Volume2 className="w-5 h-5" />
+                    </div>
                   ) : (
-                    <div className="w-10 h-10 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center border border-zinc-200 shrink-0">
+                    <div className="p-2.5 bg-blue-50 text-blue-600 rounded-lg shrink-0 border border-blue-100">
                       <FileText className="w-5 h-5" />
                     </div>
                   )}
+
                   <div className="min-w-0 flex-1">
                     <p className="text-xs font-semibold text-zinc-800 truncate">{selectedFile.name}</p>
-                    <p className="text-[10px] text-zinc-400">{(selectedFile.size / 1024 / 1024).toFixed(2)} MB</p>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <span className="text-[10px] text-zinc-400 font-mono">{(selectedFile.size / 1024 / 1024).toFixed(2)} MB</span>
+                      <span className="text-[9px] uppercase px-1.5 py-0.5 rounded bg-zinc-200/70 text-zinc-600 font-bold">
+                        {selectedFile.name.split('.').pop() || "FICHEIRO"}
+                      </span>
+                    </div>
                   </div>
                 </div>
-                <button onClick={removeSelectedFile} className="p-1 hover:bg-zinc-200 rounded-full text-zinc-500 shrink-0 transition-colors">
+
+                {selectedFile.type.startsWith("audio/") && filePreviewUrl && (
+                  <audio controls src={filePreviewUrl} className="h-8 max-w-[180px] hidden sm:block" />
+                )}
+
+                <button onClick={removeSelectedFile} title="Remover anexo" className="p-1.5 hover:bg-zinc-200 rounded-full text-zinc-500 shrink-0 transition-colors">
                   <X className="w-4 h-4" />
                 </button>
               </div>
             )}
 
-            <div className="flex gap-2 items-center">
-              <input type="file" ref={fileInputRef} onChange={handleFileChange} className="hidden" accept="*" />
-              <Button type="button" onClick={() => fileInputRef.current?.click()} variant="outline" className="shrink-0 p-2.5 h-10 w-10 border border-zinc-200 text-zinc-600 hover:bg-zinc-50 hover:text-zinc-950 transition-colors rounded-lg">
-                <Paperclip className="w-5 h-5" />
-              </Button>
-              <Input value={message} onChange={e => setMessage(e.target.value)} onKeyDown={e => e.key === "Enter" && handleSend()} placeholder={selectedFile ? "Adicione uma legenda ao ficheiro..." : "Escreva como agente humano..."} className="flex-1" />
-              <Button onClick={handleSend} disabled={!message.trim() && !selectedFile} className="shrink-0 bg-emerald-600 hover:bg-emerald-700 gap-2">
-                {isSendingFile ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-                Enviar
-              </Button>
-            </div>
+            {/* Interface Ativa de Gravação de Áudio */}
+            {isRecordingAudio ? (
+              <div className="flex items-center gap-3 p-2 bg-red-50 border border-red-200 rounded-xl animate-in fade-in duration-200">
+                <div className="flex items-center gap-2 flex-1 px-2">
+                  <span className="relative flex h-3 w-3">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
+                  </span>
+                  <span className="text-xs font-bold text-red-700">Gravação de Áudio:</span>
+                  <span className="text-xs font-mono font-semibold text-red-600">{formatTimer(audioDuration)}</span>
+                </div>
+                <Button type="button" variant="outline" size="sm" onClick={() => stopAudioRecording(false)} className="text-zinc-600 border-zinc-200 hover:bg-zinc-100 gap-1 text-xs">
+                  <X className="w-3.5 h-3.5" /> Cancelar
+                </Button>
+                <Button type="button" size="sm" onClick={() => stopAudioRecording(true)} className="bg-red-600 hover:bg-red-700 text-white gap-1 text-xs font-bold">
+                  <Check className="w-3.5 h-3.5" /> Concluir Áudio
+                </Button>
+              </div>
+            ) : (
+              /* Interface Normal de Entrada de Texto e Ações */
+              <div className="flex gap-2 items-center">
+                <input 
+                  type="file" 
+                  ref={fileInputRef} 
+                  onChange={handleFileChange} 
+                  className="hidden" 
+                  accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt" 
+                />
+                
+                {/* Botão Anexo */}
+                <Button 
+                  type="button" 
+                  onClick={() => fileInputRef.current?.click()} 
+                  variant="outline" 
+                  title="Anexar documento, imagem ou vídeo"
+                  className="shrink-0 p-2.5 h-10 w-10 border border-zinc-200 text-zinc-600 hover:bg-zinc-50 hover:text-zinc-950 transition-colors rounded-lg"
+                >
+                  <Paperclip className="w-5 h-5" />
+                </Button>
+
+                {/* Botão Gravador de Voz (Microfone) */}
+                <Button 
+                  type="button" 
+                  onClick={startAudioRecording} 
+                  variant="outline" 
+                  title="Gravar áudio com o microfone"
+                  className="shrink-0 p-2.5 h-10 w-10 border border-zinc-200 text-zinc-600 hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-colors rounded-lg"
+                >
+                  <Mic className="w-5 h-5" />
+                </Button>
+
+                {/* Botão Gravador de Vídeo (Webcam) */}
+                <Button 
+                  type="button" 
+                  onClick={openVideoModal} 
+                  variant="outline" 
+                  title="Gravar vídeo com a câmara"
+                  className="shrink-0 p-2.5 h-10 w-10 border border-zinc-200 text-zinc-600 hover:bg-emerald-50 hover:text-emerald-600 hover:border-emerald-200 transition-colors rounded-lg"
+                >
+                  <Camera className="w-5 h-5" />
+                </Button>
+
+                <Input 
+                  value={message} 
+                  onChange={e => setMessage(e.target.value)} 
+                  onKeyDown={e => e.key === "Enter" && handleSend()} 
+                  placeholder={selectedFile ? "Adicione uma legenda ao ficheiro..." : "Escreva como agente humano..."} 
+                  className="flex-1" 
+                />
+
+                <Button onClick={handleSend} disabled={!message.trim() && !selectedFile} className="shrink-0 bg-emerald-600 hover:bg-emerald-700 gap-2">
+                  {isSendingFile ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                  Enviar
+                </Button>
+              </div>
+            )}
+
             <p className="text-[10px] text-zinc-400 mt-2 text-center">Enviar como humano pausa a IA por 5 min automaticamente.</p>
           </div>
         </Card>
@@ -610,6 +901,62 @@ export default function LiveChat() {
             <p className="text-sm mt-1">{isConnected ? "✅ Ligado em tempo real" : "⏳ A conectar..."}</p>
           </div>
         </Card>
+      )}
+
+      {/* Modal de Gravação de Vídeo (Webcam) */}
+      {isVideoModalOpen && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
+          <Card className="w-full max-w-lg bg-zinc-900 border-zinc-800 text-white overflow-hidden shadow-2xl">
+            <CardHeader className="p-4 border-b border-zinc-800 flex flex-row items-center justify-between">
+              <CardTitle className="text-base font-semibold flex items-center gap-2 text-white">
+                <Video className="w-5 h-5 text-emerald-400" />
+                Gravar Vídeo com a Câmara
+              </CardTitle>
+              <button onClick={closeVideoModal} className="p-1 hover:bg-zinc-800 rounded-full text-zinc-400 hover:text-white transition-colors">
+                <X className="w-5 h-5" />
+              </button>
+            </CardHeader>
+
+            <CardContent className="p-4 space-y-4">
+              <div className="relative aspect-video bg-black rounded-xl overflow-hidden border border-zinc-800 flex items-center justify-center">
+                {videoPreviewLocalUrl ? (
+                  <video src={videoPreviewLocalUrl} controls autoPlay className="w-full h-full object-cover" />
+                ) : (
+                  <video ref={videoElementRef} autoPlay muted playsInline className="w-full h-full object-cover" />
+                )}
+
+                {isRecordingVideo && (
+                  <div className="absolute top-3 left-3 bg-red-600/90 backdrop-blur-sm text-white px-3 py-1 rounded-full text-xs font-mono font-bold flex items-center gap-2">
+                    <span className="h-2 w-2 rounded-full bg-white animate-ping"></span>
+                    {formatTimer(videoDuration)}
+                  </div>
+                )}
+              </div>
+
+              {/* Controlos do Modal de Vídeo */}
+              <div className="flex items-center justify-center gap-3 pt-2">
+                {videoPreviewLocalUrl ? (
+                  <>
+                    <Button type="button" variant="outline" onClick={retakeVideo} className="border-zinc-700 bg-zinc-800 text-zinc-200 hover:bg-zinc-700 gap-2">
+                      <RefreshCw className="w-4 h-4" /> Refazer Vídeo
+                    </Button>
+                    <Button type="button" onClick={confirmVideoRecording} className="bg-emerald-600 hover:bg-emerald-700 text-white gap-2 font-bold">
+                      <Check className="w-4 h-4" /> Usar Este Vídeo
+                    </Button>
+                  </>
+                ) : isRecordingVideo ? (
+                  <Button type="button" onClick={stopVideoRecording} className="bg-red-600 hover:bg-red-700 text-white gap-2 px-6 font-bold">
+                    <Square className="w-4 h-4 fill-white" /> Parar Gravação
+                  </Button>
+                ) : (
+                  <Button type="button" onClick={startVideoRecording} className="bg-red-600 hover:bg-red-700 text-white gap-2 px-6 font-bold">
+                    <Camera className="w-4 h-4" /> Iniciar Gravação
+                  </Button>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
       )}
     </div>
   );

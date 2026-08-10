@@ -161,7 +161,7 @@ export class WhatsAppService {
         }
     }
     /**
-     * Envia media (imagem ou documento) a partir de uma URL pública
+     * Envia media (imagem, vídeo, áudio ou documento) a partir de uma URL pública
      */
     static async sendMediaByUrl(
         toNumber: string, 
@@ -176,8 +176,14 @@ export class WhatsAppService {
 
         try {
             const isImage = mimeType.startsWith('image/');
-            const type = isImage ? 'image' : 'document';
+            const isVideo = mimeType.startsWith('video/');
+            const isAudio = mimeType.startsWith('audio/');
             
+            let type = 'document';
+            if (isImage) type = 'image';
+            else if (isVideo) type = 'video';
+            else if (isAudio) type = 'audio';
+
             const url = `https://graph.facebook.com/v19.0/${phoneNumberId}/messages`;
             const payload: any = {
                 messaging_product: "whatsapp",
@@ -188,6 +194,10 @@ export class WhatsAppService {
 
             if (isImage) {
                 payload.image = { link: mediaUrl };
+            } else if (isVideo) {
+                payload.video = { link: mediaUrl };
+            } else if (isAudio) {
+                payload.audio = { link: mediaUrl };
             } else {
                 payload.document = { link: mediaUrl, filename: fileName };
             }
