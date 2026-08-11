@@ -4,8 +4,8 @@ import { Input } from "@/src/components/ui/input";
 import { 
   Send, User, Bot, AlertCircle, MessageCircle, Loader2, Pause, Play, 
   Wifi, WifiOff, Smartphone, ArrowLeft, Paperclip, FileText, X, 
-  Mic, MicOff, Camera, Video, Square, Trash2, Check, RefreshCw, 
-  Volume2, FileSpreadsheet, Film, Image as ImageIcon, Search, ChevronUp, ChevronDown 
+  Mic, Camera, Video, Square, Check, RefreshCw, 
+  Volume2, Search, ChevronUp, ChevronDown 
 } from "lucide-react";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { io, Socket } from "socket.io-client";
@@ -100,6 +100,7 @@ export default function LiveChat() {
   const [messageSearchQuery, setMessageSearchQuery] = useState("");
   const [searchResultIndex, setSearchResultIndex] = useState(0);
   const messageRefs = useRef<{ [key: string | number]: HTMLDivElement | null }>({});
+  const pendingClientIds = useRef<Set<string>>(new Set());
 
   const filteredChats = useMemo(() => {
     if (!chatSearchQuery.trim()) return chats;
@@ -353,10 +354,15 @@ export default function LiveChat() {
         const hasConfirm = data.metadata?.confirm === true;
         const isHuman = data.sender === "human";
 
+        // Previsualização no painel lateral: para ficheiros usa o fileName, caso contrário usa o texto
+        const previewText = data.metadata?.fileName
+          ? `📎 ${data.metadata.fileName}`
+          : data.text;
+
         if (exists) {
           return prev.map(c => c.id === data.phone ? { 
             ...c, 
-            lastMessage: data.text, 
+            lastMessage: previewText, 
             time: data.time, 
             unread: (c.unread || 0) + 1,
             needs_confirm: isHuman ? false : (hasConfirm || c.needs_confirm)
@@ -368,7 +374,7 @@ export default function LiveChat() {
           id: data.phone, 
           phone: data.phone, 
           name: nameDisplay, 
-          lastMessage: data.text, 
+          lastMessage: previewText, 
           time: data.time, 
           timestamp: data.timestamp, 
           platform: data.platform, 
@@ -379,21 +385,32 @@ export default function LiveChat() {
 
       setActiveChatId(activeId => {
         if (activeId === data.phone) {
-          setMessages(prev => {
-            if (data.sender === "human") {
-              const isDuplicate = prev.some(msg => 
-                msg.sender === "human" && 
-                msg.text === data.text && 
-                Math.abs(new Date(msg.timestamp || '').getTime() - new Date(data.timestamp).getTime()) < 10000
-              );
-              if (isDuplicate) {
-                return prev.map(msg => 
-                  (msg.sender === "human" && msg.text === data.text && !msg.agentName) 
-                  ? { ...msg, agentName: data.agentName } 
-                  : msg
-                );
-              }
+          // Se este evento corresponde a uma mensagem que já adicionámos
+          // optimisticamente (via clientMsgId), ignoramos para não duplicar.
+          const incomingClientId: string | undefined = data.metadata?.clientMsgId;
+          if (data.sender === "human" && incomingClientId && pendingClientIds.current.has(incomingClientId)) {
+            pendingClientIds.current.delete(incomingClientId);
+            // Atualizar a mensagem existente com a URL final do ficheiro (se vier em metadata)
+            setMessages(prev => prev.map(msg =>
+              msg.metadata?.clientMsgId === incomingClientId
+                ? { ...msg, metadata: { ...msg.metadata, ...data.metadata, clientMsgId: undefined } }
+                : msg
+            ));
+            return activeId;
+          }
+
+          // Suprimir também mensagens de legenda que não têm clientMsgId
+          // mas são enviadas pelo próprio agente (para evitar duplicar quando há caption)
+          if (data.sender === "human" && !incomingClientId) {
+            // Legenda enviada separadamente pelo backend — verificar se já temos o ficheiro correspondente
+            const captionKey = `${[...pendingClientIds.current].find(k => k.endsWith('_caption')) || ''}`.replace('_caption', '');
+            if (captionKey) {
+              pendingClientIds.current.delete(`${captionKey}_caption`);
+              return activeId;
             }
+          }
+
+          setMessages(prev => {
             return [...prev, { 
               id: Date.now() + Math.random(), 
               sender: data.sender as any, 
@@ -460,6 +477,7 @@ export default function LiveChat() {
     } catch {}
 
     const text = message.trim();
+    const clientMsgId = `cm_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     setMessage("");
 
     if (selectedFile) {
@@ -471,10 +489,15 @@ export default function LiveChat() {
       removeSelectedFile();
 
       const tempId = Date.now();
+      // Registar o clientMsgId para o socket ignorar o eco deste envio (ficheiro + legenda)
+      const captionClientId = text ? `${clientMsgId}_caption` : null;
+      pendingClientIds.current.add(clientMsgId);
+      if (captionClientId) pendingClientIds.current.add(captionClientId);
+
       setMessages(prev => [...prev, {
         id: tempId,
         sender: "human",
-        text: text ? `[Ficheiro: ${fileName}](${localPreviewUrl || ""})\n\n${text}` : `[Ficheiro: ${fileName}](${localPreviewUrl || ""})`,
+        text: "",
         time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
         timestamp: new Date().toISOString(),
         agentName,
@@ -483,7 +506,9 @@ export default function LiveChat() {
           mediaUrl: localPreviewUrl || "",
           fileName,
           mimeType: fileType,
-          isUploading: true
+          caption: text || undefined,
+          isUploading: true,
+          clientMsgId
         }
       }]);
 
@@ -491,9 +516,8 @@ export default function LiveChat() {
         const formData = new FormData();
         formData.append("phone", activeChatId);
         formData.append("file", fileToSend);
-        if (text) {
-          formData.append("message", text);
-        }
+        formData.append("clientMsgId", clientMsgId);
+        if (text) formData.append("message", text);
 
         const res = await fetch("/api/whatsapp/send-file", {
           method: "POST",
@@ -506,38 +530,48 @@ export default function LiveChat() {
 
         setMessages(prev => prev.map(m => m.id === tempId ? {
           ...m,
-          text: text ? `[Ficheiro: ${fileName}](${resData.fileUrl})\n\n${text}` : `[Ficheiro: ${fileName}](${resData.fileUrl})`,
           metadata: {
             agentName,
             mediaUrl: resData.fileUrl,
-            fileName: resData.fileName,
-            mimeType: fileType
+            fileName: resData.fileName || fileName,
+            mimeType: fileType,
+            caption: text || undefined
           }
         } : m));
 
       } catch (err: any) {
         toast.error(err.message);
+        pendingClientIds.current.delete(clientMsgId);
+        if (captionClientId) pendingClientIds.current.delete(captionClientId);
         setMessages(prev => prev.filter(m => m.id !== tempId));
       } finally {
         setIsSendingFile(false);
       }
     } else {
+      // Registar o clientMsgId para o socket ignorar o eco deste envio
+      pendingClientIds.current.add(clientMsgId);
+
+      const optimisticId = Date.now() + Math.random();
       setMessages(prev => [...prev, { 
-        id: Date.now(), 
+        id: optimisticId, 
         sender: "human", 
         text, 
         time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
         timestamp: new Date().toISOString(),
-        agentName
+        agentName,
+        metadata: { clientMsgId }
       }]);
 
       try {
         const res = await fetch("/api/whatsapp/send", {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${token()}` },
-          body: JSON.stringify({ phone: activeChatId, message: text }),
+          body: JSON.stringify({ phone: activeChatId, message: text, clientMsgId }),
         });
-        if (!res.ok) throw new Error((await res.json()).error || "Falha ao enviar");
+        if (!res.ok) {
+          pendingClientIds.current.delete(clientMsgId);
+          throw new Error((await res.json()).error || "Falha ao enviar");
+        }
       } catch (err: any) { toast.error(err.message); }
     }
   };
@@ -551,147 +585,109 @@ export default function LiveChat() {
 
   const activeChat = chats.find(c => c.id === activeChatId) || chats[0];
 
+  const parseLinks = (rawText: string) => {
+    if (!rawText) return null;
+    const tokens: { start: number; end: number; url: string; label: string }[] = [];
+    const urlRegex = /(https?:\/\/[^\s<>"{}|\\^`[\]]+)/g;
+    for (const m of [...rawText.matchAll(urlRegex)]) {
+      if (m.index !== undefined) tokens.push({ start: m.index, end: m.index + m[0].length, url: m[0], label: m[0] });
+    }
+    if (tokens.length === 0) return <>{rawText}</>;
+    const parts: React.ReactNode[] = [];
+    let cur = 0;
+    tokens.forEach((t, i) => {
+      if (t.start > cur) parts.push(rawText.substring(cur, t.start));
+      parts.push(<a key={i} href={t.url} target="_blank" rel="noopener noreferrer" className="underline text-emerald-600 dark:text-emerald-400 hover:opacity-80 break-all">{t.label}</a>);
+      cur = t.end;
+    });
+    if (cur < rawText.length) parts.push(rawText.substring(cur));
+    return <>{parts}</>;
+  };
+
   const renderMessageContent = (text: string, metadata?: any) => {
-    const filePreview = metadata?.mediaUrl ? (
-      <div className="mt-2 border border-zinc-200/60 dark:border-zinc-700/60 rounded-xl overflow-hidden bg-white/50 dark:bg-zinc-900/50 backdrop-blur-sm shadow-sm max-w-sm">
-        {metadata.mimeType?.startsWith("image/") ? (
-          <a href={metadata.mediaUrl} target="_blank" rel="noopener noreferrer" className="block relative group overflow-hidden aspect-video bg-zinc-100 dark:bg-zinc-800">
-            <img src={metadata.mediaUrl} alt={metadata.fileName || "Imagem"} className="object-cover w-full h-full transition-transform duration-300 group-hover:scale-105" />
-            <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-              <span className="text-white text-xs font-medium bg-black/60 px-2.5 py-1 rounded-full backdrop-blur-sm">Visualizar imagem</span>
-            </div>
-            {metadata.isUploading && (
-              <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
-                <Loader2 className="w-6 h-6 animate-spin text-white" />
+    const hasMedia = !!metadata?.mediaUrl;
+    const caption = metadata?.caption;
+    const isUploading = metadata?.isUploading;
+
+    // ── Imagem ──────────────────────────────────────────────────────────────────
+    if (hasMedia && metadata.mimeType?.startsWith("image/")) {
+      return (
+        <div className="space-y-1">
+          <a href={metadata.mediaUrl} target="_blank" rel="noopener noreferrer" className="block relative">
+            <img
+              src={metadata.mediaUrl}
+              alt={metadata.fileName || "Imagem"}
+              className="rounded-xl max-h-56 w-auto object-cover"
+              style={{ maxWidth: 240 }}
+            />
+            {isUploading && (
+              <div className="absolute inset-0 rounded-xl bg-black/40 flex items-center justify-center">
+                <Loader2 className="w-5 h-5 animate-spin text-white" />
               </div>
             )}
           </a>
-        ) : metadata.mimeType?.startsWith("video/") ? (
-          <div className="space-y-0">
-            <video controls src={metadata.mediaUrl} className="w-full bg-black rounded-t-xl" style={{ maxHeight: 220 }} />
-            <div className="p-2.5 flex items-center justify-between gap-2 bg-white dark:bg-zinc-900">
-              <div className="flex items-center gap-2 min-w-0">
-                <Film className="w-4 h-4 text-emerald-600 shrink-0" />
-                <p className="text-xs font-semibold text-zinc-800 dark:text-zinc-200 truncate">{metadata.fileName || "Vídeo"}</p>
-              </div>
-              <a href={metadata.mediaUrl} download={metadata.fileName || "video"} className="shrink-0 text-xs font-bold text-emerald-600 dark:text-emerald-400 hover:underline px-2 py-1 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-950/30 transition-colors">
-                Baixar
-              </a>
-            </div>
-          </div>
-        ) : metadata.mimeType?.startsWith("audio/") ? (
-          <div className="p-3 space-y-2 bg-white dark:bg-zinc-900">
-            <div className="flex items-center gap-2.5">
-              <div className="p-2 bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 rounded-lg shrink-0">
-                <Volume2 className="w-4 h-4" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="text-xs font-semibold text-zinc-900 dark:text-zinc-100 truncate">{metadata.fileName || "Áudio"}</p>
-                <p className="text-[10px] text-zinc-400 uppercase mt-0.5">Mensagem de Áudio</p>
-              </div>
-              <a href={metadata.mediaUrl} download={metadata.fileName || "audio"} className="shrink-0 text-xs font-bold text-emerald-600 dark:text-emerald-400 hover:underline px-2 py-1 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-950/30 transition-colors">
-                Baixar
-              </a>
-            </div>
-            <audio controls src={metadata.mediaUrl} className="w-full" style={{ height: 36 }} />
-          </div>
-        ) : (
-          <div className="p-3 flex items-center gap-3 bg-white dark:bg-zinc-900">
-            <div className="p-2.5 bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 rounded-lg">
-              {metadata.fileName?.toLowerCase().endsWith(".pdf") ? (
-                <FileText className="w-5 h-5 text-red-500" />
-              ) : metadata.fileName?.toLowerCase().match(/\.(doc|docx)$/) ? (
-                <FileText className="w-5 h-5 text-blue-500" />
-              ) : metadata.fileName?.toLowerCase().match(/\.(xls|xlsx)$/) ? (
-                <FileSpreadsheet className="w-5 h-5 text-emerald-600" />
-              ) : (
-                <FileText className="w-5 h-5 text-emerald-600" />
-              )}
+          {caption && <p className="text-[13px] whitespace-pre-wrap break-words mt-0.5 leading-snug">{parseLinks(caption)}</p>}
+        </div>
+      );
+    }
+
+    // ── Vídeo ───────────────────────────────────────────────────────────────────
+    if (hasMedia && metadata.mimeType?.startsWith("video/")) {
+      return (
+        <div className="space-y-1">
+          <video controls src={metadata.mediaUrl} className="rounded-xl w-full" style={{ maxHeight: 220, maxWidth: 280 }} />
+          {caption && <p className="text-[13px] whitespace-pre-wrap break-words mt-0.5 leading-snug">{parseLinks(caption)}</p>}
+        </div>
+      );
+    }
+
+    // ── Áudio ───────────────────────────────────────────────────────────────────
+    if (hasMedia && metadata.mimeType?.startsWith("audio/")) {
+      return (
+        <div className="flex items-center gap-2 py-0.5">
+          <Volume2 className="w-4 h-4 shrink-0 opacity-60" />
+          <audio controls src={metadata.mediaUrl} className="h-8 flex-1" style={{ maxWidth: 220 }} />
+          {isUploading && <Loader2 className="w-4 h-4 animate-spin shrink-0 opacity-60" />}
+        </div>
+      );
+    }
+
+    // ── Documento ────────────────────────────────────────────────────────────────
+    if (hasMedia) {
+      const ext = (metadata.fileName || "").split('.').pop()?.toUpperCase() || "DOC";
+      const isPdf = metadata.fileName?.toLowerCase().endsWith(".pdf");
+      const isXls = metadata.fileName?.toLowerCase().match(/\.(xls|xlsx)$/);
+      const iconColor = isPdf ? "text-red-500" : isXls ? "text-emerald-600" : "text-blue-500";
+      return (
+        <div className="space-y-1">
+          <a
+            href={isUploading ? undefined : metadata.mediaUrl}
+            download={!isUploading}
+            target={isUploading ? undefined : "_blank"}
+            rel="noopener noreferrer"
+            className={`flex items-center gap-2.5 rounded-xl px-3 py-2.5 transition-opacity ${isUploading ? "pointer-events-none opacity-70" : "hover:opacity-80"}`}
+            style={{ background: "rgba(0,0,0,0.06)", maxWidth: 260 }}
+          >
+            <div className={`shrink-0 ${iconColor}`}>
+              {isUploading ? <Loader2 className="w-5 h-5 animate-spin" /> : <FileText className="w-5 h-5" />}
             </div>
             <div className="min-w-0 flex-1">
-              <p className="text-xs font-semibold text-zinc-900 dark:text-zinc-100 truncate">{metadata.fileName || "Documento"}</p>
-              <p className="text-[10px] text-zinc-400 uppercase mt-0.5">
-                {metadata.fileName ? metadata.fileName.split('.').pop()?.toUpperCase() : (metadata.mimeType?.split("/")[1] || "ficheiro")}
-              </p>
+              <p className="text-[12px] font-semibold truncate leading-tight">{metadata.fileName || "Documento"}</p>
+              <p className="text-[10px] opacity-50 font-mono mt-0.5">{ext}</p>
             </div>
-            {metadata.isUploading ? (
-              <Loader2 className="w-4 h-4 animate-spin text-emerald-600 shrink-0" />
-            ) : (
-              <a href={metadata.mediaUrl} download target="_blank" rel="noopener noreferrer" className="shrink-0 text-xs font-bold text-emerald-600 dark:text-emerald-400 hover:underline px-2.5 py-1.5 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-950/30 transition-colors">
-                Baixar
-              </a>
-            )}
-          </div>
-        )}
-      </div>
-    ) : null;
-
-    const parseLinks = (rawText: string) => {
-      if (!rawText) return "";
-      
-      const tokens: { start: number; end: number; type: 'markdown' | 'url'; text: string; url: string; }[] = [];
-      
-      const mdMatches = [...rawText.matchAll(/\[([^\]]+)\]\((https?:\/\/[^\s\)]+)\)/g)];
-      for (const m of mdMatches) {
-        if (m.index !== undefined) {
-          tokens.push({
-            start: m.index,
-            end: m.index + m[0].length,
-            type: 'markdown',
-            text: m[1],
-            url: m[2]
-          });
-        }
-      }
-      
-      const urlRegex = /(https?:\/\/[^\s<>"{}|\\^`[\]]+)/g;
-      const urlMatches = [...rawText.matchAll(urlRegex)];
-      for (const m of urlMatches) {
-        if (m.index !== undefined) {
-          const isInsideMd = tokens.some(t => m.index! >= t.start && m.index! < t.end);
-          if (!isInsideMd) {
-            tokens.push({
-              start: m.index,
-              end: m.index + m[0].length,
-              type: 'url',
-              text: m[1],
-              url: m[1]
-            });
-          }
-        }
-      }
-      
-      tokens.sort((a, b) => a.start - b.start);
-      
-      const parts: React.ReactNode[] = [];
-      let currentIndex = 0;
-      tokens.forEach((token, idx) => {
-        if (token.start > currentIndex) {
-          parts.push(rawText.substring(currentIndex, token.start));
-        }
-        parts.push(
-          <a key={idx} href={token.url} target="_blank" rel="noopener noreferrer" className="underline text-emerald-600 dark:text-emerald-400 hover:text-emerald-700 dark:hover:text-emerald-300 font-semibold break-all inline-flex items-center gap-0.5">
-            {token.text}
           </a>
-        );
-        currentIndex = token.end;
-      });
-      
-      if (currentIndex < rawText.length) {
-        parts.push(rawText.substring(currentIndex));
-      }
-      
-      return parts.length > 0 ? parts : rawText;
-    };
+          {caption && <p className="text-[13px] whitespace-pre-wrap break-words mt-0.5 leading-snug">{parseLinks(caption)}</p>}
+        </div>
+      );
+    }
 
-    const isMediaPlaceholder = filePreview && /^\((Imagem|V[íi]deo|[\u00c1A]udio|Documento|Conte[úu]do|Ficheiro|Anexo|Mensagem de [\u00c1A]udio)[^)]*\)$/.test(text?.trim() || "");
+    // ── Texto puro (sem media) ─────────────────────────────────────────────────
+    // Ocultar texto que é apenas markdown de ficheiro legado: [Ficheiro: ...](url)
+    const isLegacyFilePlaceholder = /^\[Ficheiro:[^\]]+\]\(https?:\/\/[^)]+\)(\n\n[\s\S]*)?$/.test(text?.trim() || "");
+    if (isLegacyFilePlaceholder) return null;
 
-    return (
-      <div className="space-y-1.5">
-        {!isMediaPlaceholder && <p className="whitespace-pre-wrap leading-relaxed break-words">{parseLinks(text)}</p>}
-        {filePreview}
-      </div>
-    );
+    if (!text) return null;
+    return <p className="text-[13px] whitespace-pre-wrap leading-relaxed break-words">{parseLinks(text)}</p>;
   };
 
   return (
@@ -898,7 +894,7 @@ export default function LiveChat() {
                     <div className="w-16 h-12 rounded-lg overflow-hidden border border-zinc-200 bg-black shrink-0 relative">
                       <video src={filePreviewUrl} className="w-full h-full object-cover" />
                       <div className="absolute inset-0 flex items-center justify-center bg-black/30">
-                        <Film className="w-4 h-4 text-white" />
+                        <Video className="w-4 h-4 text-white" />
                       </div>
                     </div>
                   ) : selectedFile.type.startsWith("audio/") ? (

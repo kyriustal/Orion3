@@ -215,7 +215,7 @@ router.get('/history/:phone', requireAuth, async (req: AuthRequest, res) => {
 router.post('/send', requireAuth, async (req: AuthRequest, res) => {
   try {
     const orgId = req.user?.orgId;
-    const { phone, message } = req.body;
+    const { phone, message, clientMsgId } = req.body;
 
     if (!phone || !message) {
       return res.status(400).json({ error: 'phone e message são obrigatórios.' });
@@ -244,6 +244,7 @@ router.post('/send', requireAuth, async (req: AuthRequest, res) => {
     if (sentId) botSentMessages.add(sentId);
 
     const agentName = req.user?.name || req.user?.email?.split('@')[0] || 'Agente';
+    const metadata = { agentName, clientMsgId };
 
     // Persistir no histórico
     await supabaseAdmin.from('conversation_history').insert({
@@ -251,9 +252,7 @@ router.post('/send', requireAuth, async (req: AuthRequest, res) => {
       customer_phone: phone,
       sender: 'human',
       text: message,
-      metadata: {
-        agentName
-      }
+      metadata
     });
 
     // Emitir via socket para sincronizar em tempo real com outros navegadores/membros da equipa
@@ -265,7 +264,8 @@ router.post('/send', requireAuth, async (req: AuthRequest, res) => {
         time:      new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         timestamp: new Date().toISOString(),
         platform:  'whatsapp',
-        agentName: agentName
+        agentName: agentName,
+        metadata
       });
     } catch (_) { /* silencioso */ }
 
@@ -279,7 +279,7 @@ router.post('/send', requireAuth, async (req: AuthRequest, res) => {
 router.post('/send-file', requireAuth, upload.single('file'), async (req: AuthRequest, res) => {
   try {
     const orgId = req.user?.orgId;
-    const { phone, message } = req.body;
+    const { phone, message, clientMsgId } = req.body;
     const file = req.file;
 
     if (!phone) {
@@ -357,7 +357,8 @@ router.post('/send-file', requireAuth, upload.single('file'), async (req: AuthRe
       agentName,
       mediaUrl: publicUrl,
       fileName: file.originalname,
-      mimeType: file.mimetype
+      mimeType: file.mimetype,
+      clientMsgId: clientMsgId || undefined
     };
 
     // 6. Persistir o ficheiro no histórico
