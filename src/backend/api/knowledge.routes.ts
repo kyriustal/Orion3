@@ -185,7 +185,13 @@ router.get('/:id/download', requireAuth, async (req: AuthRequest, res) => {
     }
 
     res.setHeader('Content-Type', mimeType);
-    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
+    // RFC 5987: suporte a nomes de ficheiro com caracteres especiais (acentos, espaços, etc.)
+    const safeAsciiFilename = filename.replace(/[^\x20-\x7E]/g, '_');
+    const encodedFilename = encodeURIComponent(filename).replace(/'/g, '%27');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${safeAsciiFilename}"; filename*=UTF-8''${encodedFilename}`
+    );
     res.send(Buffer.from(doc.content || '', 'utf-8'));
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -207,18 +213,70 @@ router.post('/site', requireAuth, async (req: AuthRequest, res) => {
       url = 'https://' + url;
     }
 
-    // 1. Fetch HTML com User-Agent de navegador real para evitar bloqueios 403/406
-    const response = await axios.get(url, { 
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-        'Accept-Language': 'pt-PT,pt;q=0.9,en-US;q=0.8,en;q=0.7',
-        'Cache-Control': 'no-cache',
-      },
-      timeout: 20000,
-      maxRedirects: 5,
+    // Cabeçalhos que imitam um navegador real para evitar bloqueios 403/406
+    const requestHeaders = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+      'Accept-Language': 'pt-PT,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+      'Accept-Encoding': 'gzip, deflate, br',
+      'Cache-Control': 'no-cache',
+      'Pragma': 'no-cache',
+      'Upgrade-Insecure-Requests': '1',
+      'Sec-Fetch-Dest': 'document',
+      'Sec-Fetch-Mode': 'navigate',
+      'Sec-Fetch-Site': 'none',
+    };
+
+    // Agente HTTPS personalizado: tolera servidores com TLS restrito ou certificados problemáticos
+    const https = await import('https');
+    const httpsAgent = new https.Agent({
+      rejectUnauthorized: false,   // permite certificados self-signed / expirados
+      keepAlive: true,
+      timeout: 25000,
     });
-    
+
+    // Função auxiliar para tentar o fetch com tratamento de erros TLS
+    const attemptFetch = async (targetUrl: string) => {
+      return axios.get(targetUrl, {
+        headers: requestHeaders,
+        timeout: 25000,
+        maxRedirects: 8,
+        httpsAgent,
+        decompress: true,
+      });
+    };
+
+    let response;
+    try {
+      // 1ª tentativa: URL original (HTTPS ou HTTP conforme fornecido)
+      response = await attemptFetch(url);
+    } catch (firstErr: any) {
+      const isTlsOrNetworkError = (
+        firstErr.code === 'ECONNRESET' ||
+        firstErr.code === 'ECONNREFUSED' ||
+        firstErr.code === 'ENOTFOUND' ||
+        firstErr.code === 'ETIMEDOUT' ||
+        firstErr.code === 'ERR_TLS_CERT_ALTNAME_INVALID' ||
+        firstErr.message?.toLowerCase().includes('tls') ||
+        firstErr.message?.toLowerCase().includes('ssl') ||
+        firstErr.message?.toLowerCase().includes('socket disconnected') ||
+        firstErr.message?.toLowerCase().includes('secure connection')
+      );
+
+      // 2ª tentativa: se HTTPS falhou por TLS, tentar com HTTP simples
+      if (isTlsOrNetworkError && url.startsWith('https://')) {
+        const httpUrl = url.replace(/^https:\/\//i, 'http://');
+        console.warn(`[KNOWLEDGE] HTTPS falhou (${firstErr.code || firstErr.message}). A tentar via HTTP: ${httpUrl}`);
+        try {
+          response = await attemptFetch(httpUrl);
+        } catch (secondErr: any) {
+          throw secondErr; // relançar o erro da 2ª tentativa
+        }
+      } else {
+        throw firstErr;
+      }
+    }
+
     let html = response.data;
     if (typeof html !== 'string') html = JSON.stringify(html);
 
@@ -240,7 +298,7 @@ router.post('/site', requireAuth, async (req: AuthRequest, res) => {
       .trim();
 
     if (text.length < 30) {
-      return res.status(400).json({ error: 'Não foi possível extrair conteúdo relevante deste site. Verifique se o site não exige autenticação.' });
+      return res.status(400).json({ error: 'Não foi possível extrair conteúdo relevante deste site. O site pode exigir autenticação ou ser gerado dinamicamente (JavaScript).' });
     }
 
     // Limitar a 30 000 caracteres
@@ -267,9 +325,29 @@ router.post('/site', requireAuth, async (req: AuthRequest, res) => {
       doc: data,
     });
   } catch (err: any) {
-    const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
-    console.error('[KNOWLEDGE] Erro ao importar site:', detail);
-    res.status(500).json({ error: `Erro ao aceder ao site: ${err.message || detail}` });
+    // Mapear erros de rede para mensagens amigáveis em português
+    let userMessage = err.message;
+    if (err.code === 'ECONNREFUSED') {
+      userMessage = 'O servidor recusou a ligação. Verifique se o endereço está correcto.';
+    } else if (err.code === 'ENOTFOUND') {
+      userMessage = 'Domínio não encontrado. Verifique se o endereço do site está correcto.';
+    } else if (err.code === 'ETIMEDOUT' || err.code === 'ECONNABORTED') {
+      userMessage = 'O site demorou demasiado a responder. Tente novamente mais tarde.';
+    } else if (
+      err.message?.toLowerCase().includes('tls') ||
+      err.message?.toLowerCase().includes('ssl') ||
+      err.message?.toLowerCase().includes('socket disconnected') ||
+      err.message?.toLowerCase().includes('secure connection')
+    ) {
+      userMessage = 'Erro de segurança TLS/SSL ao ligar ao site. O servidor pode ter uma configuração de segurança incompatível.';
+    } else if (err.response?.status === 403) {
+      userMessage = 'Acesso negado (403). O site bloqueou o nosso pedido.';
+    } else if (err.response?.status === 404) {
+      userMessage = 'Página não encontrada (404). Verifique o endereço.';
+    }
+
+    console.error('[KNOWLEDGE] Erro ao importar site:', err.code || err.message);
+    res.status(500).json({ error: userMessage });
   }
 });
 
