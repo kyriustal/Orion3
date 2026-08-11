@@ -129,6 +129,29 @@ router.get('/context', requireAuth, async (req: AuthRequest, res) => {
   }
 });
 
+// ─── GET /api/knowledge/:id — Obter detalhe e conteúdo do documento ──────────
+router.get('/:id', requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const orgId = req.user?.orgId;
+    const { id } = req.params;
+
+    const { data: doc, error } = await supabaseAdmin
+      .from('knowledge_docs')
+      .select('id, filename, file_size, mime_type, content, content_preview, created_at')
+      .eq('id', id)
+      .eq('org_id', orgId)
+      .single();
+
+    if (error || !doc) {
+      return res.status(404).json({ error: 'Documento não encontrado.' });
+    }
+
+    res.json(doc);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── GET /api/knowledge/:id/download — Fazer download de documento ────────────
 router.get('/:id/download', requireAuth, async (req: AuthRequest, res) => {
   try {
@@ -146,8 +169,20 @@ router.get('/:id/download', requireAuth, async (req: AuthRequest, res) => {
       return res.status(404).json({ error: 'Documento não encontrado.' });
     }
 
-    const filename = doc.filename || 'documento.txt';
-    const mimeType = doc.mime_type || 'text/plain';
+    let filename = doc.filename || 'documento.txt';
+    let mimeType = doc.mime_type || 'text/plain';
+
+    // Como o conteúdo armazenado é o texto plano extraído pelo RAG (e não o ficheiro binário original),
+    // forçamos o tipo text/plain e extensão .txt para garantir que abre perfeitamente em qualquer leitor.
+    const isBinaryMime = mimeType.includes('pdf') || mimeType.includes('word') || mimeType.includes('officedocument') || mimeType.includes('msword');
+    if (isBinaryMime) {
+      mimeType = 'text/plain; charset=utf-8';
+      if (!filename.toLowerCase().endsWith('.txt')) {
+        filename = filename.replace(/\.[^.]+$/, '') + '_texto.txt';
+      }
+    } else {
+      mimeType = 'text/plain; charset=utf-8';
+    }
 
     res.setHeader('Content-Type', mimeType);
     res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);

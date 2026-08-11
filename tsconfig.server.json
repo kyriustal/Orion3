@@ -11,5 +11,6 @@
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true
   },
-  "include": ["src/backend/**/*"]
+  "include": ["src/backend/**/*"],
+  "exclude": ["node_modules", "dist", "dist-server", "src/backend/scratch"]
 }

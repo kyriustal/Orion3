@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/src/components/ui/card';
 import { Button } from '@/src/components/ui/button';
-import { BookOpen, UploadCloud, Trash2, Loader2, FileText, FileType, AlertCircle, Plus, Download } from 'lucide-react';
+import { BookOpen, UploadCloud, Trash2, Loader2, FileText, FileType, AlertCircle, Plus, Download, Eye, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 type Doc = {
@@ -194,6 +194,25 @@ export default function KnowledgeBase() {
     }
   };
 
+  const [previewDoc, setPreviewDoc] = useState<{ filename: string; content: string } | null>(null);
+  const [isLoadingPreview, setIsLoadingPreview] = useState(false);
+
+  const handlePreviewDoc = async (id: string, filename: string) => {
+    setIsLoadingPreview(true);
+    try {
+      const res = await fetch(`/api/knowledge/${id}`, {
+        headers: { Authorization: `Bearer ${token()}` }
+      });
+      if (!res.ok) throw new Error('Erro ao carregar conteúdo do documento.');
+      const data = await res.json();
+      setPreviewDoc({ filename: data.filename || filename, content: data.content || 'Sem conteúdo.' });
+    } catch (err: any) {
+      toast.error(err.message);
+    } finally {
+      setIsLoadingPreview(false);
+    }
+  };
+
   const handleDownloadDoc = async (id: string, filename: string) => {
     try {
       const res = await fetch(`/api/knowledge/${id}/download`, {
@@ -204,7 +223,11 @@ export default function KnowledgeBase() {
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = filename;
+
+      // Garantir que extensões .txt são preservadas
+      const isBinaryExt = filename.toLowerCase().match(/\.(pdf|doc|docx)$/);
+      a.download = isBinaryExt ? filename.replace(/\.[^.]+$/, '') + '_texto.txt' : filename;
+
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -268,8 +291,17 @@ export default function KnowledgeBase() {
                     <Button 
                       variant="ghost" 
                       size="sm" 
+                      onClick={() => handlePreviewDoc(doc.id, doc.filename)} 
+                      title="Visualizar Conteúdo Extraído" 
+                      className="text-blue-600 hover:text-blue-700 hover:bg-blue-50 shrink-0 h-8 w-8 p-0"
+                    >
+                      <Eye className="w-4 h-4" />
+                    </Button>
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
                       onClick={() => handleDownloadDoc(doc.id, doc.filename)} 
-                      title="Fazer Download do Documento" 
+                      title="Fazer Download do Texto Extraído" 
                       className="text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 shrink-0 h-8 w-8 p-0"
                     >
                       <Download className="w-4 h-4" />
@@ -356,7 +388,7 @@ export default function KnowledgeBase() {
                         target="_blank" 
                         rel="noopener noreferrer" 
                         download={asset.filename} 
-                        title="Download Asset" 
+                        title="Download Asset Original" 
                         className="inline-flex items-center justify-center h-8 w-8 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 rounded-md transition-colors"
                       >
                         <Download className="w-4 h-4" />
@@ -373,6 +405,31 @@ export default function KnowledgeBase() {
           </Card>
         </div>
       </div>
+
+      {/* Modal de Visualização de Conteúdo do Documento */}
+      {previewDoc && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
+          <Card className="w-full max-w-2xl bg-white text-zinc-900 overflow-hidden shadow-2xl max-h-[85vh] flex flex-col">
+            <CardHeader className="p-4 border-b border-zinc-100 flex flex-row items-center justify-between shrink-0">
+              <CardTitle className="text-base font-bold flex items-center gap-2 truncate pr-4 text-zinc-900">
+                <BookOpen className="w-4 h-4 text-emerald-600 shrink-0" />
+                {previewDoc.filename}
+              </CardTitle>
+              <button onClick={() => setPreviewDoc(null)} className="p-1 hover:bg-zinc-100 rounded-full text-zinc-500 hover:text-zinc-900 transition-colors shrink-0">
+                <X className="w-5 h-5" />
+              </button>
+            </CardHeader>
+            <CardContent className="p-6 overflow-y-auto flex-1 text-xs leading-relaxed text-zinc-700 space-y-4 font-mono bg-zinc-50/50 whitespace-pre-wrap break-words border-b border-zinc-100">
+              {previewDoc.content}
+            </CardContent>
+            <div className="p-3 bg-zinc-50 flex justify-end shrink-0">
+              <Button size="sm" variant="outline" onClick={() => setPreviewDoc(null)} className="text-xs">
+                Fechar
+              </Button>
+            </div>
+          </Card>
+        </div>
+      )}
     </div>
   );
 }
