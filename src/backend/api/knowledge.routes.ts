@@ -232,8 +232,8 @@ router.post('/site', requireAuth, async (req: AuthRequest, res) => {
     const MAX_HEADER = 32768; // 32 KB (Node.js padrão é 8 KB)
     const https = await import('https');
     const http  = await import('http');
-    const httpsAgent = new https.Agent({ rejectUnauthorized: false, keepAlive: true, maxHeaderSize: MAX_HEADER });
-    const httpAgent  = new http.Agent({ keepAlive: true, maxHeaderSize: MAX_HEADER });
+    const httpsAgent = new https.Agent({ rejectUnauthorized: false, keepAlive: true, maxHeaderSize: MAX_HEADER } as any);
+    const httpAgent  = new http.Agent({ keepAlive: true, maxHeaderSize: MAX_HEADER } as any);
 
     // Atraso entre tentativas para não parecer scraping agressivo
     const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
