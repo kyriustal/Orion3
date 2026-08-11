@@ -141,8 +141,8 @@ router.get('/chats', requireAuth, async (req: AuthRequest, res) => {
           // Se a mensagem mais recente (antes de ver um confirm do bot) for de um humano,
           // significa que o humano já respondeu, então limpamos o status de confirmação.
           phoneConfirmStatus.set(item.customer_phone, false);
-        } else if (item.sender === 'bot' && item.metadata?.confirm === true) {
-          // Se encontramos uma mensagem do bot que precisa de confirmação antes de qualquer resposta humana,
+        } else if (item.sender === 'bot' && (item.metadata?.confirm === true || item.metadata?.booking === true)) {
+          // Se encontramos uma mensagem do bot que precisa de confirmação/agendamento antes de qualquer resposta humana,
           // o chat fica marcado como precisando de confirmação.
           phoneConfirmStatus.set(item.customer_phone, true);
         }
@@ -674,37 +674,75 @@ async function triggerAIResponse(params: {
     }
     
     // ── 10. Processar envio de arquivos [SEND_FILE: ID] ───────────────────────
-    const fileMatch = replyText.match(/\[SEND_FILE:\s*([a-f0-9-]{36})\]/i);
-    if (fileMatch) {
-      const assetId = fileMatch[1];
-      console.log(`[IA] Comando de envio de arquivo detectado: ${assetId}`);
+    const fileMatches = [...replyText.matchAll(/\[SEND_FILE:\s*([a-f0-9-]{36})\]/gi)];
+    if (fileMatches.length > 0) {
+      console.log(`[IA] ${fileMatches.length} comando(s) de envio de arquivo detectado(s).`);
       
-      // Remover o código do texto da resposta (ambas as versões)
-      replyText = replyText.replace(/\[SEND_FILE:\s*[a-f0-9-]{36}\]/i, '').trim();
-      ptReplyText = ptReplyText.replace(/\[SEND_FILE:\s*[a-f0-9-]{36}\]/i, '').trim();
+      // Remover todos os códigos [SEND_FILE: ...] do texto da resposta (ambas as versões)
+      replyText = replyText.replace(/\[SEND_FILE:\s*[a-f0-9-]{36}\]/gi, '').trim();
+      ptReplyText = ptReplyText.replace(/\[SEND_FILE:\s*[a-f0-9-]{36}\]/gi, '').trim();
 
-      // Buscar asset no banco
-      const { data: asset } = await supabaseAdmin
-        .from('public_assets')
-        .select('*')
-        .eq('id', assetId)
-        .eq('org_id', orgId)
-        .single();
+      for (const match of fileMatches) {
+        const assetId = match[1];
+        const { data: asset } = await supabaseAdmin
+          .from('public_assets')
+          .select('*')
+          .eq('id', assetId)
+          .eq('org_id', orgId)
+          .single();
 
-      if (asset) {
-        console.log(`[IA] Enviando arquivo "${asset.filename}" para ${fromNumber}...`);
-        await WhatsAppService.sendMediaByUrl(
-          fromNumber, 
-          asset.file_url, 
-          asset.mime_type, 
-          asset.filename, 
-          phoneNumberId, 
-          accessToken
-        );
-      } else {
-        console.warn(`[IA] Asset ${assetId} não encontrado para org ${orgId}`);
+        if (asset) {
+          console.log(`[IA] Enviando arquivo "${asset.filename}" para ${fromNumber}...`);
+          const sentMediaId = await WhatsAppService.sendMediaByUrl(
+            fromNumber, 
+            asset.file_url, 
+            asset.mime_type, 
+            asset.filename, 
+            phoneNumberId, 
+            accessToken
+          );
+          if (sentMediaId) botSentMessages.add(sentMediaId);
+
+          // Persistir também a mensagem do ficheiro no histórico e Socket
+          const fileMsgText = `[Ficheiro: ${asset.filename}](${asset.file_url})`;
+          await supabaseAdmin.from('conversation_history').insert({
+            org_id: orgId,
+            customer_phone: fromNumber,
+            sender: 'bot',
+            text: fileMsgText,
+            metadata: {
+              botName,
+              mediaUrl: asset.file_url,
+              fileName: asset.filename,
+              mimeType: asset.mime_type
+            }
+          });
+
+          try {
+            getIo().to(`org:${orgId}`).emit('new_message', {
+              phone:     fromNumber,
+              sender:    'bot',
+              text:      fileMsgText,
+              botName:   botName,
+              time:      new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              timestamp: new Date().toISOString(),
+              platform:  'whatsapp',
+              metadata:  {
+                mediaUrl: asset.file_url,
+                fileName: asset.filename,
+                mimeType: asset.mime_type
+              }
+            });
+          } catch (_) {}
+        } else {
+          console.warn(`[IA] Asset ${assetId} não encontrado para org ${orgId}`);
+        }
       }
     }
+
+    const botMetadata = (aiResult.confirm || aiResult.booking) 
+      ? { confirm: true, booking: !!aiResult.booking } 
+      : undefined;
 
     // Persistir resposta no histórico em PORTUGUÊS
     await supabaseAdmin.from('conversation_history').insert({
@@ -712,7 +750,7 @@ async function triggerAIResponse(params: {
       customer_phone: fromNumber,
       sender: 'bot',
       text: ptReplyText,
-      metadata: aiResult.confirm ? { confirm: true } : undefined,
+      metadata: botMetadata,
     });
 
     // Emitir resposta da IA para o Live Chat em tempo real em PORTUGUÊS
@@ -725,7 +763,7 @@ async function triggerAIResponse(params: {
         time:      new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         timestamp: new Date().toISOString(),
         platform:  'whatsapp',
-        metadata:  aiResult.confirm ? { confirm: true } : undefined,
+        metadata:  botMetadata,
       });
     } catch (_) { /* silencioso */ }
 
@@ -828,7 +866,32 @@ router.post('/webhook', async (req, res) => {
     const changes  = entry?.changes?.[0];
     const value    = changes?.value;
     const messages = value?.messages;
+    const statuses = value?.statuses;
     const metadata = value?.metadata;
+
+    // Emissão de atualizações de status de mensagem (sent, delivered, read) via Socket
+    if (statuses && statuses.length > 0) {
+      const statusObj = statuses[0];
+      const recipientPhone = statusObj.recipient_id;
+      const status = statusObj.status; // 'sent', 'delivered', 'read'
+      if (recipientPhone && status) {
+        try {
+          const { data: config } = await supabaseAdmin
+            .from('whatsapp_config')
+            .select('org_id')
+            .eq('phone_number_id', metadata?.phone_number_id)
+            .maybeSingle();
+
+          if (config) {
+            getIo().to(`org:${config.org_id}`).emit('message_status', {
+              phone: recipientPhone,
+              messageId: statusObj.id,
+              status: status
+            });
+          }
+        } catch (_) {}
+      }
+    }
 
     if (!messages || messages.length === 0) return;
 

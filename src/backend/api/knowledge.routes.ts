@@ -129,50 +129,98 @@ router.get('/context', requireAuth, async (req: AuthRequest, res) => {
   }
 });
 
+// ─── GET /api/knowledge/:id/download — Fazer download de documento ────────────
+router.get('/:id/download', requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const orgId = req.user?.orgId;
+    const { id } = req.params;
+
+    const { data: doc, error } = await supabaseAdmin
+      .from('knowledge_docs')
+      .select('filename, mime_type, content')
+      .eq('id', id)
+      .eq('org_id', orgId)
+      .single();
+
+    if (error || !doc) {
+      return res.status(404).json({ error: 'Documento não encontrado.' });
+    }
+
+    const filename = doc.filename || 'documento.txt';
+    const mimeType = doc.mime_type || 'text/plain';
+
+    res.setHeader('Content-Type', mimeType);
+    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
+    res.send(Buffer.from(doc.content || '', 'utf-8'));
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── POST /api/knowledge/site — Adicionar conteúdo de um site ───────────────
 router.post('/site', requireAuth, async (req: AuthRequest, res) => {
   try {
     const orgId = req.user?.orgId;
-    const { url } = req.body;
+    let { url } = req.body;
 
-    if (!url || !url.startsWith('http')) {
-      return res.status(400).json({ error: 'URL inválida. Deve começar com http:// ou https://' });
+    if (!url || typeof url !== 'string') {
+      return res.status(400).json({ error: 'URL é obrigatória.' });
     }
 
-    // 1. Fetch HTML
+    url = url.trim();
+    if (!/^https?:\/\//i.test(url)) {
+      url = 'https://' + url;
+    }
+
+    // 1. Fetch HTML com User-Agent de navegador real para evitar bloqueios 403/406
     const response = await axios.get(url, { 
-      headers: { 'User-Agent': 'OrionBot/1.0' },
-      timeout: 15000 
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language': 'pt-PT,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+        'Cache-Control': 'no-cache',
+      },
+      timeout: 20000,
+      maxRedirects: 5,
     });
     
     let html = response.data;
     if (typeof html !== 'string') html = JSON.stringify(html);
 
-    // 2. Limpeza básica (remover scripts, estilos e tags)
+    // 2. Limpeza (remover scripts, estilos, cabeçalhos e tags HTML)
     let text = html
       .replace(/<script\b[^>]*>([\s\S]*?)<\/script>/gim, '')
       .replace(/<style\b[^>]*>([\s\S]*?)<\/style>/gim, '')
+      .replace(/<noscript\b[^>]*>([\s\S]*?)<\/noscript>/gim, '')
+      .replace(/<header\b[^>]*>([\s\S]*?)<\/header>/gim, ' ')
+      .replace(/<footer\b[^>]*>([\s\S]*?)<\/footer>/gim, ' ')
       .replace(/<[^>]+>/gm, ' ')
+      .replace(/&nbsp;/gi, ' ')
+      .replace(/&amp;/gi, '&')
+      .replace(/&lt;/gi, '<')
+      .replace(/&gt;/gi, '>')
+      .replace(/&quot;/gi, '"')
+      .replace(/&#39;/gi, "'")
       .replace(/\s+/g, ' ')
       .trim();
 
-    if (text.length < 50) {
-      return res.status(400).json({ error: 'Não foi possível extrair conteúdo relevante deste site.' });
+    if (text.length < 30) {
+      return res.status(400).json({ error: 'Não foi possível extrair conteúdo relevante deste site. Verifique se o site não exige autenticação.' });
     }
 
-    // Limitar a 20 000 caracteres
-    const finalContent = text.substring(0, 20_000);
+    // Limitar a 30 000 caracteres
+    const finalContent = text.substring(0, 30_000);
 
     // 3. Guardar no banco
     const { data, error } = await supabaseAdmin
       .from('knowledge_docs')
       .insert({
         org_id: orgId,
-        filename: url.replace(/^https?:\/\//, '').substring(0, 50),
+        filename: url.replace(/^https?:\/\//i, '').substring(0, 60),
         file_size: finalContent.length,
         mime_type: 'text/html',
         content: finalContent,
-        content_preview: `Site: ${url}\n\n` + finalContent.substring(0, 150) + '...',
+        content_preview: `Site: ${url}\n\n` + finalContent.substring(0, 180) + '...',
       })
       .select()
       .single();
@@ -186,7 +234,7 @@ router.post('/site', requireAuth, async (req: AuthRequest, res) => {
   } catch (err: any) {
     const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
     console.error('[KNOWLEDGE] Erro ao importar site:', detail);
-    res.status(500).json({ error: `Erro ao aceder ao site: ${detail}` });
+    res.status(500).json({ error: `Erro ao aceder ao site: ${err.message || detail}` });
   }
 });
 

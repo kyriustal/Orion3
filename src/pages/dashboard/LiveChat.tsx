@@ -4,7 +4,7 @@ import { Input } from "@/src/components/ui/input";
 import { 
   Send, User, Bot, AlertCircle, MessageCircle, Loader2, Pause, Play, 
   Wifi, WifiOff, Smartphone, ArrowLeft, Paperclip, FileText, X, 
-  Mic, Camera, Video, Square, Check, RefreshCw, 
+  Mic, Camera, Video, Square, Check, CheckCheck, RefreshCw, 
   Volume2, Search, ChevronUp, ChevronDown 
 } from "lucide-react";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
@@ -53,6 +53,32 @@ const formatTimer = (seconds: number) => {
   const s = seconds % 60;
   return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
 };
+
+function ExpandableDescription({ text, maxLength = 110 }: { text: string; maxLength?: number }) {
+  const [isExpanded, setIsExpanded] = useState(false);
+  if (!text) return null;
+
+  const cleanText = text.replace(/^\[(Mensagem de Áudio|Documento "[^"]+")\]:\s*/i, '').trim();
+  if (!cleanText) return null;
+
+  const needsTruncate = cleanText.length > maxLength;
+  const displayText = (!isExpanded && needsTruncate) ? `${cleanText.slice(0, maxLength)}...` : cleanText;
+
+  return (
+    <div className="mt-1.5 pt-1.5 border-t border-black/10 dark:border-white/10 text-[12px] opacity-90">
+      <p className="whitespace-pre-wrap leading-relaxed break-words">{displayText}</p>
+      {needsTruncate && (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); setIsExpanded(!isExpanded); }}
+          className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 hover:underline mt-1 inline-block focus:outline-none"
+        >
+          {isExpanded ? "Ver menos" : "Ver mais"}
+        </button>
+      )}
+    </div>
+  );
+}
 
 export default function LiveChat() {
   const [isLoading,   setIsLoading]   = useState(true);
@@ -348,10 +374,39 @@ export default function LiveChat() {
 
     sock.on("disconnect", () => setIsConnected(false));
 
+    sock.on("booking_alert", (data: { phone: string }) => {
+      setChats(prev => prev.map(c => c.id === data.phone ? { ...c, needs_confirm: true } : c));
+    });
+
+    sock.on("confirmation_alert", (data: { phone: string }) => {
+      setChats(prev => prev.map(c => c.id === data.phone ? { ...c, needs_confirm: true } : c));
+    });
+
+    sock.on("message_status", (data: { phone: string; status: string }) => {
+      setActiveChatId(activeId => {
+        if (activeId === data.phone) {
+          setMessages(prev => prev.map(msg => {
+            if (msg.sender !== "user") {
+              const currentStatus = msg.metadata?.status;
+              if (data.status === "read") {
+                return { ...msg, metadata: { ...msg.metadata, status: "read" } };
+              } else if (data.status === "delivered" && currentStatus !== "read") {
+                return { ...msg, metadata: { ...msg.metadata, status: "delivered" } };
+              } else if (!currentStatus) {
+                return { ...msg, metadata: { ...msg.metadata, status: data.status } };
+              }
+            }
+            return msg;
+          }));
+        }
+        return activeId;
+      });
+    });
+
     sock.on("new_message", (data: { phone: string; sender: string; text: string; time: string; timestamp: string; platform?: string; botName?: string; agentName?: string; metadata?: any; }) => {
       setChats(prev => {
         const exists = prev.find(c => c.id === data.phone);
-        const hasConfirm = data.metadata?.confirm === true;
+        const hasConfirm = data.metadata?.confirm === true || data.metadata?.booking === true;
         const isHuman = data.sender === "human";
 
         // Previsualização no painel lateral: para ficheiros usa o fileName, caso contrário usa o texto
@@ -860,7 +915,20 @@ export default function LiveChat() {
                         </span>
                       </div>
                       {renderMessageContent(msg.text, msg.metadata)}
-                      <p className="text-[10px] text-right mt-1 opacity-40">{msg.time}</p>
+                      <div className="flex items-center justify-end gap-1 mt-1 opacity-70">
+                        <span className="text-[10px]">{msg.time}</span>
+                        {msg.sender !== "user" && (
+                          <span title={msg.metadata?.status === "read" ? "Lida / Visualizada" : msg.metadata?.status === "delivered" ? "Entregue" : "Enviada"}>
+                            {msg.metadata?.status === "read" ? (
+                              <CheckCheck className="w-3.5 h-3.5 text-sky-400 font-bold" />
+                            ) : msg.metadata?.status === "delivered" ? (
+                              <CheckCheck className="w-3.5 h-3.5 opacity-80" />
+                            ) : (
+                              <Check className="w-3.5 h-3.5 opacity-80" />
+                            )}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>

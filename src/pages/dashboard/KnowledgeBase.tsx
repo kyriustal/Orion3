@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/src/components/ui/card';
 import { Button } from '@/src/components/ui/button';
-import { BookOpen, UploadCloud, Trash2, Loader2, FileText, FileType, AlertCircle, Plus } from 'lucide-react';
+import { BookOpen, UploadCloud, Trash2, Loader2, FileText, FileType, AlertCircle, Plus, Download } from 'lucide-react';
 import { toast } from 'sonner';
 
 type Doc = {
@@ -194,6 +194,26 @@ export default function KnowledgeBase() {
     }
   };
 
+  const handleDownloadDoc = async (id: string, filename: string) => {
+    try {
+      const res = await fetch(`/api/knowledge/${id}/download`, {
+        headers: { Authorization: `Bearer ${token()}` }
+      });
+      if (!res.ok) throw new Error('Erro ao carregar ficheiro para download.');
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err: any) {
+      toast.error(err.message);
+    }
+  };
+
   return (
     <div className="space-y-8 w-full max-w-4xl pb-12 overflow-x-hidden">
       {/* ─────────────────────────────────────────────────────────
@@ -244,7 +264,26 @@ export default function KnowledgeBase() {
                 <div key={doc.id} className="flex items-center gap-3 p-3 sm:p-4 hover:bg-zinc-50 transition-colors text-xs sm:text-sm min-w-0">
                   <div className="shrink-0">{getIcon(doc.filename)}</div>
                   <div className="flex-1 min-w-0 truncate font-medium">{doc.filename}</div>
-                  <Button variant="ghost" size="sm" onClick={() => handleDelete(doc.id, doc.filename)} className="text-red-400 hover:text-red-600 shrink-0 h-8 w-8 p-0"><Trash2 className="w-4 h-4" /></Button>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      onClick={() => handleDownloadDoc(doc.id, doc.filename)} 
+                      title="Fazer Download do Documento" 
+                      className="text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 shrink-0 h-8 w-8 p-0"
+                    >
+                      <Download className="w-4 h-4" />
+                    </Button>
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      onClick={() => handleDelete(doc.id, doc.filename)} 
+                      title="Eliminar Documento" 
+                      className="text-red-400 hover:text-red-600 shrink-0 h-8 w-8 p-0"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  </div>
                 </div>
               ))}
               {docs.length === 0 && <div className="p-8 text-center text-zinc-400">Nenhum documento carregado.</div>}
@@ -311,7 +350,21 @@ export default function KnowledgeBase() {
                       <p className="font-bold text-zinc-800 truncate">{asset.description}</p>
                       <p className="text-[10px] text-zinc-400 truncate">{asset.filename}</p>
                     </div>
-                    <Button variant="ghost" size="sm" onClick={() => handleDeleteAsset(asset.id)} className="h-8 w-8 p-0 text-red-400 hover:text-red-600 shrink-0"><Trash2 className="w-3.5 h-3.5" /></Button>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <a 
+                        href={asset.file_url} 
+                        target="_blank" 
+                        rel="noopener noreferrer" 
+                        download={asset.filename} 
+                        title="Download Asset" 
+                        className="inline-flex items-center justify-center h-8 w-8 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 rounded-md transition-colors"
+                      >
+                        <Download className="w-4 h-4" />
+                      </a>
+                      <Button variant="ghost" size="sm" onClick={() => handleDeleteAsset(asset.id)} title="Eliminar Asset" className="h-8 w-8 p-0 text-red-400 hover:text-red-600 shrink-0">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </Button>
+                    </div>
                   </div>
                 ))}
                 {assets.length === 0 && <div className="p-8 text-center text-zinc-400 text-xs italic">Nenhum asset carregado.</div>}
