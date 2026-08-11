@@ -213,8 +213,8 @@ router.post('/site', requireAuth, async (req: AuthRequest, res) => {
       url = 'https://' + url;
     }
 
-    // Cabeçalhos que imitam um navegador real para evitar bloqueios 403/406
-    const requestHeaders = {
+    // ── Cabeçalhos que imitam um navegador real ───────────────────────────────
+    const browserHeaders = {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
       'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
       'Accept-Language': 'pt-PT,pt;q=0.9,en-US;q=0.8,en;q=0.7',
@@ -227,93 +227,126 @@ router.post('/site', requireAuth, async (req: AuthRequest, res) => {
       'Sec-Fetch-Site': 'none',
     };
 
-    // Agente HTTPS personalizado: tolera servidores com TLS restrito ou certificados problemáticos
+    // Agentes HTTP/HTTPS permissivos com maxHeaderSize aumentado (32 KB)
+    // para evitar "Parse Error: Header overflow" em sites com cookies/CDN volumosos
+    const MAX_HEADER = 32768; // 32 KB (Node.js padrão é 8 KB)
     const https = await import('https');
-    const httpsAgent = new https.Agent({
-      rejectUnauthorized: false,   // permite certificados self-signed / expirados
-      keepAlive: true,
-      timeout: 25000,
-    });
+    const http  = await import('http');
+    const httpsAgent = new https.Agent({ rejectUnauthorized: false, keepAlive: true, maxHeaderSize: MAX_HEADER });
+    const httpAgent  = new http.Agent({ keepAlive: true, maxHeaderSize: MAX_HEADER });
 
-    // Função auxiliar para tentar o fetch com tratamento de erros TLS
-    const attemptFetch = async (targetUrl: string) => {
-      return axios.get(targetUrl, {
-        headers: requestHeaders,
-        timeout: 25000,
+    // Atraso entre tentativas para não parecer scraping agressivo
+    const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
+
+    // ── Extractor: limpa HTML em texto simples ────────────────────────────────
+    const extractText = (html: string): string =>
+      html
+        .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gim, '')
+        .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gim, '')
+        .replace(/<noscript\b[^>]*>[\s\S]*?<\/noscript>/gim, '')
+        .replace(/<header\b[^>]*>[\s\S]*?<\/header>/gim, ' ')
+        .replace(/<footer\b[^>]*>[\s\S]*?<\/footer>/gim, ' ')
+        .replace(/<[^>]+>/gm, ' ')
+        .replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<')
+        .replace(/&gt;/gi, '>').replace(/&quot;/gi, '"').replace(/&#39;/gi, "'")
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    let finalContent: string | null = null;
+    let usedStrategy = '';
+
+    // ════════════════════════════════════════════════════════════════
+    // ESTRATÉGIA 1 — Acesso directo HTTPS (com agente TLS permissivo)
+    // ════════════════════════════════════════════════════════════════
+    try {
+      const resp = await axios.get(url, {
+        headers: browserHeaders,
+        timeout: 20000,
         maxRedirects: 8,
         httpsAgent,
+        httpAgent,
         decompress: true,
       });
-    };
+      const raw = typeof resp.data === 'string' ? resp.data : JSON.stringify(resp.data);
+      const text = extractText(raw);
+      if (text.length >= 30) { finalContent = text; usedStrategy = 'directo HTTPS'; }
+    } catch (e1: any) {
+      console.warn(`[KNOWLEDGE] Estratégia 1 (HTTPS directo) falhou: ${e1.code || e1.message}`);
+    }
 
-    let response;
-    try {
-      // 1ª tentativa: URL original (HTTPS ou HTTP conforme fornecido)
-      response = await attemptFetch(url);
-    } catch (firstErr: any) {
-      const isTlsOrNetworkError = (
-        firstErr.code === 'ECONNRESET' ||
-        firstErr.code === 'ECONNREFUSED' ||
-        firstErr.code === 'ENOTFOUND' ||
-        firstErr.code === 'ETIMEDOUT' ||
-        firstErr.code === 'ERR_TLS_CERT_ALTNAME_INVALID' ||
-        firstErr.message?.toLowerCase().includes('tls') ||
-        firstErr.message?.toLowerCase().includes('ssl') ||
-        firstErr.message?.toLowerCase().includes('socket disconnected') ||
-        firstErr.message?.toLowerCase().includes('secure connection')
-      );
-
-      // 2ª tentativa: se HTTPS falhou por TLS, tentar com HTTP simples
-      if (isTlsOrNetworkError && url.startsWith('https://')) {
-        const httpUrl = url.replace(/^https:\/\//i, 'http://');
-        console.warn(`[KNOWLEDGE] HTTPS falhou (${firstErr.code || firstErr.message}). A tentar via HTTP: ${httpUrl}`);
-        try {
-          response = await attemptFetch(httpUrl);
-        } catch (secondErr: any) {
-          throw secondErr; // relançar o erro da 2ª tentativa
-        }
-      } else {
-        throw firstErr;
+    // ════════════════════════════════════════════════════════════════
+    // ESTRATÉGIA 2 — Fallback HTTP simples (se HTTPS bloqueado/TLS falhou)
+    // ════════════════════════════════════════════════════════════════
+    if (!finalContent && url.startsWith('https://')) {
+      await delay(800);
+      const httpUrl = url.replace(/^https:\/\//i, 'http://');
+      try {
+        const resp = await axios.get(httpUrl, {
+          headers: browserHeaders,
+          timeout: 20000,
+          maxRedirects: 8,
+          httpAgent,
+          httpsAgent,
+          decompress: true,
+        });
+        const raw = typeof resp.data === 'string' ? resp.data : JSON.stringify(resp.data);
+        const text = extractText(raw);
+        if (text.length >= 30) { finalContent = text; usedStrategy = 'fallback HTTP'; }
+      } catch (e2: any) {
+        console.warn(`[KNOWLEDGE] Estratégia 2 (HTTP fallback) falhou: ${e2.code || e2.message}`);
       }
     }
 
-    let html = response.data;
-    if (typeof html !== 'string') html = JSON.stringify(html);
-
-    // 2. Limpeza (remover scripts, estilos, cabeçalhos e tags HTML)
-    let text = html
-      .replace(/<script\b[^>]*>([\s\S]*?)<\/script>/gim, '')
-      .replace(/<style\b[^>]*>([\s\S]*?)<\/style>/gim, '')
-      .replace(/<noscript\b[^>]*>([\s\S]*?)<\/noscript>/gim, '')
-      .replace(/<header\b[^>]*>([\s\S]*?)<\/header>/gim, ' ')
-      .replace(/<footer\b[^>]*>([\s\S]*?)<\/footer>/gim, ' ')
-      .replace(/<[^>]+>/gm, ' ')
-      .replace(/&nbsp;/gi, ' ')
-      .replace(/&amp;/gi, '&')
-      .replace(/&lt;/gi, '<')
-      .replace(/&gt;/gi, '>')
-      .replace(/&quot;/gi, '"')
-      .replace(/&#39;/gi, "'")
-      .replace(/\s+/g, ' ')
-      .trim();
-
-    if (text.length < 30) {
-      return res.status(400).json({ error: 'Não foi possível extrair conteúdo relevante deste site. O site pode exigir autenticação ou ser gerado dinamicamente (JavaScript).' });
+    // ════════════════════════════════════════════════════════════════
+    // ESTRATÉGIA 3 — Proxy Jina.ai Reader (contorna WAF/Cloudflare)
+    //   https://r.jina.ai/<url> devolve Markdown limpo do conteúdo
+    // ════════════════════════════════════════════════════════════════
+    if (!finalContent) {
+      await delay(800);
+      const jinaUrl = `https://r.jina.ai/${url}`;
+      try {
+        const resp = await axios.get(jinaUrl, {
+          headers: {
+            'User-Agent': browserHeaders['User-Agent'],
+            'Accept': 'text/plain, text/markdown, */*',
+            'X-Return-Format': 'text',
+          },
+          timeout: 30000,
+          maxRedirects: 5,
+          httpsAgent,
+          decompress: true,
+        });
+        const raw = typeof resp.data === 'string' ? resp.data : JSON.stringify(resp.data);
+        if (raw.trim().length >= 30) { finalContent = raw.trim(); usedStrategy = 'proxy Jina.ai'; }
+      } catch (e3: any) {
+        console.warn(`[KNOWLEDGE] Estratégia 3 (Jina.ai proxy) falhou: ${e3.code || e3.message}`);
+      }
     }
 
-    // Limitar a 30 000 caracteres
-    const finalContent = text.substring(0, 30_000);
+    // ════════════════════════════════════════════════════════════════
+    // Todas as estratégias falharam
+    // ════════════════════════════════════════════════════════════════
+    if (!finalContent || finalContent.length < 30) {
+      return res.status(400).json({
+        error: 'Não foi possível extrair conteúdo deste site após múltiplas tentativas. O site pode estar protegido contra acesso automático (Cloudflare, WAF), exigir JavaScript ou autenticação.',
+      });
+    }
 
-    // 3. Guardar no banco
+    console.log(`[KNOWLEDGE] Site importado via "${usedStrategy}": ${url} (${finalContent.length} chars)`);
+
+    // Limitar a 30 000 caracteres
+    const trimmedContent = finalContent.substring(0, 30_000);
+
+    // Guardar no banco
     const { data, error } = await supabaseAdmin
       .from('knowledge_docs')
       .insert({
         org_id: orgId,
         filename: url.replace(/^https?:\/\//i, '').substring(0, 60),
-        file_size: finalContent.length,
+        file_size: trimmedContent.length,
         mime_type: 'text/html',
-        content: finalContent,
-        content_preview: `Site: ${url}\n\n` + finalContent.substring(0, 180) + '...',
+        content: trimmedContent,
+        content_preview: `Site: ${url}\n\n` + trimmedContent.substring(0, 180) + '...',
       })
       .select()
       .single();
@@ -325,7 +358,7 @@ router.post('/site', requireAuth, async (req: AuthRequest, res) => {
       doc: data,
     });
   } catch (err: any) {
-    // Mapear erros de rede para mensagens amigáveis em português
+    // Mensagens amigáveis para erros de rede comuns
     let userMessage = err.message;
     if (err.code === 'ECONNREFUSED') {
       userMessage = 'O servidor recusou a ligação. Verifique se o endereço está correcto.';
@@ -333,13 +366,12 @@ router.post('/site', requireAuth, async (req: AuthRequest, res) => {
       userMessage = 'Domínio não encontrado. Verifique se o endereço do site está correcto.';
     } else if (err.code === 'ETIMEDOUT' || err.code === 'ECONNABORTED') {
       userMessage = 'O site demorou demasiado a responder. Tente novamente mais tarde.';
-    } else if (
-      err.message?.toLowerCase().includes('tls') ||
-      err.message?.toLowerCase().includes('ssl') ||
-      err.message?.toLowerCase().includes('socket disconnected') ||
-      err.message?.toLowerCase().includes('secure connection')
-    ) {
-      userMessage = 'Erro de segurança TLS/SSL ao ligar ao site. O servidor pode ter uma configuração de segurança incompatível.';
+    } else if (err.code === 'ECONNRESET' || err.message?.includes('socket hang up')) {
+      userMessage = 'A ligação ao site foi interrompida. O site pode estar a bloquear pedidos automáticos.';
+    } else if (err.message?.toLowerCase().includes('header overflow') || err.message?.toLowerCase().includes('parse error')) {
+      userMessage = 'O site devolveu demasiados cabeçalhos HTTP (Header Overflow). Tente importar uma página específica em vez da página principal.';
+    } else if (err.message?.toLowerCase().includes('tls') || err.message?.toLowerCase().includes('ssl')) {
+      userMessage = 'Erro de segurança TLS/SSL ao ligar ao site.';
     } else if (err.response?.status === 403) {
       userMessage = 'Acesso negado (403). O site bloqueou o nosso pedido.';
     } else if (err.response?.status === 404) {
