@@ -203,17 +203,28 @@ router.get('/status', requireAuth, async (req: AuthRequest, res) => {
 
     const { data, error } = await supabaseAdmin
       .from('organizations')
-      .select('calendar_provider, google_refresh_token, microsoft_refresh_token, google_client_id, google_client_secret')
+      .select('calendar_provider, google_refresh_token, microsoft_refresh_token, google_client_id, google_client_secret, microsoft_client_id, microsoft_client_secret')
       .eq('id', orgId)
       .maybeSingle();
 
     if (error) throw error;
 
+    const hasGoogleSystem = !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
+    const hasGoogleOrg = !!(data?.google_client_id && data?.google_client_secret);
+
+    const hasMicrosoftSystem = !!(process.env.MICROSOFT_CLIENT_ID && process.env.MICROSOFT_CLIENT_SECRET);
+    const hasMicrosoftOrg = !!(data?.microsoft_client_id && data?.microsoft_client_secret);
+
     res.json({
       provider: data?.calendar_provider || 'none',
       google_connected: !!(data?.google_refresh_token),
       microsoft_connected: !!(data?.microsoft_refresh_token),
-      has_google_credentials: !!(data?.google_client_id && data?.google_client_secret) || !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
+      has_google_credentials: hasGoogleOrg || hasGoogleSystem,
+      has_microsoft_credentials: hasMicrosoftOrg || hasMicrosoftSystem,
+      system_google_client_id: process.env.GOOGLE_CLIENT_ID || '',
+      system_microsoft_client_id: process.env.MICROSOFT_CLIENT_ID || '',
+      has_saved_google_secret: !!data?.google_client_secret || !!process.env.GOOGLE_CLIENT_SECRET,
+      has_saved_microsoft_secret: !!data?.microsoft_client_secret || !!process.env.MICROSOFT_CLIENT_SECRET,
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });

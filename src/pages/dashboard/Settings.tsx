@@ -4,7 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter }
 import { Button } from "@/src/components/ui/button";
 import { Input } from "@/src/components/ui/input";
 import { Label } from "@/src/components/ui/label";
-import { Save, Loader2, Key, User, Building2, Bot, ShieldCheck, Mail, Calendar, ExternalLink, CheckCircle2, XCircle, Clock } from "lucide-react";
+import { Save, Loader2, Key, User, Building2, Bot, ShieldCheck, Mail, Calendar, ExternalLink, CheckCircle2, XCircle, Clock, UploadCloud } from "lucide-react";
 import { toast } from "sonner";
 
 export default function Settings() {
@@ -13,6 +13,7 @@ export default function Settings() {
   const [isSaving, setIsSaving] = useState(false);
   const [activeTab, setActiveTab] = useState<"personal" | "company" | "ai" | "calendar" | "security">("personal");
   const [calendarConnected, setCalendarConnected] = useState<{ google: boolean; microsoft: boolean }>({ google: false, microsoft: false });
+  const [calendarStatus, setCalendarStatus] = useState<any>(null);
 
   const [settings, setSettings] = useState({
     id: "",
@@ -99,6 +100,7 @@ export default function Settings() {
       });
       if (calRes.ok) {
         const calData = await calRes.json();
+        setCalendarStatus(calData);
         setCalendarConnected({
           google: calData.google_connected,
           microsoft: calData.microsoft_connected
@@ -524,18 +526,29 @@ export default function Settings() {
                       }`}
                       onClick={async (e) => {
                         e.stopPropagation();
-                        const clientId = (settings as any).google_client_id;
-                        const clientSecret = (settings as any).google_client_secret;
-                        if (!clientId || !clientSecret) {
-                          toast.error("Por favor, introduza o Google Client ID e o Google Client Secret nos campos abaixo antes de conectar.");
+                        let clientId = (settings as any).google_client_id;
+                        let clientSecret = (settings as any).google_client_secret;
+
+                        // Fallback para Client ID do sistema se não houver personalizado
+                        if (!clientId && calendarStatus?.system_google_client_id) {
+                          clientId = calendarStatus.system_google_client_id;
+                        }
+
+                        if (!clientId) {
+                          toast.error("Por favor, introduza o Google Client ID nos campos abaixo (ou cole o ficheiro JSON da Google).");
                           return;
                         }
-                        try {
-                          await handleSave();
-                        } catch (_) {
-                          toast.error("Erro ao guardar credenciais antes de conectar. Tente novamente.");
-                          return;
+
+                        // Guardar na base de dados se houver novos dados introduzidos pelo utilizador
+                        if ((settings as any).google_client_id) {
+                          try {
+                            await handleSave();
+                          } catch (_) {
+                            toast.error("Erro ao guardar credenciais antes de conectar. Tente novamente.");
+                            return;
+                          }
                         }
+
                         const redirectUri = `${window.location.origin}/api/settings/calendar/google/callback`;
                         const state = (settings as any).id || '';
                         window.open(`https://accounts.google.com/o/oauth2/v2/auth?client_id=${encodeURIComponent(clientId)}&response_type=code&redirect_uri=${encodeURIComponent(redirectUri)}&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcalendar&access_type=offline&prompt=consent&state=${state}`, '_blank');
@@ -574,6 +587,38 @@ export default function Settings() {
                       />
                       <p className="text-[10px] text-emerald-600">
                         Crie as credenciais no Google Cloud Console e adicione <strong>{window.location.origin}/api/settings/calendar/google/callback</strong> como URI de redirecionamento autorizado.
+                      </p>
+                    </div>
+
+                    <div className="space-y-2 pt-2 border-t border-emerald-200/60">
+                      <Label className="text-xs font-bold text-emerald-800 flex items-center gap-1.5">
+                        <UploadCloud className="w-3.5 h-3.5" /> Importar Ficheiro JSON da Google (Opcional)
+                      </Label>
+                      <textarea
+                        rows={3}
+                        placeholder='Cole aqui o texto do ficheiro JSON descarregado do Google Cloud (ex: {"web":{"client_id":"...","client_secret":"..."}})'
+                        className="w-full text-xs font-mono p-2 rounded-lg border border-emerald-200 bg-white focus:outline-none focus:ring-1 focus:ring-emerald-400 resize-none transition-all"
+                        onChange={(e) => {
+                          try {
+                            const val = e.target.value.trim();
+                            if (!val) return;
+                            const parsed = JSON.parse(val);
+                            const web = parsed.web || parsed.installed || parsed;
+                            if (web && (web.client_id || web.client_secret)) {
+                              setSettings(prev => ({
+                                ...prev,
+                                google_client_id: web.client_id || prev.google_client_id,
+                                google_client_secret: web.client_secret || prev.google_client_secret
+                              }));
+                              toast.success("Credenciais extraídas e preenchidas com sucesso a partir do JSON!");
+                            }
+                          } catch (_) {
+                            // JSON parcial enquanto digita
+                          }
+                        }}
+                      />
+                      <p className="text-[10px] text-emerald-600">
+                        Cole o conteúdo do ficheiro <code>client_secret.json</code> para preencher o Client ID e Client Secret automaticamente.
                       </p>
                     </div>
                   </CardContent>
