@@ -19,25 +19,41 @@ router.get('/google/callback', async (req, res) => {
     return res.redirect('/dashboard/settings?tab=calendar&error=no_code');
   }
 
-  const orgId = state as string;
-  if (!orgId) {
-    console.error('[GOOGLE CALENDAR] State (orgId) ausente.');
-    return res.redirect('/dashboard/settings?tab=calendar&error=invalid_state');
-  }
+  let targetOrgId = state as string;
 
   try {
     // 1. Obter credenciais do cliente da base de dados ou ambiente
-    const { data: org } = await supabaseAdmin
-      .from('organizations')
-      .select('google_client_id, google_client_secret')
-      .eq('id', orgId)
-      .maybeSingle();
+    let org: any = null;
+
+    if (targetOrgId) {
+      const { data } = await supabaseAdmin
+        .from('organizations')
+        .select('id, google_client_id, google_client_secret')
+        .eq('id', targetOrgId)
+        .maybeSingle();
+      org = data;
+    }
+
+    // Fallback: se orgId não encontrou registo, procurar a organização que tenha google_client_id configurado
+    if (!org) {
+      const { data: fallbackOrg } = await supabaseAdmin
+        .from('organizations')
+        .select('id, google_client_id, google_client_secret')
+        .not('google_client_id', 'is', null)
+        .neq('google_client_id', '')
+        .limit(1)
+        .maybeSingle();
+      if (fallbackOrg) {
+        org = fallbackOrg;
+        targetOrgId = fallbackOrg.id;
+      }
+    }
 
     const clientId = org?.google_client_id || process.env.GOOGLE_CLIENT_ID;
     const clientSecret = org?.google_client_secret || process.env.GOOGLE_CLIENT_SECRET;
 
     if (!clientId || !clientSecret) {
-      console.error('[GOOGLE CALENDAR] Credenciais Google não encontradas para a organização:', orgId);
+      console.error('[GOOGLE CALENDAR] Credenciais Google não encontradas para a organização:', targetOrgId);
       return res.redirect('/dashboard/settings?tab=calendar&error=credentials_missing');
     }
 
@@ -76,7 +92,7 @@ router.get('/google/callback', async (req, res) => {
     const { error: updateErr } = await supabaseAdmin
       .from('organizations')
       .update(updateData)
-      .eq('id', orgId);
+      .eq('id', targetOrgId || org?.id);
 
     if (updateErr) throw updateErr;
 
@@ -101,25 +117,40 @@ router.get('/microsoft/callback', async (req, res) => {
     return res.redirect('/dashboard/settings?tab=calendar&error=no_code');
   }
 
-  const orgId = state as string;
-  if (!orgId) {
-    console.error('[MICROSOFT CALENDAR] State (orgId) ausente.');
-    return res.redirect('/dashboard/settings?tab=calendar&error=invalid_state');
-  }
+  let targetOrgId = state as string;
 
   try {
     // 1. Obter credenciais do cliente da base de dados ou ambiente
-    const { data: org } = await supabaseAdmin
-      .from('organizations')
-      .select('microsoft_client_id, microsoft_client_secret')
-      .eq('id', orgId)
-      .maybeSingle();
+    let org: any = null;
+
+    if (targetOrgId) {
+      const { data } = await supabaseAdmin
+        .from('organizations')
+        .select('id, microsoft_client_id, microsoft_client_secret')
+        .eq('id', targetOrgId)
+        .maybeSingle();
+      org = data;
+    }
+
+    if (!org) {
+      const { data: fallbackOrg } = await supabaseAdmin
+        .from('organizations')
+        .select('id, microsoft_client_id, microsoft_client_secret')
+        .not('microsoft_client_id', 'is', null)
+        .neq('microsoft_client_id', '')
+        .limit(1)
+        .maybeSingle();
+      if (fallbackOrg) {
+        org = fallbackOrg;
+        targetOrgId = fallbackOrg.id;
+      }
+    }
 
     const clientId = org?.microsoft_client_id || process.env.MICROSOFT_CLIENT_ID;
     const clientSecret = org?.microsoft_client_secret || process.env.MICROSOFT_CLIENT_SECRET;
 
     if (!clientId || !clientSecret) {
-      console.error('[MICROSOFT CALENDAR] Credenciais Microsoft não encontradas para a organização:', orgId);
+      console.error('[MICROSOFT CALENDAR] Credenciais Microsoft não encontradas para a organização:', targetOrgId);
       return res.redirect('/dashboard/settings?tab=calendar&error=credentials_missing');
     }
 
@@ -153,7 +184,7 @@ router.get('/microsoft/callback', async (req, res) => {
     const { error: updateErr } = await supabaseAdmin
       .from('organizations')
       .update(updateData)
-      .eq('id', orgId);
+      .eq('id', targetOrgId);
 
     if (updateErr) throw updateErr;
 

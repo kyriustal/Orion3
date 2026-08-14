@@ -15,6 +15,7 @@ export default function Settings() {
   const [calendarConnected, setCalendarConnected] = useState<{ google: boolean; microsoft: boolean }>({ google: false, microsoft: false });
 
   const [settings, setSettings] = useState({
+    id: "",
     name: "",
     first_name: "",
     last_name: "",
@@ -64,6 +65,11 @@ export default function Settings() {
         toast.error('Credenciais do Google/Microsoft Calendar em falta. Guarde o Client ID e Client Secret antes de conectar.');
       } else if (error === 'token_exchange_failed') {
         toast.error('Falha na autenticação com o calendário. Verifique se o Client Secret e a URI de redirecionamento estão corretos.');
+      }
+
+      // Limpar os parâmetros da URL para evitar que a notificação persista ao recarregar a página
+      if (success || error) {
+        window.history.replaceState({}, document.title, window.location.pathname + '?tab=calendar');
       }
     }
   }, [location.search]);
