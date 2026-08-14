@@ -494,7 +494,11 @@ export default function Settings() {
                         }
                         const stateObj = { id: targetOrgId || '', redirectUri };
                         const state = encodeURIComponent(btoa(JSON.stringify(stateObj)));
-                        window.open(`https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id=${encodeURIComponent(clientId)}&response_type=code&redirect_uri=${encodeURIComponent(redirectUri)}&scope=Calendars.ReadWrite&state=${state}`, '_blank');
+                        const msAuthUrl = `https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id=${encodeURIComponent(clientId)}&response_type=code&redirect_uri=${encodeURIComponent(redirectUri)}&scope=Calendars.ReadWrite&state=${state}`;
+                        const win = window.open(msAuthUrl, '_blank');
+                        if (!win || win.closed || typeof win.closed === 'undefined') {
+                          window.location.href = msAuthUrl;
+                        }
                       }}
                     >
                       <ExternalLink className="w-3 h-3" />
@@ -587,7 +591,12 @@ export default function Settings() {
                           } catch (_) {}
                         }
                         const stateObj = { id: targetOrgId || '', redirectUri };
-                        window.open(`https://accounts.google.com/o/oauth2/v2/auth?client_id=${encodeURIComponent(clientId)}&response_type=code&redirect_uri=${encodeURIComponent(redirectUri)}&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcalendar&access_type=offline&prompt=consent&state=${state}`, '_blank');
+                        const state = encodeURIComponent(btoa(JSON.stringify(stateObj)));
+                        const googleAuthUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${encodeURIComponent(clientId)}&response_type=code&redirect_uri=${encodeURIComponent(redirectUri)}&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcalendar&access_type=offline&prompt=consent&state=${state}`;
+                        const win = window.open(googleAuthUrl, '_blank');
+                        if (!win || win.closed || typeof win.closed === 'undefined') {
+                          window.location.href = googleAuthUrl;
+                        }
                       }}
                     >
                       <ExternalLink className="w-3 h-3" />
