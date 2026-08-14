@@ -33,6 +33,7 @@ jobs:
           password: ${{ secrets.FTP_PASSWORD }}
           local-dir: ./
           server-dir: /public_html/
+          git-ignore: false
           exclude: |
             **/.git*
             **/.git*/**
@@ -46,5 +47,6 @@ jobs:
             !dist/**
             !dist-server/**
             !app.cjs
+            !app.js
             !package.json
             !package-lock.json
