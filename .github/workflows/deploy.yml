@@ -34,19 +34,15 @@ jobs:
           local-dir: ./
           server-dir: /public_html/
           git-ignore: false
+          security: loose
           exclude: |
             **/.git*
             **/.git*/**
+            .github/**
             node_modules/**
             src/**
-            tsconfig.json
-            tsconfig.server.json
+            tsconfig*.json
             vite.config.ts
             README.md
             .env*
-            !dist/**
-            !dist-server/**
-            !app.cjs
-            !app.js
-            !package.json
-            !package-lock.json
+            deploy.bat
