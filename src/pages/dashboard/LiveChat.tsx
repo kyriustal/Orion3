@@ -5,7 +5,7 @@ import {
   Send, User, Bot, AlertCircle, MessageCircle, Loader2, Pause, Play, 
   Wifi, WifiOff, Smartphone, ArrowLeft, Paperclip, FileText, X, 
   Mic, Camera, Video, Square, Check, CheckCheck, RefreshCw, 
-  Volume2, Search, ChevronUp, ChevronDown 
+  Volume2, Search, ChevronUp, ChevronDown, Plus, Phone
 } from "lucide-react";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { io, Socket } from "socket.io-client";
@@ -127,6 +127,92 @@ export default function LiveChat() {
   const [searchResultIndex, setSearchResultIndex] = useState(0);
   const messageRefs = useRef<{ [key: string | number]: HTMLDivElement | null }>({});
   const pendingClientIds = useRef<Set<string>>(new Set());
+
+  // ─── Nova Conversa (modal) ────────────────────────────────────────────────────
+  const [isNewChatOpen,    setIsNewChatOpen]    = useState(false);
+  const [newChatDialCode,  setNewChatDialCode]  = useState("+244");
+  const [newChatNumber,    setNewChatNumber]    = useState("");
+  const [newChatError,     setNewChatError]     = useState("");
+  const [isStartingChat,   setIsStartingChat]   = useState(false);
+
+  const DIAL_CODES = [
+    { flag: "🇦🇴", name: "Angola",       code: "+244" },
+    { flag: "🇵🇹", name: "Portugal",     code: "+351" },
+    { flag: "🇧🇷", name: "Brasil",       code: "+55"  },
+    { flag: "🇿🇦", name: "África do Sul",code: "+27"  },
+    { flag: "🇳🇬", name: "Nigéria",      code: "+234" },
+    { flag: "🇨🇩", name: "R.D. Congo",   code: "+243" },
+    { flag: "🇨🇬", name: "Congo",        code: "+242" },
+    { flag: "🇬🇧", name: "Reino Unido",  code: "+44"  },
+    { flag: "🇺🇸", name: "EUA",          code: "+1"   },
+    { flag: "🇫🇷", name: "França",       code: "+33"  },
+    { flag: "🇪🇸", name: "Espanha",      code: "+34"  },
+    { flag: "🇩🇪", name: "Alemanha",     code: "+49"  },
+    { flag: "🇮🇹", name: "Itália",       code: "+39"  },
+    { flag: "🇲🇿", name: "Moçambique",   code: "+258" },
+    { flag: "🇨🇻", name: "Cabo Verde",   code: "+238" },
+    { flag: "🇸🇹", name: "S. Tomé",      code: "+239" },
+    { flag: "🇬🇶", name: "G. Equatorial",code: "+240" },
+    { flag: "🇳🇦", name: "Namíbia",      code: "+264" },
+    { flag: "🇿🇲", name: "Zâmbia",       code: "+260" },
+    { flag: "🇹🇿", name: "Tanzânia",     code: "+255" },
+    { flag: "🇰🇪", name: "Quénia",       code: "+254" },
+    { flag: "🇦🇪", name: "E.A.U.",       code: "+971" },
+    { flag: "🇮🇳", name: "Índia",        code: "+91"  },
+    { flag: "🇨🇳", name: "China",        code: "+86"  },
+  ];
+
+  const handleStartNewChat = async () => {
+    const digits = newChatNumber.replace(/\D/g, "");
+    if (!digits || digits.length < 6) {
+      setNewChatError("Insira um número de telefone válido.");
+      return;
+    }
+    setNewChatError("");
+    setIsStartingChat(true);
+
+    // Número completo no formato E.164 sem o +
+    const fullPhone = `${newChatDialCode.replace("+", "")}${digits}`;
+
+    // Se a conversa já existe na lista, abrir directamente
+    const existing = chats.find(c => c.phone === fullPhone || c.phone === `+${fullPhone}`);
+    if (existing) {
+      setIsStartingChat(false);
+      setIsNewChatOpen(false);
+      setNewChatNumber("");
+      selectChat(existing);
+      return;
+    }
+
+    // Criar entrada temporária na lista e abrir o chat
+    const displayPhone = `${newChatDialCode}${digits}`;
+    const tempChat: Chat = {
+      id: fullPhone,
+      phone: fullPhone,
+      name: `WhatsApp (${displayPhone})`,
+      lastMessage: "",
+      time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      timestamp: new Date().toISOString(),
+      platform: "whatsapp",
+      unread: 0,
+    };
+
+    setChats(prev => [tempChat, ...prev.filter(c => c.phone !== fullPhone)]);
+    setIsStartingChat(false);
+    setIsNewChatOpen(false);
+    setNewChatNumber("");
+    setActiveChatId(fullPhone);
+    setMessages([]);
+    setShowMobileList(false);
+    setIsAiActive(true);
+
+    // Tentar carregar histórico existente (pode estar vazio)
+    try {
+      const res = await fetch(`/api/whatsapp/history/${fullPhone}`, { headers: { Authorization: `Bearer ${token()}` } });
+      const data = await res.json();
+      if (Array.isArray(data) && data.length > 0) setMessages(data);
+    } catch {}
+  };
 
   const filteredChats = useMemo(() => {
     if (!chatSearchQuery.trim()) return chats;
@@ -752,9 +838,21 @@ export default function LiveChat() {
         <CardHeader className="p-4 border-b border-zinc-100 space-y-3">
           <div className="flex items-center justify-between">
             <CardTitle className="text-base">Conversas</CardTitle>
-            <span className={`flex items-center gap-1 text-xs px-2 py-1 rounded-full font-medium ${isConnected ? "bg-emerald-50 text-emerald-600" : "bg-zinc-100 text-zinc-400"}`}>
-              {isConnected ? <><Wifi className="w-3 h-3" />Tempo real</> : <><WifiOff className="w-3 h-3" />Offline</>}
-            </span>
+            <div className="flex items-center gap-2">
+              {/* Botão Nova Conversa */}
+              <button
+                onClick={() => { setIsNewChatOpen(true); setNewChatError(""); setNewChatNumber(""); }}
+                title="Iniciar nova conversa"
+                className="w-7 h-7 flex items-center justify-center rounded-full bg-emerald-500 hover:bg-emerald-600 text-white transition-colors shadow-sm"
+              >
+                <Plus className="w-4 h-4" />
+              </button>
+              <span className={`flex items-center gap-1 text-xs px-2 py-1 rounded-full font-medium ${
+                isConnected ? "bg-emerald-50 text-emerald-600" : "bg-zinc-100 text-zinc-400"
+              }`}>
+                {isConnected ? <><Wifi className="w-3 h-3" />Tempo real</> : <><WifiOff className="w-3 h-3" />Offline</>}
+              </span>
+            </div>
           </div>
           {/* Caixa de Pesquisa de Conversas / Números */}
           <div className="relative">
@@ -1141,6 +1239,112 @@ export default function LiveChat() {
           </Card>
         </div>
       )}
+
+      {/* ─── Modal: Nova Conversa ──────────────────────────────────────────────── */}
+      {isNewChatOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: "rgba(0,0,0,0.45)", backdropFilter: "blur(4px)" }}
+          onClick={(e) => { if (e.target === e.currentTarget) setIsNewChatOpen(false); }}
+        >
+          <div className="bg-white dark:bg-zinc-900 rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-5 animate-in fade-in zoom-in-95 duration-200">
+            {/* Cabeçalho */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-9 h-9 rounded-full bg-emerald-50 flex items-center justify-center">
+                  <Phone className="w-4 h-4 text-emerald-600" />
+                </div>
+                <div>
+                  <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Nova Conversa</h2>
+                  <p className="text-[11px] text-zinc-400">Insira o número com indicativo</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsNewChatOpen(false)}
+                className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Seletor de indicativo + número */}
+            <div className="space-y-2">
+              <label className="text-xs font-medium text-zinc-600 dark:text-zinc-400">País / Indicativo</label>
+              <select
+                value={newChatDialCode}
+                onChange={e => setNewChatDialCode(e.target.value)}
+                className="w-full h-10 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-sm px-3 text-zinc-800 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              >
+                {DIAL_CODES.map(c => (
+                  <option key={c.code + c.name} value={c.code}>
+                    {c.flag} {c.name} ({c.code})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs font-medium text-zinc-600 dark:text-zinc-400">Número de Telefone</label>
+              <div className="flex items-center gap-2">
+                <span className="shrink-0 h-10 px-3 flex items-center rounded-lg border border-zinc-200 dark:border-zinc-700 bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 text-sm font-mono font-semibold select-none">
+                  {newChatDialCode}
+                </span>
+                <Input
+                  type="tel"
+                  placeholder="912 345 678"
+                  value={newChatNumber}
+                  onChange={e => { setNewChatNumber(e.target.value); setNewChatError(""); }}
+                  onKeyDown={e => { if (e.key === "Enter") handleStartNewChat(); }}
+                  className="flex-1 h-10 text-sm font-mono"
+                  autoFocus
+                />
+              </div>
+              {newChatError && (
+                <p className="text-xs text-red-500 flex items-center gap-1">
+                  <AlertCircle className="w-3 h-3 shrink-0" />{newChatError}
+                </p>
+              )}
+            </div>
+
+            {/* Preview do número completo */}
+            {newChatNumber.replace(/\D/g, "").length >= 6 && (
+              <div className="rounded-lg bg-zinc-50 dark:bg-zinc-800 border border-zinc-100 dark:border-zinc-700 px-3 py-2 flex items-center gap-2">
+                <Smartphone className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                <span className="text-xs text-zinc-500">Número completo:</span>
+                <span className="text-xs font-mono font-semibold text-zinc-800 dark:text-zinc-100">
+                  {newChatDialCode}{newChatNumber.replace(/\D/g, "")}
+                </span>
+              </div>
+            )}
+
+            {/* Acções */}
+            <div className="flex gap-2 pt-1">
+              <Button
+                type="button"
+                variant="outline"
+                className="flex-1 h-10"
+                onClick={() => setIsNewChatOpen(false)}
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="button"
+                className="flex-1 h-10 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold gap-2"
+                onClick={handleStartNewChat}
+                disabled={isStartingChat}
+              >
+                {isStartingChat ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <MessageCircle className="w-4 h-4" />
+                )}
+                Iniciar Chat
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+

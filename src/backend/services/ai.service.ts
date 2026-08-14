@@ -85,7 +85,7 @@ export function getApiKey(attempt = 0): string {
   return key;
 }
 
-/** Obter lista de todas as chaves Deepseek vﾃ｡lidas e ﾃｺnicas */
+/** Obter lista de todas as chaves Deepseek válidas e únicas */
 export function getUniqueDeepseekApiKeys(): string[] {
   const rawKeys = [
     process.env.DEEPSEEK_API_KEY,
@@ -96,7 +96,6 @@ export function getUniqueDeepseekApiKeys(): string[] {
 
   const allKeys: string[] = [];
   rawKeys.forEach(k => {
-    // Remover aspas de toda a string antes de fazer o split
     const cleanStr = k.trim().replace(/^["']|["']$/g, '');
     const parts = cleanStr.split(',').map(s => s.trim().replace(/^["']|["']$/g, ''));
     allKeys.push(...parts);
@@ -104,11 +103,10 @@ export function getUniqueDeepseekApiKeys(): string[] {
 
   const keys = Array.from(new Set(allKeys.filter(k => k.length > 10)));
 
-  // Aviso de configuração no arranque
   if (keys.length === 0) {
-    console.warn('[AIService] ⚠️  DEEPSEEK_API_KEY não configurada — Deepseek desativado como motor principal!');
+    console.warn('[AIService] ⚠️  DEEPSEEK_API_KEY não configurada — motor de texto principal indisponível!');
   } else {
-    console.log(`[AIService] ✅ Deepseek configurado com ${keys.length} chave(s).`);
+    console.log(`[AIService] ✅ DeepSeek configurado com ${keys.length} chave(s) — motor de texto PRINCIPAL.`);
   }
 
   return keys;
@@ -119,12 +117,22 @@ export function getUniqueDeepseekApiKeys(): string[] {
   const dsKeys = [
     process.env.DEEPSEEK_API_KEY,
     process.env.DEEPSEEK_API_KEY_2,
+    process.env.DEEPSEEK_API_KEY_3,
+    process.env.DEEPSEEK_API_KEY_4,
   ].filter(k => k && k.trim().length > 10);
   const geminiKeys = [
     process.env.GEMINI_API_KEY,
     process.env.GEMINI_API_KEY_2,
+    process.env.GEMINI_API_KEY_3,
+    process.env.GEMINI_API_KEY_4,
   ].filter(k => k && k.trim().length > 10);
-  console.log(`[AIService] 🔑 Configuração: Deepseek=${dsKeys.length} chave(s) | Gemini=${geminiKeys.length} chave(s) | OpenAI=${process.env.OPENAI_API_KEY ? '1 chave' : 'não configurado'}`);
+  console.log(`[AIService] 🔑 Configuração: DeepSeek=${dsKeys.length} chave(s) [PRINCIPAL TEXTO] | Gemini=${geminiKeys.length} chave(s) [MULTIMODAL + FALLBACK TEXTO]`);
+  if (dsKeys.length === 0) {
+    console.warn('[AIService] ⚠️  ATENÇÃO: DeepSeek sem chaves configuradas. Textos irão usar Gemini como fallback.');
+  }
+  if (dsKeys.length === 0 && geminiKeys.length === 0) {
+    console.error('[AIService] ❌ CRÍTICO: Nem DeepSeek nem Gemini estão configurados. O sistema não conseguirá responder.');
+  }
 })();
 
 /**
@@ -639,48 +647,61 @@ export class AIService {
       urlContextBlocks = results.filter(Boolean) as string[];
     }
 
-    // Pré-processar media (áudio, documentos, imagens) → texto, via Gemini
+    // ── Pré-processamento multimodal via Gemini (EXCLUSIVO para áudio, imagens e documentos) ──
+    // O conteúdo multimodal é sempre convertido para texto aqui pelo Gemini.
+    // O motor de texto (DeepSeek) recebe apenas texto enriquecido.
     let enrichedMessage = message;
     let mediaForAI: { base64: string; mimeType: string } | undefined = media;
 
     if (mediaForAI) {
       if (mediaForAI.mimeType.startsWith('audio/')) {
-        console.log(`[AIService] Transcrevendo áudio via Gemini antes de enviar para Deepseek...`);
+        console.log(`[AIService] 🎙️  [Gemini Multimodal] Transcrevendo áudio...`);
         try {
           const { AudioService } = await import('./audio.service');
           const stt = await AudioService.speechToTextFromBase64(mediaForAI.base64, mediaForAI.mimeType);
           if (stt?.text) {
             enrichedMessage = `${enrichedMessage}\n\n[Áudio transcrito]:\n${stt.text}`.trim();
+            console.log(`[AIService] ✅ Áudio transcrito com sucesso (${stt.text.length} chars).`);
+          } else {
+            console.warn('[AIService] ⚠️  Transcrição de áudio retornou vazia.');
           }
         } catch (e: any) {
-          console.warn('[AIService] Falha ao transcrever áudio:', e.message);
+          console.error('[AIService] ❌ Falha ao transcrever áudio via Gemini:', e.message);
         }
-        mediaForAI = undefined; // já convertido para texto
+        mediaForAI = undefined; // convertido para texto — não passar para o motor de texto
+
       } else if (
         mediaForAI.mimeType.includes('pdf') ||
         mediaForAI.mimeType.includes('word') ||
         mediaForAI.mimeType.includes('docx') ||
         mediaForAI.mimeType.startsWith('text/')
       ) {
-        console.log(`[AIService] Extraindo texto de documento via Gemini antes de enviar para Deepseek...`);
+        console.log(`[AIService] 📄 [Gemini Multimodal] Extraindo texto de documento (${mediaForAI.mimeType})...`);
         try {
           const docText = await DocumentService.extractTextFromBase64(mediaForAI.base64, mediaForAI.mimeType);
           if (docText) {
             enrichedMessage = `${enrichedMessage}\n\n[Documento anexo]:\n${docText}`.trim();
+            console.log(`[AIService] ✅ Documento extraído com sucesso (${docText.length} chars).`);
+          } else {
+            console.warn('[AIService] ⚠️  Extracção de documento retornou vazia.');
           }
         } catch (e: any) {
-          console.warn('[AIService] Falha ao extrair documento:', e.message);
+          console.error('[AIService] ❌ Falha ao extrair documento via Gemini:', e.message);
         }
         mediaForAI = undefined;
+
       } else if (mediaForAI.mimeType.startsWith('image/')) {
-        console.log(`[AIService] Descrevendo imagem via Gemini antes de enviar para Deepseek...`);
+        console.log(`[AIService] 🖼️  [Gemini Multimodal] Descrevendo imagem (${mediaForAI.mimeType})...`);
         try {
           const description = await AIService.describeImageWithGemini(mediaForAI.base64, mediaForAI.mimeType);
           if (description) {
             enrichedMessage = `${enrichedMessage}\n\n[Imagem anexa - descrição]:\n${description}`.trim();
+            console.log(`[AIService] ✅ Imagem descrita com sucesso (${description.length} chars).`);
+          } else {
+            console.warn('[AIService] ⚠️  Descrição de imagem retornou vazia.');
           }
         } catch (e: any) {
-          console.warn('[AIService] Falha ao descrever imagem:', e.message);
+          console.error('[AIService] ❌ Falha ao descrever imagem via Gemini:', e.message);
         }
         mediaForAI = undefined;
       }
@@ -793,56 +814,52 @@ export class AIService {
       return raw;
     }
 
-    // 2. Construir sistema e conteﾃｺdos
+    // 2. Construir system prompt e conteúdos (Gemini format — reutilizado também no fallback Gemini)
     const fullKnowledge = `${org?.product_description || ''}\n\n${externalKnowledge}\n\n${availableAssets}`.trim();
-    
-    const systemPrompt = buildSystemPrompt(mode, { ...org, product_description: fullKnowledge } as any, botName, referral, timeSinceLastMessageHours, urlSystemContext, customerProfile);
-    const contents     = buildContents(history, enrichedMessage, media, extractedImages);
 
-    // 3. Payloads: com e sem Google Search
-    const baseConfig = {
-      systemInstruction: { parts: [{ text: systemPrompt }] },
-      contents,
-      generationConfig: { temperature: 0.4, maxOutputTokens: 1500 },
-    };
+    const systemPrompt = buildSystemPrompt(
+      mode,
+      { ...org, product_description: fullKnowledge } as any,
+      botName,
+      referral,
+      timeSinceLastMessageHours,
+      urlSystemContext,
+      customerProfile
+    );
 
-    const payloadWithSearch  = { ...baseConfig, tools: [{ google_search: {} }] };
-    const payloadWithSearch2 = { ...baseConfig, tools: [{ googleSearch: {} }] }; // fallback de formato
-    const payloadNoSearch    = { ...baseConfig };
+    // contents no formato Gemini (usado apenas se Gemini for chamado como fallback de texto)
+    const contents = buildContents(history, enrichedMessage, media, extractedImages);
 
         let lastError = '';
 
-    // ------------------------------------------------------------------------------------------------------------------
-    // 3.5. Tentar Deepseek Primeiro (Se a chave estiver configurada)
-    // ------------------------------------------------------------------------------------------------------------------
+    // ──────────────────────────────────────────────────────────────────────────────────────────────────
+    // MOTOR 1 — DeepSeek (PRINCIPAL para texto)
+    // ──────────────────────────────────────────────────────────────────────────────────────────────────
     const dsKeys = getUniqueDeepseekApiKeys();
     if (dsKeys.length === 0) {
-      console.warn(`[AIService] ⚠️  Aviso: DEEPSEEK_API_KEY não configurada. Pulando para motor secundário.`);
+      console.warn(`[AIService] ⚠️  DeepSeek sem chaves. A tentar Gemini como fallback de texto...`);
     } else {
-      console.log(`[AIService] Tentando Deepseek como motor principal (${dsKeys.length} chave(s) configurada(s))...`);
-      const dsModel = process.env.DEEPSEEK_MODEL || 'deepseek-chat';
+      console.log(`[AIService] 🚀 DeepSeek [PRINCIPAL] — ${dsKeys.length} chave(s) disponível(is).`);
+      const dsModel   = process.env.DEEPSEEK_MODEL   || 'deepseek-chat';
       const dsBaseUrl = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com/v1';
-
-      // enrichedMessage já contém áudio/imagem/documento convertidos para texto (pré-processado acima)
       const deepseekMessages = [
         { role: 'system', content: systemPrompt },
-        ...history.map(h => ({
-          role: h.sender === 'user' ? 'user' : 'assistant',
-          content: h.text,
-        })),
+        ...history
+          .filter(h => h.sender === 'user' || h.sender === 'bot')
+          .map(h => ({
+            role: h.sender === 'user' ? 'user' : 'assistant',
+            content: h.text,
+          })),
         { role: 'user', content: enrichedMessage },
       ];
 
-
       for (let attempt = 0; attempt < dsKeys.length; attempt++) {
-        // Rotação inicial no tempo + deslocamento por tentativa
-        const baseIdx = Math.floor(Date.now() / 60_000);
-        const idx = (baseIdx + attempt) % dsKeys.length;
+        const baseIdx     = Math.floor(Date.now() / 60_000);
+        const idx         = (baseIdx + attempt) % dsKeys.length;
         const deepseekKey = dsKeys[idx];
-        const maskedKey = deepseekKey.substring(0, 8) + '...' + deepseekKey.substring(deepseekKey.length - 4);
-
+        const maskedKey   = deepseekKey.substring(0, 8) + '...' + deepseekKey.substring(deepseekKey.length - 4);
         try {
-          console.log(`[AIService] 🔄 Deepseek — chave index ${idx} (${maskedKey}), tentativa ${attempt + 1}/${dsKeys.length}...`);
+          console.log(`[AIService] 🔄 DeepSeek — chave ${idx} (${maskedKey}), tentativa ${attempt + 1}/${dsKeys.length}...`);
           const response = await axios.post(`${dsBaseUrl}/chat/completions`, {
             model: dsModel,
             messages: deepseekMessages,
@@ -853,185 +870,124 @@ export class AIService {
               'Content-Type': 'application/json',
               'Authorization': `Bearer ${deepseekKey}`,
             },
-            timeout: 30_000,
+            timeout: 20_000,
           });
 
           const rawText = response.data?.choices?.[0]?.message?.content?.trim();
-          if (rawText) {
-            const confirm      = rawText.includes('[CONFIRMAR_INFORMAÇÃO]');
-            const transfer     = rawText.includes('[TRANSFERIR_HUMANO]');
-            const booking      = rawText.includes('[AGENDAR]');
-            const proposal     = rawText.includes('[PROPOSTA]');
-            const contactMatch = rawText.match(/\[CONTATO:(\{[^}]+\})\]/);
-            const contactData  = contactMatch ? (() => { try { return JSON.parse(contactMatch[1]); } catch { return undefined; } })() : undefined;
-            const cleanReply   = rawText.replace(/\[TRANSFERIR_HUMANO\]|\[AGENDAR\]|\[PROPOSTA\]|\[CONFIRMAR_INFORMAÇÃO\]|\[CONTATO:\{[^}]+\}\]/g, '').trim();
-            console.log(`[AIService] ✅ Resposta Deepseek (chave index ${idx}) — ${cleanReply.length} chars.`);
-            if (contactData) console.log(`[AIService] 📇 Dados de contacto capturados:`, contactData);
-            if (proposal) console.log(`[AIService] 📎 Proposta comercial detectada.`);
-            return { reply: cleanReply || rawText, transfer, booking, proposal, contactData, confirm };
-          } else {
-            console.warn(`[AIService] ⚠️  Deepseek (chave index ${idx}) retornou resposta vazia.`);
-          }
-        } catch (deepseekErr: any) {
-          const httpStatus = deepseekErr.response?.status ?? 'N/A';
-          const errData    = deepseekErr.response?.data;
-          const isTimeout  = deepseekErr.code === 'ECONNABORTED' || deepseekErr.message?.includes('timeout');
-          lastError = errData?.error?.message || deepseekErr.message;
-
-          if (isTimeout) {
-            console.error(`[AIService] ⏱️  Deepseek TIMEOUT (chave index ${idx}, ${maskedKey}) após 30s.`);
-          } else {
-            console.error(`[AIService] ❌ Deepseek HTTP ${httpStatus} (chave index ${idx}, ${maskedKey}): ${lastError}`);
-            if (errData) {
-              const errBody = typeof errData === 'string' ? errData : JSON.stringify(errData);
-              console.error(`[AIService]    ↳ Body: ${errBody.substring(0, 500)}`);
-            }
-            if (httpStatus === 401 || httpStatus === 402) {
-              console.error(`[AIService]    ↳ ATENÇÃO: Saldo ou chave inválida. Verifique: https://platform.deepseek.com`);
-            }
-          }
-        }
-      }
-    }
-
-    // 4. Tentar OpenAI gpt-4o-mini (Se a chave estiver configurada)
-    try {
-      const openaiKey = process.env.OPENAI_API_KEY?.replace(/^["']|["']$/g, '')?.trim();
-      if (openaiKey && openaiKey.length > 10) {
-        console.log(`[AIService] Tentando OpenAI gpt-4o-mini...`);
-        const lastUserContent: any[] = [{ type: 'text', text: enrichedMessage }];
-        if (media && media.mimeType.startsWith('image/')) {
-          lastUserContent.push({ type: 'image_url', image_url: { url: `data:${media.mimeType};base64,${media.base64}` } });
-        }
-        extractedImages.forEach((img) => lastUserContent.push({ type: 'image_url', image_url: { url: `data:${img.mimeType};base64,${img.base64}` } }));
-        const openaiMessages = [
-          { role: 'system', content: systemPrompt },
-          ...history.map(h => ({ role: h.sender === 'user' ? 'user' : 'assistant', content: h.text })),
-          { role: 'user', content: lastUserContent.length > 1 ? lastUserContent : enrichedMessage },
-        ];
-        const response = await axios.post('https://api.openai.com/v1/chat/completions', {
-          model: 'gpt-4o-mini', messages: openaiMessages, temperature: 0.4, max_tokens: 1500,
-        }, {
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiKey}` },
-          timeout: 25_000,
-        });
-        const rawText = response.data?.choices?.[0]?.message?.content?.trim();
-        if (rawText) {
-          const confirm      = rawText.includes('[CONFIRMAR_INFORMAÇÃO]');
-          const transfer     = rawText.includes('[TRANSFERIR_HUMANO]');
-          const booking      = rawText.includes('[AGENDAR]');
-          const proposal     = rawText.includes('[PROPOSTA]');
-          const contactMatch = rawText.match(/\[CONTATO:(\{[^}]+\})\]/);
-          const contactData  = contactMatch ? (() => { try { return JSON.parse(contactMatch[1]); } catch { return undefined; } })() : undefined;
-          const cleanReply   = rawText.replace(/\[TRANSFERIR_HUMANO\]|\[AGENDAR\]|\[PROPOSTA\]|\[CONFIRMAR_INFORMAÇÃO\]|\[CONTATO:\{[^}]+\}\]/g, '').trim();
-          console.log(`[AIService] ✅ Resposta via OpenAI gpt-4o-mini.`);
-          return { reply: cleanReply || rawText, transfer, booking, proposal, contactData, confirm };
-        }
-      }
-    } catch (openaiErr: any) {
-      const errData = openaiErr.response?.data;
-      lastError = errData?.error?.message || openaiErr.message;
-      console.error(`[AIService] ❌ OpenAI falhou:`, lastError);
-    }
-
-    // 5. Fallback automático para Gemini 2.5 Flash
-    // Percorre TODAS as chaves até encontrar uma funcional
-    const geminiKeys = getUniqueApiKeys();
-    try {
-      if (geminiKeys.length > 0) {
-        console.log(`[AIService] Avançando para fallback Gemini (${geminiKeys.length} chaves)...`);
-        for (let keyIdx = 0; keyIdx < geminiKeys.length; keyIdx++) {
-          const apiKey = geminiKeys[keyIdx];
-          const url    = `${GEMINI_BASE}/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
-          const masked = apiKey.substring(0, 8) + '...' + apiKey.substring(apiKey.length - 4);
-          const formats = [
-            { label: 'com google_search',  payload: payloadWithSearch  },
-            { label: 'com googleSearch',   payload: payloadWithSearch2 },
-            { label: 'sem tools',          payload: payloadNoSearch    },
-          ];
-          let keyFailed = false;
-          for (const { label, payload } of formats) {
-            try {
-              console.log(`[AIService] Gemini key ${keyIdx} (${masked}) — ${label}...`);
-              const response = await axios.post(url, payload, {
-                headers: { 'Content-Type': 'application/json' },
-                timeout: 30_000,
-              });
-              const parts: any[] = response.data?.candidates?.[0]?.content?.parts ?? [];
-              const cleanText = extractCleanText(parts);
-              if (!cleanText) { continue; }
-              const confirm      = cleanText.includes('[CONFIRMAR_INFORMAÇÃO]');
-              const transfer     = cleanText.includes('[TRANSFERIR_HUMANO]');
-              const booking      = cleanText.includes('[AGENDAR]');
-              const proposal     = cleanText.includes('[PROPOSTA]');
-              const contactMatch = cleanText.match(/\[CONTATO:(\{[^}]+\})\]/);
-              const contactData  = contactMatch ? (() => { try { return JSON.parse(contactMatch[1]); } catch { return undefined; } })() : undefined;
-              const cleanReply   = cleanText.replace(/\[TRANSFERIR_HUMANO\]|\[AGENDAR\]|\[PROPOSTA\]|\[CONFIRMAR_INFORMAÇÃO\]|\[CONTATO:\{[^}]+\}\]/g, '').trim();
-              console.log(`[AIService] ✅ Resposta via Gemini key ${keyIdx}.`);
-              return { reply: cleanReply || cleanText, transfer, booking, proposal, contactData, confirm };
-            } catch (err: any) {
-              const errData = err.response?.data;
-              lastError     = errData?.error?.message || err.message;
-              const status  = err.response?.status ?? 'N/A';
-              console.error(`[AIService] ❌ Gemini key ${keyIdx} — ${label} (HTTP ${status}): ${lastError}`);
-              // Chave bloqueada ou quota esgotada → saltar para a próxima
-              if (status === 403 || status === 429 ||
-                  lastError.toLowerCase().includes('denied') ||
-                  lastError.toLowerCase().includes('not valid')) {
-                keyFailed = true;
-                break;
-              }
-            }
-          }
-          if (keyFailed) {
-            console.warn(`[AIService] Chave Gemini index ${keyIdx} bloqueada/sem quota. A tentar próxima...`);
+          if (!rawText) {
+            console.warn(`[AIService] ⚠️  DeepSeek chave ${idx} retornou resposta vazia.`);
             continue;
           }
-        }
-      }
-    } catch (geminiErr: any) {
-      console.error(`[AIService] Falha crítica no fallback Gemini:`, geminiErr.message);
-    }
 
-    // 5.5 Último fallback absoluto: Deepseek
-    const fallbackDsKeys = getUniqueDeepseekApiKeys();
-    if (fallbackDsKeys.length > 0) {
-      console.log(`[AIService] [ULTIMO FALLBACK] Tentando Deepseek...`);
-      const dsModel   = process.env.DEEPSEEK_MODEL   || 'deepseek-chat';
-      const dsBaseUrl = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com/v1';
-      const dsMessages = [
-        { role: 'system', content: systemPrompt },
-        ...history.map(h => ({ role: h.sender === 'user' ? 'user' : 'assistant', content: h.text })),
-        { role: 'user', content: enrichedMessage },
-      ];
-      for (let attempt = 0; attempt < fallbackDsKeys.length; attempt++) {
-        try {
-          const response = await axios.post(`${dsBaseUrl}/chat/completions`, {
-            model: dsModel, messages: dsMessages, temperature: 0.4, max_tokens: 1500,
-          }, {
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${fallbackDsKeys[attempt]}` },
-            timeout: 25_000,
-          });
-          const rawText = response.data?.choices?.[0]?.message?.content?.trim();
-          if (rawText) {
-            const confirm      = rawText.includes('[CONFIRMAR_INFORMAÇÃO]');
-            const transfer     = rawText.includes('[TRANSFERIR_HUMANO]');
-            const booking      = rawText.includes('[AGENDAR]');
-            const proposal     = rawText.includes('[PROPOSTA]');
-            const contactMatch = rawText.match(/\[CONTATO:(\{[^}]+\})\]/);
-            const contactData  = contactMatch ? (() => { try { return JSON.parse(contactMatch[1]); } catch { return undefined; } })() : undefined;
-            const cleanReply   = rawText.replace(/\[TRANSFERIR_HUMANO\]|\[AGENDAR\]|\[PROPOSTA\]|\[CONFIRMAR_INFORMAÇÃO\]|\[CONTATO:\{[^}]+\}\]/g, '').trim();
-            console.log(`[AIService] ✅ Fallback Deepseek OK (key ${attempt}).`);
-            return { reply: cleanReply || rawText, transfer, booking, proposal, contactData, confirm };
-          }
+          // Remover blocos de raciocínio <think>...</think> que o deepseek-reasoner pode emitir
+          const cleanedText  = rawText.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+          const confirm      = cleanedText.includes('[CONFIRMAR_INFORMAÇÃO]');
+          const transfer     = cleanedText.includes('[TRANSFERIR_HUMANO]');
+          const booking      = cleanedText.includes('[AGENDAR]');
+          const proposal     = cleanedText.includes('[PROPOSTA]');
+          const contactMatch = cleanedText.match(/\[CONTATO:(\{[^}]+\})\]/);
+          const contactData  = contactMatch
+            ? (() => { try { return JSON.parse(contactMatch[1]); } catch { return undefined; } })()
+            : undefined;
+          const cleanReply = cleanedText
+            .replace(/\[TRANSFERIR_HUMANO\]|\[AGENDAR\]|\[PROPOSTA\]|\[CONFIRMAR_INFORMAÇÃO\]|\[CONTATO:\{[^}]+\}\]/g, '')
+            .trim();
+
+          console.log(`[AIService] ✅ Resposta via DeepSeek [PRINCIPAL] (chave ${idx}) — ${cleanReply.length} chars.`);
+          return { reply: cleanReply || cleanedText, transfer, booking, proposal, contactData, confirm };
+
         } catch (dsErr: any) {
-          console.error(`[AIService] Falha no fallback Deepseek key ${attempt}:`, dsErr.message);
+          const httpStatus = dsErr.response?.status ?? 'N/A';
+          const isTimeout  = dsErr.code === 'ECONNABORTED' || dsErr.message?.includes('timeout');
+          lastError = dsErr.response?.data?.error?.message || dsErr.message || String(dsErr);
+
+          if (isTimeout) {
+            console.warn(`[AIService] ⏱️  DeepSeek chave ${idx} TIMEOUT após 20s. A tentar próxima chave...`);
+          } else if (httpStatus === 401 || httpStatus === 402) {
+            console.error(`[AIService] ❌ DeepSeek chave ${idx} sem saldo/inválida (HTTP ${httpStatus}). A parar DeepSeek.`);
+            break; // sem saldo — inutilizar todas as chaves restantes
+          } else if (httpStatus === 429) {
+            console.warn(`[AIService] ⏳ DeepSeek chave ${idx} rate-limited (HTTP 429). A tentar próxima chave...`);
+          } else {
+            console.error(`[AIService] ❌ DeepSeek chave ${idx} HTTP ${httpStatus}: ${lastError}`);
+          }
         }
       }
+      console.warn(`[AIService] ⚠️  DeepSeek esgotou todas as chaves. A passar para Gemini como fallback de texto.`);
     }
 
-    // 6. Último recurso: resposta genérica
-    console.error(`[AIService] ❌ Todos os caminhos falharam. Último erro: ${lastError}`);
+    // ──────────────────────────────────────────────────────────────────────────────────────────────────
+    // MOTOR 2 — Gemini 2.5 Flash (FALLBACK de texto, sempre usado para multimodal)
+    // ──────────────────────────────────────────────────────────────────────────────────────────────────
+    const geminiKeysText = getUniqueApiKeys();
+    if (geminiKeysText.length === 0) {
+      console.warn(`[AIService] ⚠️  Nenhuma GEMINI_API_KEY configurada. A tentar OpenAI...`);
+    } else {
+      console.log(`[AIService] 🔁 Gemini 2.5 Flash [FALLBACK TEXTO] — ${geminiKeysText.length} chave(s)...`);
+      const baseConfig = {
+        systemInstruction: { parts: [{ text: systemPrompt }] },
+        contents,
+        generationConfig: { temperature: 0.4, maxOutputTokens: 1500 },
+      };
+      const formatsGemini = [
+        { label: 'com google_search',  payload: { ...baseConfig, tools: [{ google_search: {} }] } },
+        { label: 'com googleSearch',   payload: { ...baseConfig, tools: [{ googleSearch: {} }] } },
+        { label: 'sem tools',          payload: { ...baseConfig } },
+      ];
+
+      for (let keyIdx = 0; keyIdx < geminiKeysText.length; keyIdx++) {
+        const apiKey = geminiKeysText[keyIdx];
+        const url    = `${GEMINI_BASE}/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
+        const masked = apiKey.substring(0, 8) + '...' + apiKey.substring(apiKey.length - 4);
+        let keyFailed = false;
+
+        for (const { label, payload } of formatsGemini) {
+          try {
+            console.log(`[AIService] 🔄 Gemini fallback — chave ${keyIdx} (${masked}) ${label}...`);
+            const response = await axios.post(url, payload, {
+              headers: { 'Content-Type': 'application/json' },
+              timeout: 25_000,
+            });
+            const parts: any[] = response.data?.candidates?.[0]?.content?.parts ?? [];
+            const cleanText = extractCleanText(parts);
+            if (!cleanText) { continue; }
+
+            const confirm      = cleanText.includes('[CONFIRMAR_INFORMAÇÃO]');
+            const transfer     = cleanText.includes('[TRANSFERIR_HUMANO]');
+            const booking      = cleanText.includes('[AGENDAR]');
+            const proposal     = cleanText.includes('[PROPOSTA]');
+            const contactMatch = cleanText.match(/\[CONTATO:(\{[^}]+\})\]/);
+            const contactData  = contactMatch
+              ? (() => { try { return JSON.parse(contactMatch[1]); } catch { return undefined; } })()
+              : undefined;
+            const cleanReply = cleanText
+              .replace(/\[TRANSFERIR_HUMANO\]|\[AGENDAR\]|\[PROPOSTA\]|\[CONFIRMAR_INFORMAÇÃO\]|\[CONTATO:\{[^}]+\}\]/g, '')
+              .trim();
+
+            console.log(`[AIService] ✅ Resposta via Gemini [FALLBACK TEXTO] chave ${keyIdx}.`);
+            return { reply: cleanReply || cleanText, transfer, booking, proposal, contactData, confirm };
+
+          } catch (err: any) {
+            const status  = err.response?.status ?? 'N/A';
+            lastError     = err.response?.data?.error?.message || err.message || String(err);
+            if (status === 429 || status === 403 ||
+                lastError.toLowerCase().includes('quota') ||
+                lastError.toLowerCase().includes('denied') ||
+                lastError.toLowerCase().includes('not valid')) {
+              console.warn(`[AIService] ⚠️  Gemini chave ${keyIdx} bloqueada/sem quota (HTTP ${status}). A tentar próxima...`);
+              keyFailed = true;
+              break;
+            }
+            console.error(`[AIService] ❌ Gemini chave ${keyIdx} ${label} (HTTP ${status}): ${lastError}`);
+          }
+        }
+        if (keyFailed) continue;
+      }
+      console.warn(`[AIService] ⚠️  Gemini esgotou todas as chaves. Todos os motores de texto falharam.`);
+    }
+
+    // Todos os motores falharam (DeepSeek + Gemini)
+    console.error(`[AIService] ❌ TODOS os motores de IA falharam (DeepSeek + Gemini). Último erro: ${lastError}`);
     return {
       reply: 'Desculpe, não consegui processar a sua mensagem neste momento. Por favor, tente novamente em breve.',
       transfer: false,
@@ -1042,44 +998,44 @@ export class AIService {
    * Traduz um texto silenciosamente para a lﾃｭngua alvo (usado para gravar histﾃｳrico em PT)
    */
   static async translateText(text: string, targetLanguage: string): Promise<string> {
+    // 1. Tentar DeepSeek (motor principal de texto)
     try {
-      const deepseekKey = process.env.DEEPSEEK_API_KEY?.replace(/^["']|["']$/g, '')?.trim();
-      if (deepseekKey && deepseekKey.length > 10) {
-        const dsModel = process.env.DEEPSEEK_MODEL || 'deepseek-chat';
+      const dsKeys = getUniqueDeepseekApiKeys();
+      if (dsKeys.length > 0) {
+        const deepseekKey = dsKeys[0];
+        const dsModel   = process.env.DEEPSEEK_MODEL   || 'deepseek-chat';
         const dsBaseUrl = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com/v1';
         const response = await axios.post(`${dsBaseUrl}/chat/completions`, {
           model: dsModel,
-          messages: [{ role: 'user', content: `Traduza o seguinte texto para ${targetLanguage}. Retorne APENAS a traduﾃｧﾃ｣o, sem comentﾃ｡rios:\n\n${text}` }],
+          messages: [{ role: 'user', content: `Traduza o seguinte texto para ${targetLanguage}. Retorne APENAS a tradução, sem comentários:\n\n${text}` }],
           temperature: 0.3,
+          max_tokens: 500,
         }, {
-          headers: { 'Authorization': `Bearer ${deepseekKey}` }
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${deepseekKey}` },
+          timeout: 15_000,
         });
-        return response.data?.choices?.[0]?.message?.content?.trim() || text;
+        const result = response.data?.choices?.[0]?.message?.content?.trim();
+        if (result) return result;
       }
-
-      const openaiKey = process.env.OPENAI_API_KEY?.replace(/^["']|["']$/g, '')?.trim();
-      if (openaiKey && openaiKey.length > 10) {
-        const response = await axios.post('https://api.openai.com/v1/chat/completions', {
-          model: 'gpt-4o-mini',
-          messages: [{ role: 'user', content: `Traduza o seguinte texto para ${targetLanguage}. Retorne APENAS a traduﾃｧﾃ｣o, sem comentﾃ｡rios:\n\n${text}` }],
-          temperature: 0.3,
-        }, {
-          headers: { 'Authorization': `Bearer ${openaiKey}` }
-        });
-        return response.data?.choices?.[0]?.message?.content?.trim() || text;
-      }
-      
-      // Fallback Gemini
-      const apiKey = getApiKey(0);
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
-      const response = await axios.post(url, {
-        contents: [{ parts: [{ text: `Traduza o seguinte texto para ${targetLanguage}. Retorne APENAS a traduﾃｧﾃ｣o:\n\n${text}` }] }],
-      });
-      return response.data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || text;
-    } catch (err) {
-      console.warn(`[AIService] Erro ao traduzir texto:`, err);
-      return text; // fallback to original
+    } catch (err: any) {
+      console.warn(`[AIService] ⚠️  DeepSeek falhou na tradução: ${err.message}. A tentar Gemini...`);
     }
+
+    // 2. Fallback: Gemini
+    try {
+      const apiKey = getApiKey(0);
+      const url = `${GEMINI_BASE}/gemini-2.5-flash:generateContent?key=${apiKey}`;
+      const response = await axios.post(url, {
+        contents: [{ parts: [{ text: `Traduza o seguinte texto para ${targetLanguage}. Retorne APENAS a tradução:\n\n${text}` }] }],
+        generationConfig: { temperature: 0.2, maxOutputTokens: 500 },
+      }, { timeout: 15_000 });
+      const result = response.data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+      if (result) return result;
+    } catch (err: any) {
+      console.warn(`[AIService] ⚠️  Gemini também falhou na tradução: ${err.message}.`);
+    }
+
+    return text; // fallback: devolver o original sem tradução
   }
 }
 
