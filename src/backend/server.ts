@@ -9,6 +9,7 @@ console.log(`[BOOT] Carregando .env de: ${path.join(process.cwd(), '.env')}`);
 
 // Inicialização
 const app        = express();
+app.set('trust proxy', true);
 const httpServer = createServer(app);
 const PORT       = process.env.PORT || 3000;
 

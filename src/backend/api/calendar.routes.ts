@@ -5,10 +5,36 @@ import { supabaseAdmin } from '../config/supabase';
 
 const router = Router();
 
+// Helper para descodificar o parâmetro state com suporte a JSON/base64 e fallback
+function parseOAuthState(stateRaw: any): { targetOrgId: string; clientRedirectUri: string } {
+  let targetOrgId = '';
+  let clientRedirectUri = '';
+  if (stateRaw && typeof stateRaw === 'string') {
+    try {
+      const decoded = JSON.parse(Buffer.from(decodeURIComponent(stateRaw), 'base64').toString('utf8'));
+      if (decoded.id) targetOrgId = decoded.id;
+      if (decoded.redirectUri) clientRedirectUri = decoded.redirectUri;
+    } catch (_) {
+      try {
+        const decodedPlain = JSON.parse(decodeURIComponent(stateRaw));
+        if (decodedPlain.id) targetOrgId = decodedPlain.id;
+        if (decodedPlain.redirectUri) clientRedirectUri = decodedPlain.redirectUri;
+      } catch (__) {
+        targetOrgId = stateRaw;
+      }
+    }
+  }
+  return { targetOrgId, clientRedirectUri };
+}
+
 // ─── GET /api/settings/calendar/google/callback ──────────────────────────────
 // Recebe o authorization code da Google após o utilizador autorizar
 router.get('/google/callback', async (req, res) => {
-  const { code, error, state } = req.query;
+  const { code, error, state, ping } = req.query;
+
+  if (ping === 'true' || req.headers['accept']?.includes('application/json')) {
+    return res.json({ status: 'ok', service: 'Google Calendar OAuth Callback', ready: true });
+  }
 
   if (error) {
     console.error('[GOOGLE CALENDAR] Erro OAuth:', error);
@@ -19,7 +45,7 @@ router.get('/google/callback', async (req, res) => {
     return res.redirect('/dashboard/settings?tab=calendar&error=no_code');
   }
 
-  let targetOrgId = state as string;
+  let { targetOrgId, clientRedirectUri } = parseOAuthState(state);
 
   try {
     // 1. Obter credenciais do cliente da base de dados ou ambiente
@@ -49,17 +75,19 @@ router.get('/google/callback', async (req, res) => {
       }
     }
 
-    const clientId = org?.google_client_id || process.env.GOOGLE_CLIENT_ID;
-    const clientSecret = org?.google_client_secret || process.env.GOOGLE_CLIENT_SECRET;
+    const clientId = (org?.google_client_id || process.env.GOOGLE_CLIENT_ID || '').trim();
+    const clientSecret = (org?.google_client_secret || process.env.GOOGLE_CLIENT_SECRET || '').trim();
 
     if (!clientId || !clientSecret) {
       console.error('[GOOGLE CALENDAR] Credenciais Google não encontradas para a organização:', targetOrgId);
       return res.redirect('/dashboard/settings?tab=calendar&error=credentials_missing');
     }
 
-    const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'https';
-    const host = req.get('host');
-    const redirectUri = `${protocol}://${host}/api/settings/calendar/google/callback`;
+    const rawProto = (req.headers['x-forwarded-proto'] as string)?.split(',')[0].trim();
+    const protocol = rawProto || req.protocol || 'https';
+    const host = (req.headers['x-forwarded-host'] as string)?.split(',')[0].trim() || req.get('host');
+    const computedRedirectUri = `${protocol}://${host}/api/settings/calendar/google/callback`;
+    const redirectUri = clientRedirectUri || computedRedirectUri;
 
     // 2. Trocar code por tokens
     const tokenRes = await axios.post('https://oauth2.googleapis.com/token', new URLSearchParams({
@@ -98,8 +126,19 @@ router.get('/google/callback', async (req, res) => {
 
     return res.redirect('/dashboard/settings?tab=calendar&success=google_connected');
   } catch (err: any) {
+    const googleErr = err.response?.data?.error || '';
     console.error('[GOOGLE CALENDAR] Erro ao trocar token:', err.response?.data || err.message);
-    return res.redirect('/dashboard/settings?tab=calendar&error=token_exchange_failed');
+
+    let errorParam = 'token_exchange_failed';
+    if (googleErr === 'invalid_client') {
+      errorParam = 'invalid_client_secret';
+    } else if (googleErr === 'redirect_uri_mismatch') {
+      errorParam = 'redirect_uri_mismatch';
+    } else if (googleErr === 'invalid_grant') {
+      errorParam = 'invalid_grant';
+    }
+
+    return res.redirect(`/dashboard/settings?tab=calendar&error=${errorParam}`);
   }
 });
 
@@ -117,7 +156,7 @@ router.get('/microsoft/callback', async (req, res) => {
     return res.redirect('/dashboard/settings?tab=calendar&error=no_code');
   }
 
-  let targetOrgId = state as string;
+  let { targetOrgId, clientRedirectUri } = parseOAuthState(state);
 
   try {
     // 1. Obter credenciais do cliente da base de dados ou ambiente
@@ -146,17 +185,19 @@ router.get('/microsoft/callback', async (req, res) => {
       }
     }
 
-    const clientId = org?.microsoft_client_id || process.env.MICROSOFT_CLIENT_ID;
-    const clientSecret = org?.microsoft_client_secret || process.env.MICROSOFT_CLIENT_SECRET;
+    const clientId = (org?.microsoft_client_id || process.env.MICROSOFT_CLIENT_ID || '').trim();
+    const clientSecret = (org?.microsoft_client_secret || process.env.MICROSOFT_CLIENT_SECRET || '').trim();
 
     if (!clientId || !clientSecret) {
       console.error('[MICROSOFT CALENDAR] Credenciais Microsoft não encontradas para a organização:', targetOrgId);
       return res.redirect('/dashboard/settings?tab=calendar&error=credentials_missing');
     }
 
-    const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'https';
-    const host = req.get('host');
-    const redirectUri = `${protocol}://${host}/api/settings/calendar/microsoft/callback`;
+    const rawProto = (req.headers['x-forwarded-proto'] as string)?.split(',')[0].trim();
+    const protocol = rawProto || req.protocol || 'https';
+    const host = (req.headers['x-forwarded-host'] as string)?.split(',')[0].trim() || req.get('host');
+    const computedRedirectUri = `${protocol}://${host}/api/settings/calendar/microsoft/callback`;
+    const redirectUri = clientRedirectUri || computedRedirectUri;
 
     // 2. Trocar code por tokens
     const tokenRes = await axios.post('https://login.microsoftonline.com/common/oauth2/v2.0/token', new URLSearchParams({
@@ -184,14 +225,25 @@ router.get('/microsoft/callback', async (req, res) => {
     const { error: updateErr } = await supabaseAdmin
       .from('organizations')
       .update(updateData)
-      .eq('id', targetOrgId);
+      .eq('id', targetOrgId || org?.id);
 
     if (updateErr) throw updateErr;
 
     return res.redirect('/dashboard/settings?tab=calendar&success=microsoft_connected');
   } catch (err: any) {
+    const msErr = err.response?.data?.error || '';
     console.error('[MICROSOFT CALENDAR] Erro ao trocar token:', err.response?.data || err.message);
-    return res.redirect('/dashboard/settings?tab=calendar&error=token_exchange_failed');
+
+    let errorParam = 'token_exchange_failed';
+    if (msErr === 'invalid_client') {
+      errorParam = 'invalid_client_secret';
+    } else if (msErr === 'redirect_uri_mismatch') {
+      errorParam = 'redirect_uri_mismatch';
+    } else if (msErr === 'invalid_grant') {
+      errorParam = 'invalid_grant';
+    }
+
+    return res.redirect(`/dashboard/settings?tab=calendar&error=${errorParam}`);
   }
 });
 

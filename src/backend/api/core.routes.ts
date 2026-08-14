@@ -84,7 +84,9 @@ router.get('/dashboard/metrics', requireAuth, async (req: AuthRequest, res: Resp
 // ─── GET /api/settings/org — Carregar configurações da organização ────────────
 router.get('/settings/org', requireAuth, async (req: AuthRequest, res) => {
   try {
-    const orgId = req.user?.orgId;
+    const orgId = req.user?.orgId || req.user?.id;
+    if (!orgId) return res.json({});
+
     const { data, error } = await supabaseAdmin
       .from('organizations')
       .select('*')
@@ -92,7 +94,21 @@ router.get('/settings/org', requireAuth, async (req: AuthRequest, res) => {
       .maybeSingle();
 
     if (error) throw error;
-    res.json(data || {});
+
+    // Auto-healing: Se a organização não existir na BD, criar registo base
+    if (!data) {
+      const ownerName = req.user?.name || req.user?.email?.split('@')[0] || 'Utilizador';
+      const newOrg = {
+        id: orgId,
+        owner_email: req.user?.email || '',
+        first_name: ownerName,
+        name: 'Minha Empresa',
+      };
+      await supabaseAdmin.from('organizations').upsert(newOrg, { onConflict: 'id' });
+      return res.json(newOrg);
+    }
+
+    res.json(data);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -101,22 +117,20 @@ router.get('/settings/org', requireAuth, async (req: AuthRequest, res) => {
 // ─── POST /api/settings/org — Guardar configurações da organização ────────────
 router.post('/settings/org', requireAuth, async (req: AuthRequest, res) => {
   try {
-    const orgId = req.user?.orgId;
-    const body = req.body;
+    const orgId = req.user?.orgId || req.user?.id;
+    if (!orgId) {
+      return res.status(400).json({ error: 'ID da organização não identificado no token de sessão.' });
+    }
 
-    // 1. Obter um registo para inspecionar as colunas válidas na base de dados
-    const { data: existingOrg, error: fetchError } = await supabaseAdmin
+    const body = req.body || {};
+
+    // 1. Obter registo existente para identificar colunas existentes na tabela
+    const { data: existingOrg } = await supabaseAdmin
       .from('organizations')
       .select('*')
       .eq('id', orgId)
       .maybeSingle();
 
-    if (fetchError) throw fetchError;
-    if (!existingOrg) {
-      return res.status(404).json({ error: 'Organização não encontrada.' });
-    }
-
-    // 2. Filtrar apenas as chaves do body que existem como colunas na tabela 'organizations'
     const knownColumns = [
       'name', 'first_name', 'last_name', 'owner_email', 'phone', 'whatsapp', 'address',
       'contact_person', 'social_object', 'employees_count', 'product_description',
@@ -124,28 +138,49 @@ router.post('/settings/org', requireAuth, async (req: AuthRequest, res) => {
       'google_client_id', 'google_client_secret', 'microsoft_client_id', 'microsoft_client_secret',
       'handover_mode', 'ai_tone', 'ai_prompt'
     ];
-    const validColumns = Array.from(new Set([...Object.keys(existingOrg || {}), ...knownColumns]));
-    const filteredUpdate: any = {};
+
+    const validColumns = existingOrg
+      ? Array.from(new Set([...Object.keys(existingOrg), ...knownColumns]))
+      : knownColumns;
+
+    const filteredUpdate: any = { id: orgId };
     for (const key of Object.keys(body)) {
-      if (validColumns.includes(key)) {
+      if (validColumns.includes(key) && key !== 'id') {
         filteredUpdate[key] = body[key];
       }
     }
 
-    // 3. Executar o update apenas com as colunas válidas
-    console.log(`[SETTINGS] A atualizar organização ${orgId} com as colunas filtradas:`, Object.keys(filteredUpdate));
+    // 2. Executar upsert para criar se não existir ou atualizar se existir
+    console.log(`[SETTINGS] A guardar dados da organização ${orgId}:`, Object.keys(filteredUpdate));
 
-    const { error } = await supabaseAdmin
+    let { error } = await supabaseAdmin
       .from('organizations')
-      .update(filteredUpdate)
-      .eq('id', orgId);
+      .upsert(filteredUpdate, { onConflict: 'id' });
 
-    if (error) throw error;
+    // Se o Supabase falhar por causa de colunas que não existem no Schema atual da BD do utilizador
+    if (error && (error.message?.includes('column') || error.code === 'PGRST204')) {
+      console.warn('[SETTINGS] Colunas opcionais não encontradas na BD. A tentar guardar apenas campos padrão:', error.message);
+      const safeUpdate = { ...filteredUpdate };
+      delete safeUpdate.google_client_id;
+      delete safeUpdate.google_client_secret;
+      delete safeUpdate.microsoft_client_id;
+      delete safeUpdate.microsoft_client_secret;
+      delete safeUpdate.calendar_provider;
+      delete safeUpdate.calendar_link;
+
+      const { error: fallbackErr } = await supabaseAdmin
+        .from('organizations')
+        .upsert(safeUpdate, { onConflict: 'id' });
+
+      if (fallbackErr) throw fallbackErr;
+    } else if (error) {
+      throw error;
+    }
 
     res.json({ message: 'Configurações guardadas com sucesso.' });
   } catch (err: any) {
     console.error('[SETTINGS] Erro ao guardar configurações:', err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: err.message || 'Erro ao salvar configurações' });
   }
 });
 

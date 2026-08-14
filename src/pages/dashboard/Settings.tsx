@@ -64,6 +64,12 @@ export default function Settings() {
         toast.error('Erro na autenticação. Tente novamente.');
       } else if (error === 'credentials_missing') {
         toast.error('Credenciais do Google/Microsoft Calendar em falta. Guarde o Client ID e Client Secret antes de conectar.');
+      } else if (error === 'invalid_client_secret') {
+        toast.error('Client Secret ou Client ID incorreto. Verifique se copiou a chave exatamente como gerada no Google Cloud Console.');
+      } else if (error === 'redirect_uri_mismatch') {
+        toast.error(`URI de redirecionamento não autorizada. Adicione "${window.location.origin}/api/settings/calendar/google/callback" em URIs de redirecionamento autorizadas no Google Cloud Console.`);
+      } else if (error === 'invalid_grant') {
+        toast.error('O código de autorização expirou ou já foi utilizado. Tente conectar novamente.');
       } else if (error === 'token_exchange_failed') {
         toast.error('Falha na autenticação com o calendário. Verifique se o Client Secret e a URI de redirecionamento estão corretos.');
       }
@@ -124,7 +130,10 @@ export default function Settings() {
         },
         body: JSON.stringify(settings)
       });
-      if (!response.ok) throw new Error("Erro ao salvar configurações");
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.error || data.message || "Erro ao salvar configurações");
+      }
       toast.success("Configurações atualizadas com sucesso!");
     } catch (error: any) {
       toast.error(error.message);
@@ -459,8 +468,8 @@ export default function Settings() {
                       }`}
                       onClick={async (e) => {
                         e.stopPropagation();
-                        const clientId = (settings as any).microsoft_client_id;
-                        const clientSecret = (settings as any).microsoft_client_secret;
+                        const clientId = ((settings as any).microsoft_client_id || '').trim();
+                        const clientSecret = ((settings as any).microsoft_client_secret || '').trim();
                         if (!clientId || !clientSecret) {
                           toast.error("Por favor, introduza o Microsoft Client ID e o Client Secret nos campos abaixo antes de conectar.");
                           return;
@@ -472,7 +481,8 @@ export default function Settings() {
                           return;
                         }
                         const redirectUri = `${window.location.origin}/api/settings/calendar/microsoft/callback`;
-                        const state = (settings as any).id || '';
+                        const stateObj = { id: (settings as any).id || '', redirectUri };
+                        const state = encodeURIComponent(btoa(JSON.stringify(stateObj)));
                         window.open(`https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id=${encodeURIComponent(clientId)}&response_type=code&redirect_uri=${encodeURIComponent(redirectUri)}&scope=Calendars.ReadWrite&state=${state}`, '_blank');
                       }}
                     >
@@ -526,12 +536,12 @@ export default function Settings() {
                       }`}
                       onClick={async (e) => {
                         e.stopPropagation();
-                        let clientId = (settings as any).google_client_id;
-                        let clientSecret = (settings as any).google_client_secret;
+                        let clientId = ((settings as any).google_client_id || '').trim();
+                        let clientSecret = ((settings as any).google_client_secret || '').trim();
 
                         // Fallback para Client ID do sistema se não houver personalizado
                         if (!clientId && calendarStatus?.system_google_client_id) {
-                          clientId = calendarStatus.system_google_client_id;
+                          clientId = calendarStatus.system_google_client_id.trim();
                         }
 
                         if (!clientId) {
@@ -540,7 +550,7 @@ export default function Settings() {
                         }
 
                         // Guardar na base de dados se houver novos dados introduzidos pelo utilizador
-                        if ((settings as any).google_client_id) {
+                        if ((settings as any).google_client_id || (settings as any).google_client_secret) {
                           try {
                             await handleSave();
                           } catch (_) {
@@ -550,7 +560,8 @@ export default function Settings() {
                         }
 
                         const redirectUri = `${window.location.origin}/api/settings/calendar/google/callback`;
-                        const state = (settings as any).id || '';
+                        const stateObj = { id: (settings as any).id || '', redirectUri };
+                        const state = encodeURIComponent(btoa(JSON.stringify(stateObj)));
                         window.open(`https://accounts.google.com/o/oauth2/v2/auth?client_id=${encodeURIComponent(clientId)}&response_type=code&redirect_uri=${encodeURIComponent(redirectUri)}&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcalendar&access_type=offline&prompt=consent&state=${state}`, '_blank');
                       }}
                     >
