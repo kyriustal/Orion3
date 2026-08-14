@@ -449,15 +449,23 @@ export default function Settings() {
                           ? 'bg-zinc-600 hover:bg-zinc-700'
                           : 'bg-blue-600 hover:bg-blue-700'
                       }`}
-                      onClick={(e) => {
+                      onClick={async (e) => {
                         e.stopPropagation();
-                        if (!(settings as any).microsoft_client_id) {
-                          toast.error("Por favor, introduza o seu Microsoft Client ID nas configurações de calendário abaixo antes de conectar.");
+                        const clientId = (settings as any).microsoft_client_id;
+                        const clientSecret = (settings as any).microsoft_client_secret;
+                        if (!clientId || !clientSecret) {
+                          toast.error("Por favor, introduza o Microsoft Client ID e o Client Secret nos campos abaixo antes de conectar.");
+                          return;
+                        }
+                        try {
+                          await handleSave();
+                        } catch (_) {
+                          toast.error("Erro ao guardar credenciais antes de conectar. Tente novamente.");
                           return;
                         }
                         const redirectUri = `${window.location.origin}/api/settings/calendar/microsoft/callback`;
                         const state = (settings as any).id || '';
-                        window.open(`https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id=${(settings as any).microsoft_client_id}&response_type=code&redirect_uri=${encodeURIComponent(redirectUri)}&scope=Calendars.ReadWrite&state=${state}`, '_blank');
+                        window.open(`https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id=${encodeURIComponent(clientId)}&response_type=code&redirect_uri=${encodeURIComponent(redirectUri)}&scope=Calendars.ReadWrite&state=${state}`, '_blank');
                       }}
                     >
                       <ExternalLink className="w-3 h-3" />
@@ -508,15 +516,23 @@ export default function Settings() {
                           ? 'bg-zinc-600 hover:bg-zinc-700'
                           : 'bg-emerald-600 hover:bg-emerald-700'
                       }`}
-                      onClick={(e) => {
+                      onClick={async (e) => {
                         e.stopPropagation();
-                        if (!(settings as any).google_client_id) {
-                          toast.error("Por favor, introduza o seu Google Client ID e Secret abaixo e clique em 'Guardar Preferência' antes de conectar.");
+                        const clientId = (settings as any).google_client_id;
+                        const clientSecret = (settings as any).google_client_secret;
+                        if (!clientId || !clientSecret) {
+                          toast.error("Por favor, introduza o Google Client ID e o Google Client Secret nos campos abaixo antes de conectar.");
+                          return;
+                        }
+                        try {
+                          await handleSave();
+                        } catch (_) {
+                          toast.error("Erro ao guardar credenciais antes de conectar. Tente novamente.");
                           return;
                         }
                         const redirectUri = `${window.location.origin}/api/settings/calendar/google/callback`;
                         const state = (settings as any).id || '';
-                        window.open(`https://accounts.google.com/o/oauth2/v2/auth?client_id=${(settings as any).google_client_id}&response_type=code&redirect_uri=${encodeURIComponent(redirectUri)}&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcalendar&access_type=offline&prompt=consent&state=${state}`, '_blank');
+                        window.open(`https://accounts.google.com/o/oauth2/v2/auth?client_id=${encodeURIComponent(clientId)}&response_type=code&redirect_uri=${encodeURIComponent(redirectUri)}&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcalendar&access_type=offline&prompt=consent&state=${state}`, '_blank');
                       }}
                     >
                       <ExternalLink className="w-3 h-3" />

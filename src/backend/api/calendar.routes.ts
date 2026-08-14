@@ -41,7 +41,9 @@ router.get('/google/callback', async (req, res) => {
       return res.redirect('/dashboard/settings?tab=calendar&error=credentials_missing');
     }
 
-    const redirectUri = `${req.protocol}://${req.get('host')}/api/settings/calendar/google/callback`;
+    const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'https';
+    const host = req.get('host');
+    const redirectUri = `${protocol}://${host}/api/settings/calendar/google/callback`;
 
     // 2. Trocar code por tokens
     const tokenRes = await axios.post('https://oauth2.googleapis.com/token', new URLSearchParams({
@@ -121,7 +123,9 @@ router.get('/microsoft/callback', async (req, res) => {
       return res.redirect('/dashboard/settings?tab=calendar&error=credentials_missing');
     }
 
-    const redirectUri = `${req.protocol}://${req.get('host')}/api/settings/calendar/microsoft/callback`;
+    const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'https';
+    const host = req.get('host');
+    const redirectUri = `${protocol}://${host}/api/settings/calendar/microsoft/callback`;
 
     // 2. Trocar code por tokens
     const tokenRes = await axios.post('https://login.microsoftonline.com/common/oauth2/v2.0/token', new URLSearchParams({
