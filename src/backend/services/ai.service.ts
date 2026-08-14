@@ -251,11 +251,13 @@ REGRAS:
   // Instruﾃｧﾃ｣o universal: detectar pedido de atendimento humano em TODOS os modos de handover
   const transferRule = '- Se o cliente pedir explicitamente para falar com um humano, atendente ou pessoa real, inicie a sua resposta com o token [TRANSFERIR_HUMANO] e despeﾃｧa-se gentilmente.';
 
-  let bookingRule = '- Se o cliente solicitar agendamento, marcaﾃｧﾃ｣o de consulta ou pedir para agendar um serviﾃｧo, inicie a sua resposta com o token [AGENDAR].';
+  let bookingRule = '- Se o cliente solicitar agendamento, marcação de consulta ou pedir para agendar um serviço, inicie a sua resposta com o token [AGENDAR].';
   if (org?.calendar_provider === 'other' && org.calendar_link) {
-    bookingRule += ` Alﾃｩm disso, informe amigavelmente o cliente que ele pode agendar diretamente atravﾃｩs do seguinte link: ${org.calendar_link}`;
+    bookingRule += ` Além disso, informe amigavelmente o cliente que ele pode agendar diretamente através do seguinte link: ${org.calendar_link}`;
   } else if (org?.calendar_provider === 'google' || org?.calendar_provider === 'microsoft') {
-    bookingRule += ` Alﾃｩm disso, informe que a marcaﾃｧﾃ｣o serﾃ｡ integrada com o nosso calendﾃ｡rio (${org.calendar_provider === 'google' ? 'Google Calendar' : 'Outlook Calendar'}) de forma automﾃ｡tica.`;
+    bookingRule += ` Além disso, informe que a marcação será integrada com o nosso calendário (${org.calendar_provider === 'google' ? 'Google Calendar' : 'Outlook Calendar'}) de forma automática.`;
+  } else {
+    bookingRule += ` Além disso, informe amigavelmente o cliente que o seu pedido de agendamento foi registado com sucesso e que a nossa equipa entrará em contacto muito em breve para agendar e confirmar os detalhes.`;
   }
 
   const proposalRule = '- PROPOSTAS COMERCIAIS DO CLIENTE: Se o cliente enviar uma proposta comercial (oferta de parceria, prestaﾃｧﾃ｣o de serviﾃｧos, fornecimento de produtos, colaboraﾃｧﾃ｣o, publicidade, patrocﾃｭnio, ou qualquer outro tipo de proposta de negﾃｳcio) 窶� quer seja num sector semelhante ao da empresa OU num sector completamente diferente 窶� responda de forma diplomﾃ｡tica e profissional. Reconheﾃｧa a proposta com simpatia, informe que irﾃ｡ encaminhar para a ﾃ｡rea competente para anﾃ｡lise, e inclua o token [PROPOSTA] no INﾃ垢IO da sua resposta. ATENﾃ�グ CRﾃ控ICA: Nﾃ｣o confunda a proposta do cliente com os produtos/serviﾃｧos da NOSSA empresa. A proposta ﾃｩ uma OFERTA DO CLIENTE para nﾃｳs, nﾃ｣o um pedido de compra dos nossos serviﾃｧos. Trate-a como tal.';

@@ -60,6 +60,10 @@ export default function Settings() {
         toast.error('A conexão com o Microsoft Calendar foi cancelada.');
       } else if (error === 'no_code') {
         toast.error('Erro na autenticação. Tente novamente.');
+      } else if (error === 'credentials_missing') {
+        toast.error('Credenciais do Google/Microsoft Calendar em falta. Guarde o Client ID e Client Secret antes de conectar.');
+      } else if (error === 'token_exchange_failed') {
+        toast.error('Falha na autenticação com o calendário. Verifique se o Client Secret e a URI de redirecionamento estão corretos.');
       }
     }
   }, [location.search]);
@@ -177,7 +181,7 @@ export default function Settings() {
           <h2 className="text-2xl font-bold tracking-tight text-zinc-900">Configurações</h2>
           <p className="text-zinc-500">Gerencie sua conta e as preferências da Orion.</p>
         </div>
-        <Button onClick={handleSave} disabled={isSaving || activeTab === 'security' || activeTab === 'calendar'} className="bg-emerald-600 hover:bg-emerald-700 h-11 px-8">
+        <Button onClick={handleSave} disabled={isSaving || activeTab === 'security'} className="bg-emerald-600 hover:bg-emerald-700 h-11 px-8">
           {isSaving ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}
           Salvar Dados
         </Button>
@@ -507,7 +511,7 @@ export default function Settings() {
                       onClick={(e) => {
                         e.stopPropagation();
                         if (!(settings as any).google_client_id) {
-                          toast.error("Por favor, introduza o seu Google Client ID nas configurações de calendário abaixo antes de conectar.");
+                          toast.error("Por favor, introduza o seu Google Client ID e Secret abaixo e clique em 'Guardar Preferência' antes de conectar.");
                           return;
                         }
                         const redirectUri = `${window.location.origin}/api/settings/calendar/google/callback`;

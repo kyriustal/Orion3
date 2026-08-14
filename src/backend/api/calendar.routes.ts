@@ -26,15 +26,18 @@ router.get('/google/callback', async (req, res) => {
   }
 
   try {
-    // 1. Obter credenciais do cliente da base de dados
-    const { data: org, error: dbErr } = await supabaseAdmin
+    // 1. Obter credenciais do cliente da base de dados ou ambiente
+    const { data: org } = await supabaseAdmin
       .from('organizations')
       .select('google_client_id, google_client_secret')
       .eq('id', orgId)
       .maybeSingle();
 
-    if (dbErr || !org || !org.google_client_id || !org.google_client_secret) {
-      console.error('[GOOGLE CALENDAR] Credenciais Google não encontradas para a organização:', orgId, dbErr);
+    const clientId = org?.google_client_id || process.env.GOOGLE_CLIENT_ID;
+    const clientSecret = org?.google_client_secret || process.env.GOOGLE_CLIENT_SECRET;
+
+    if (!clientId || !clientSecret) {
+      console.error('[GOOGLE CALENDAR] Credenciais Google não encontradas para a organização:', orgId);
       return res.redirect('/dashboard/settings?tab=calendar&error=credentials_missing');
     }
 
@@ -43,8 +46,8 @@ router.get('/google/callback', async (req, res) => {
     // 2. Trocar code por tokens
     const tokenRes = await axios.post('https://oauth2.googleapis.com/token', new URLSearchParams({
       code: code as string,
-      client_id: org.google_client_id,
-      client_secret: org.google_client_secret,
+      client_id: clientId,
+      client_secret: clientSecret,
       redirect_uri: redirectUri,
       grant_type: 'authorization_code'
     }).toString(), {
@@ -103,15 +106,18 @@ router.get('/microsoft/callback', async (req, res) => {
   }
 
   try {
-    // 1. Obter credenciais do cliente da base de dados
-    const { data: org, error: dbErr } = await supabaseAdmin
+    // 1. Obter credenciais do cliente da base de dados ou ambiente
+    const { data: org } = await supabaseAdmin
       .from('organizations')
       .select('microsoft_client_id, microsoft_client_secret')
       .eq('id', orgId)
       .maybeSingle();
 
-    if (dbErr || !org || !org.microsoft_client_id || !org.microsoft_client_secret) {
-      console.error('[MICROSOFT CALENDAR] Credenciais Microsoft não encontradas para a organização:', orgId, dbErr);
+    const clientId = org?.microsoft_client_id || process.env.MICROSOFT_CLIENT_ID;
+    const clientSecret = org?.microsoft_client_secret || process.env.MICROSOFT_CLIENT_SECRET;
+
+    if (!clientId || !clientSecret) {
+      console.error('[MICROSOFT CALENDAR] Credenciais Microsoft não encontradas para a organização:', orgId);
       return res.redirect('/dashboard/settings?tab=calendar&error=credentials_missing');
     }
 
@@ -120,8 +126,8 @@ router.get('/microsoft/callback', async (req, res) => {
     // 2. Trocar code por tokens
     const tokenRes = await axios.post('https://login.microsoftonline.com/common/oauth2/v2.0/token', new URLSearchParams({
       code: code as string,
-      client_id: org.microsoft_client_id,
-      client_secret: org.microsoft_client_secret,
+      client_id: clientId,
+      client_secret: clientSecret,
       redirect_uri: redirectUri,
       grant_type: 'authorization_code',
       scope: 'Calendars.ReadWrite'
@@ -162,7 +168,7 @@ router.get('/status', requireAuth, async (req: AuthRequest, res) => {
 
     const { data, error } = await supabaseAdmin
       .from('organizations')
-      .select('calendar_provider, google_refresh_token, microsoft_refresh_token')
+      .select('calendar_provider, google_refresh_token, microsoft_refresh_token, google_client_id, google_client_secret')
       .eq('id', orgId)
       .maybeSingle();
 
@@ -172,6 +178,7 @@ router.get('/status', requireAuth, async (req: AuthRequest, res) => {
       provider: data?.calendar_provider || 'none',
       google_connected: !!(data?.google_refresh_token),
       microsoft_connected: !!(data?.microsoft_refresh_token),
+      has_google_credentials: !!(data?.google_client_id && data?.google_client_secret) || !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });

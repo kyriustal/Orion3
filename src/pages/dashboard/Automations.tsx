@@ -130,7 +130,7 @@ export default function Automations() {
           <div className="col-span-full py-20 text-center border-2 border-dashed border-zinc-200 rounded-2xl bg-zinc-50">
             <Zap className="w-12 h-12 text-zinc-300 mx-auto mb-4" />
             <p className="text-zinc-500 font-medium">Nenhuma automação configurada ainda.</p>
-            <Button variant="link" className="text-emerald-600" onClick={() => setIsModalOpen(true)}>Criar minha primeira automação</Button>
+            <Button variant="ghost" className="text-emerald-600 hover:text-emerald-700 underline" onClick={() => setIsModalOpen(true)}>Criar minha primeira automação</Button>
           </div>
         )}
       </div>

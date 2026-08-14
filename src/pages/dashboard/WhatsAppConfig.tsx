@@ -102,7 +102,7 @@ export default function WhatsAppConfig() {
     // Configuração do App (Pode ser puxada de uma variável de ambiente ou config)
     const appId = "34557883637136073";
 
-    if (appId === "SEU_APP_ID_AQUI") {
+    if ((appId as string) === "SEU_APP_ID_AQUI") {
       toast.warning("Configuração pendente: Insira o App ID no código ou painel para usar o fluxo automático.");
       setIsModalOpen(true); // Abre o manual como fallback
       return;
