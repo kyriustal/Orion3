@@ -89,6 +89,7 @@ export default function LiveChat() {
   const [chats,    setChats]    = useState<Chat[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [typingChatIds, setTypingChatIds] = useState<Set<string>>(new Set());
+  const [errorChatIds,  setErrorChatIds]  = useState<Set<string>>(new Set());
   const [showMobileList, setShowMobileList] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const token = () => localStorage.getItem("token") || "";
@@ -490,10 +491,14 @@ export default function LiveChat() {
     });
 
     sock.on("new_message", (data: { phone: string; sender: string; text: string; time: string; timestamp: string; platform?: string; botName?: string; agentName?: string; metadata?: any; }) => {
+      // Ignorar mensagens internas de erro — não são para mostrar ao operador nem ao cliente
+      if (data.metadata?.internal_error) return;
+
       setChats(prev => {
         const exists = prev.find(c => c.id === data.phone);
         const hasConfirm = data.metadata?.confirm === true || data.metadata?.booking === true;
         const isHuman = data.sender === "human";
+
 
         // Previsualização no painel lateral: para ficheiros usa o fileName, caso contrário usa o texto
         const previewText = data.metadata?.fileName
@@ -577,6 +582,13 @@ export default function LiveChat() {
       });
     });
 
+    // Marcar chat a vermelho quando a IA falha (sem enviar mensagem ao cliente)
+    sock.on("chat_error", (data: { phone: string; error?: string; platform?: string }) => {
+      setErrorChatIds(prev => new Set(prev).add(data.phone));
+      // Limpar o indicador de digitação se estava activo
+      setTypingChatIds(prev => { const next = new Set(prev); next.delete(data.phone); return next; });
+    });
+
     return () => { sock.disconnect(); };
   }, []);
 
@@ -603,7 +615,7 @@ export default function LiveChat() {
     try {
       const res = await fetch(`/api/whatsapp/history/${chat.phone}`, { headers: { Authorization: `Bearer ${token()}` } });
       const data = await res.json();
-      if (Array.isArray(data)) setMessages(data);
+      if (Array.isArray(data)) setMessages(data.filter((m: any) => !m.metadata?.internal_error));
     } catch { toast.error("Erro ao carregar histórico."); }
   };
 
@@ -884,18 +896,43 @@ export default function LiveChat() {
             const previewDate = formatChatPreviewDate(chat.timestamp, chat.time);
             const isToday = chat.timestamp && new Date(chat.timestamp).toDateString() === new Date().toDateString();
             return (
-              <div key={chat.id} onClick={() => selectChat(chat)} className={`p-4 border-b border-zinc-50 cursor-pointer transition-colors relative ${activeChatId === chat.phone ? (chat.needs_confirm ? "bg-orange-50 border-l-2 border-l-orange-500" : "bg-emerald-50 border-l-2 border-l-emerald-500") : (chat.needs_confirm ? "bg-orange-50/70 hover:bg-orange-50 border-l-2 border-l-orange-400" : "hover:bg-zinc-50")}`}>
+              <div
+                key={chat.id}
+                onClick={() => { selectChat(chat); setErrorChatIds(prev => { const next = new Set(prev); next.delete(chat.phone); return next; }); }}
+                className={`p-4 border-b border-zinc-50 cursor-pointer transition-colors relative ${
+                  errorChatIds.has(chat.phone)
+                    ? (activeChatId === chat.phone ? "bg-red-50 border-l-2 border-l-red-500" : "bg-red-50/70 hover:bg-red-50 border-l-2 border-l-red-400")
+                    : activeChatId === chat.phone
+                      ? (chat.needs_confirm ? "bg-orange-50 border-l-2 border-l-orange-500" : "bg-emerald-50 border-l-2 border-l-emerald-500")
+                      : (chat.needs_confirm ? "bg-orange-50/70 hover:bg-orange-50 border-l-2 border-l-orange-400" : "hover:bg-zinc-50")
+                }`}
+              >
                 <div className="flex justify-between items-start mb-1">
                   <div className="flex items-center gap-1.5 min-w-0">
-                    <Smartphone className={`w-3 h-3 shrink-0 ${chat.needs_confirm ? "text-orange-500" : "text-emerald-500"}`} />
+                    <Smartphone className={`w-3 h-3 shrink-0 ${
+                      errorChatIds.has(chat.phone) ? "text-red-500" : chat.needs_confirm ? "text-orange-500" : "text-emerald-500"
+                    }`} />
                     <h3 className="font-medium text-sm text-zinc-900 truncate max-w-[120px]">{chat.name}</h3>
+                    {errorChatIds.has(chat.phone) && (
+                      <span title="Erro ao processar — intervenção humana necessária" className="ml-0.5 text-red-500">
+                        <AlertCircle className="w-3 h-3" />
+                      </span>
+                    )}
                   </div>
                   <div className="flex items-center gap-1 shrink-0 ml-1">
-                    <span className={`text-[10px] font-medium ${isToday ? (chat.needs_confirm ? 'text-orange-600' : 'text-zinc-400') : (chat.needs_confirm ? 'text-orange-700' : 'text-emerald-600')}`}>{previewDate}</span>
-                    {(chat.unread || 0) > 0 && <span className={`w-5 h-5 text-white text-[10px] rounded-full flex items-center justify-center font-bold ${chat.needs_confirm ? "bg-orange-500" : "bg-emerald-500"}`}>{chat.unread}</span>}
+                    <span className={`text-[10px] font-medium ${
+                      errorChatIds.has(chat.phone) ? 'text-red-600' : isToday ? (chat.needs_confirm ? 'text-orange-600' : 'text-zinc-400') : (chat.needs_confirm ? 'text-orange-700' : 'text-emerald-600')
+                    }`}>{previewDate}</span>
+                    {(chat.unread || 0) > 0 && <span className={`w-5 h-5 text-white text-[10px] rounded-full flex items-center justify-center font-bold ${
+                      errorChatIds.has(chat.phone) ? "bg-red-500" : chat.needs_confirm ? "bg-orange-500" : "bg-emerald-500"
+                    }`}>{chat.unread}</span>}
                   </div>
                 </div>
-                <p className={`text-xs truncate ${chat.needs_confirm ? "text-orange-700/80 font-medium" : "text-zinc-400"}`}>{chat.lastMessage}</p>
+                <p className={`text-xs truncate ${
+                  errorChatIds.has(chat.phone) ? "text-red-600/80 font-medium" : chat.needs_confirm ? "text-orange-700/80 font-medium" : "text-zinc-400"
+                }`}>
+                  {errorChatIds.has(chat.phone) ? "⚠️ Erro ao processar — intervenção necessária" : chat.lastMessage}
+                </p>
               </div>
             );
           })}

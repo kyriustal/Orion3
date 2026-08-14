@@ -236,9 +236,26 @@ router.post('/webhook', async (req, res) => {
         console.log(`[FB WEBHOOK] ✅ Resposta gerada para sender=${senderId}: "${aiResult.reply.substring(0, 80)}"`);
       } catch (aiErr: any) {
         console.error(`[FB WEBHOOK] ❌ AIService lançou excepção para sender=${senderId}:`, aiErr.message);
+
+        // NÃO enviar mensagem de erro ao cliente — apenas registar e sinalizar o painel.
         try {
-          await FacebookService.sendMessage(pageId, senderId, 'Desculpe, tive um problema técnico momentâneo. Por favor, tente novamente em instantes. 🙏', accessToken);
+          await supabaseAdmin.from('conversation_history').insert({
+            org_id: orgId,
+            customer_phone: senderId,
+            sender: 'bot',
+            text: `[ERRO INTERNO — NÃO ENVIADO AO CLIENTE]: ${aiErr.message}`,
+            metadata: { platform: 'facebook', internal_error: true },
+          });
         } catch (_) { /* silencioso */ }
+
+        try {
+          getIo().to(`org:${orgId}`).emit('chat_error', {
+            phone: senderId,
+            error: aiErr.message,
+            platform: 'facebook',
+          });
+        } catch (_) { /* silencioso */ }
+
         continue;
       }
 

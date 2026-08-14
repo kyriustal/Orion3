@@ -842,13 +842,25 @@ async function triggerAIResponse(params: {
   } catch (err: any) {
     console.error(`[IA] ERRO no fluxo para ${fromNumber}:`, err.message);
 
-    // Logar erro no histórico para visibilidade no dashboard
+    // NÃO enviar mensagem de erro ao cliente — apenas sinalizar o painel internamente.
+    // O agente humano verá o chat marcado a vermelho e pode intervir.
     try {
+      // 1. Registar o erro internamente no histórico (visível apenas no painel)
       await supabaseAdmin.from('conversation_history').insert({
         org_id: orgId,
         customer_phone: fromNumber,
         sender: 'bot',
-        text: `[Erro do sistema] Desculpe, tive um problema técnico temporário. Por favor tente novamente em breve.`,
+        text: `[ERRO INTERNO — NÃO ENVIADO AO CLIENTE]: ${err.message}`,
+        metadata: { internal_error: true },
+      });
+    } catch (_) { /* silencioso */ }
+
+    // 2. Emitir evento Socket para marcar o chat a vermelho no painel
+    try {
+      getIo().to(`org:${orgId}`).emit('chat_error', {
+        phone: fromNumber,
+        error: err.message,
+        platform: 'whatsapp',
       });
     } catch (_) { /* silencioso */ }
   }

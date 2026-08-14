@@ -626,20 +626,42 @@ export class AIService {
     // 0. Extrair e ler o conteﾃｺdo de URLs presentes na mensagem (ex: links de anﾃｺncios do Facebook/Instagram)
     // O conteﾃｺdo ﾃｩ passado como CONTEXTO DO SISTEMA (nﾃ｣o como mensagem do cliente) para evitar que a IA
     // confunda o conteﾃｺdo da pﾃ｡gina com o que o cliente escreveu.
+    //
+    // NOTA: Domínios de redireccionamento de anúncios (fb.me, l.facebook.com, etc.) são IGNORADOS
+    // porque bloqueiam bots com 403/redirect-loop e causariam falha de toda a resposta.
+    const AD_REDIRECT_DOMAINS = [
+      'fb.me', 'l.facebook.com', 'lm.facebook.com', 'web.facebook.com',
+      'l.instagram.com', 'ig.me', 'wa.me', 'whatsapp.com',
+      'bit.ly', 'tinyurl.com', 'short.io', 'rebrand.ly', 't.co',
+    ];
     const urlRegex = /https?:\/\/[^\s<>"{}|\\^`[\]]+/gi;
-    const detectedUrls = message.match(urlRegex) || [];
+    const allDetectedUrls = message.match(urlRegex) || [];
+    const detectedUrls = allDetectedUrls.filter(url => {
+      try {
+        const host = new URL(url).hostname.replace(/^www\./, '');
+        return !AD_REDIRECT_DOMAINS.some(d => host === d || host.endsWith('.' + d));
+      } catch (_) { return false; }
+    });
     let urlContextBlocks: string[] = [];
     let extractedImages: { base64: string; mimeType: string }[] = [];
 
+    if (allDetectedUrls.length > detectedUrls.length) {
+      console.log(`[AIService] 🚫 ${allDetectedUrls.length - detectedUrls.length} URL(s) de anúncio/redirect ignorado(s) (domínio bloqueado).`);
+    }
+
     if (detectedUrls.length > 0) {
-      console.log(`[AIService] �迫 ${detectedUrls.length} URL(s) detectado(s) na mensagem. A extrair conteﾃｺdo de texto e imagens...`);
+      console.log(`[AIService] 🔗 ${detectedUrls.length} URL(s) detectado(s) na mensagem. A extrair conteﾃｺdo de texto e imagens...`);
       const urlFetches = detectedUrls.slice(0, 3).map(async (url) => {
-        const result = await DocumentService.extractPageContentAndImages(url);
-        if (result && result.text) {
-          if (result.images && result.images.length > 0) {
-            extractedImages.push(...result.images);
+        try {
+          const result = await DocumentService.extractPageContentAndImages(url);
+          if (result && result.text) {
+            if (result.images && result.images.length > 0) {
+              extractedImages.push(...result.images);
+            }
+            return `[Página: ${url}]:\n${result.text}`;
           }
-          return `[Pﾃ｡gina: ${url}]:\n${result.text}`;
+        } catch (urlErr: any) {
+          console.warn(`[AIService] ⚠️  Falha ao extrair conteúdo de ${url} (não crítico): ${urlErr.message}`);
         }
         return null;
       });
