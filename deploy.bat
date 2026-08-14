@@ -38,5 +38,5 @@ if %ERRORLEVEL% NEQ 0 (
     echo ✨ SUCESSO! O codigo foi enviado ao GitHub.
     echo 🚀 O deploy automatico para a Hostinger foi iniciado.
     echo -------------------------------------------
-    timeout /t 5
+    ping 127.0.0.1 -n 6 >nul
 )
