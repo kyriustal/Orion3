@@ -48,6 +48,7 @@ export default function Settings() {
     const tab = params.get('tab');
     const success = params.get('success');
     const error = params.get('error');
+    const details = params.get('details');
     if (tab === 'calendar') {
       setActiveTab('calendar');
       if (success === 'google_connected') {
@@ -65,13 +66,13 @@ export default function Settings() {
       } else if (error === 'credentials_missing') {
         toast.error('Credenciais do Google/Microsoft Calendar em falta. Guarde o Client ID e Client Secret antes de conectar.');
       } else if (error === 'invalid_client_secret') {
-        toast.error('Client Secret ou Client ID incorreto. Verifique se copiou a chave exatamente como gerada no Google Cloud Console.');
+        toast.error(`Client Secret ou Client ID incorreto ${details ? `(${details})` : ''}. Verifique se copiou a chave exatamente como gerada no Google Cloud Console.`);
       } else if (error === 'redirect_uri_mismatch') {
-        toast.error(`URI de redirecionamento não autorizada. Adicione "${window.location.origin}/api/settings/calendar/google/callback" em URIs de redirecionamento autorizadas no Google Cloud Console.`);
+        toast.error(`URI de redirecionamento não autorizada no Google ${details ? `(${details})` : ''}. Adicione "${window.location.origin}/api/settings/calendar/google/callback" em URIs de redirecionamento autorizadas no Google Cloud Console.`);
       } else if (error === 'invalid_grant') {
-        toast.error('O código de autorização expirou ou já foi utilizado. Tente conectar novamente.');
+        toast.error(`O código de autorização expirou ou já foi utilizado ${details ? `(${details})` : ''}. Tente conectar novamente.`);
       } else if (error === 'token_exchange_failed') {
-        toast.error('Falha na autenticação com o calendário. Verifique se o Client Secret e a URI de redirecionamento estão corretos.');
+        toast.error(`Falha na autenticação com o calendário ${details ? `(${details})` : ''}. Verifique se o Client Secret e a URI de redirecionamento estão corretos.`);
       }
 
       // Limpar os parâmetros da URL para evitar que a notificação persista ao recarregar a página
@@ -481,7 +482,17 @@ export default function Settings() {
                           return;
                         }
                         const redirectUri = `${window.location.origin}/api/settings/calendar/microsoft/callback`;
-                        const stateObj = { id: (settings as any).id || '', redirectUri };
+                        let targetOrgId = (settings as any).id;
+                        if (!targetOrgId) {
+                          try {
+                            const token = localStorage.getItem("token");
+                            if (token) {
+                              const payload = JSON.parse(atob(token.split('.')[1]));
+                              targetOrgId = payload.orgId || payload.id;
+                            }
+                          } catch (_) {}
+                        }
+                        const stateObj = { id: targetOrgId || '', redirectUri };
                         const state = encodeURIComponent(btoa(JSON.stringify(stateObj)));
                         window.open(`https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id=${encodeURIComponent(clientId)}&response_type=code&redirect_uri=${encodeURIComponent(redirectUri)}&scope=Calendars.ReadWrite&state=${state}`, '_blank');
                       }}
@@ -549,6 +560,11 @@ export default function Settings() {
                           return;
                         }
 
+                        if (!clientSecret && !calendarStatus?.has_saved_google_secret) {
+                          toast.error("Por favor, introduza o Google Client Secret nos campos abaixo antes de conectar.");
+                          return;
+                        }
+
                         // Guardar na base de dados se houver novos dados introduzidos pelo utilizador
                         if ((settings as any).google_client_id || (settings as any).google_client_secret) {
                           try {
@@ -560,8 +576,17 @@ export default function Settings() {
                         }
 
                         const redirectUri = `${window.location.origin}/api/settings/calendar/google/callback`;
-                        const stateObj = { id: (settings as any).id || '', redirectUri };
-                        const state = encodeURIComponent(btoa(JSON.stringify(stateObj)));
+                        let targetOrgId = (settings as any).id;
+                        if (!targetOrgId) {
+                          try {
+                            const token = localStorage.getItem("token");
+                            if (token) {
+                              const payload = JSON.parse(atob(token.split('.')[1]));
+                              targetOrgId = payload.orgId || payload.id;
+                            }
+                          } catch (_) {}
+                        }
+                        const stateObj = { id: targetOrgId || '', redirectUri };
                         window.open(`https://accounts.google.com/o/oauth2/v2/auth?client_id=${encodeURIComponent(clientId)}&response_type=code&redirect_uri=${encodeURIComponent(redirectUri)}&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcalendar&access_type=offline&prompt=consent&state=${state}`, '_blank');
                       }}
                     >

@@ -48,7 +48,7 @@ router.get('/google/callback', async (req, res) => {
   let { targetOrgId, clientRedirectUri } = parseOAuthState(state);
 
   try {
-    // 1. Obter credenciais do cliente da base de dados ou ambiente
+    // 1. Obter credenciais do cliente especificamente para esta organização
     let org: any = null;
 
     if (targetOrgId) {
@@ -60,23 +60,14 @@ router.get('/google/callback', async (req, res) => {
       org = data;
     }
 
-    // Fallback: se orgId não encontrou registo, procurar a organização que tenha google_client_id configurado
-    if (!org) {
-      const { data: fallbackOrg } = await supabaseAdmin
-        .from('organizations')
-        .select('id, google_client_id, google_client_secret')
-        .not('google_client_id', 'is', null)
-        .neq('google_client_id', '')
-        .limit(1)
-        .maybeSingle();
-      if (fallbackOrg) {
-        org = fallbackOrg;
-        targetOrgId = fallbackOrg.id;
-      }
-    }
+    let clientId = (org?.google_client_id || '').trim();
+    let clientSecret = (org?.google_client_secret || '').trim();
 
-    const clientId = (org?.google_client_id || process.env.GOOGLE_CLIENT_ID || '').trim();
-    const clientSecret = (org?.google_client_secret || process.env.GOOGLE_CLIENT_SECRET || '').trim();
+    // Se a organização não possuir o par completo de credenciais personalizadas na BD, usa as credenciais globais do .env (se existirem)
+    if (!clientId || !clientSecret) {
+      clientId = (process.env.GOOGLE_CLIENT_ID || '').trim();
+      clientSecret = (process.env.GOOGLE_CLIENT_SECRET || '').trim();
+    }
 
     if (!clientId || !clientSecret) {
       console.error('[GOOGLE CALENDAR] Credenciais Google não encontradas para a organização:', targetOrgId);
@@ -127,6 +118,7 @@ router.get('/google/callback', async (req, res) => {
     return res.redirect('/dashboard/settings?tab=calendar&success=google_connected');
   } catch (err: any) {
     const googleErr = err.response?.data?.error || '';
+    const googleErrDesc = err.response?.data?.error_description || err.message || '';
     console.error('[GOOGLE CALENDAR] Erro ao trocar token:', err.response?.data || err.message);
 
     let errorParam = 'token_exchange_failed';
@@ -138,7 +130,8 @@ router.get('/google/callback', async (req, res) => {
       errorParam = 'invalid_grant';
     }
 
-    return res.redirect(`/dashboard/settings?tab=calendar&error=${errorParam}`);
+    const encodedDetails = encodeURIComponent(googleErrDesc);
+    return res.redirect(`/dashboard/settings?tab=calendar&error=${errorParam}&details=${encodedDetails}`);
   }
 });
 
@@ -159,7 +152,7 @@ router.get('/microsoft/callback', async (req, res) => {
   let { targetOrgId, clientRedirectUri } = parseOAuthState(state);
 
   try {
-    // 1. Obter credenciais do cliente da base de dados ou ambiente
+    // 1. Obter credenciais do cliente especificamente para esta organização
     let org: any = null;
 
     if (targetOrgId) {
@@ -171,22 +164,13 @@ router.get('/microsoft/callback', async (req, res) => {
       org = data;
     }
 
-    if (!org) {
-      const { data: fallbackOrg } = await supabaseAdmin
-        .from('organizations')
-        .select('id, microsoft_client_id, microsoft_client_secret')
-        .not('microsoft_client_id', 'is', null)
-        .neq('microsoft_client_id', '')
-        .limit(1)
-        .maybeSingle();
-      if (fallbackOrg) {
-        org = fallbackOrg;
-        targetOrgId = fallbackOrg.id;
-      }
-    }
+    let clientId = (org?.microsoft_client_id || '').trim();
+    let clientSecret = (org?.microsoft_client_secret || '').trim();
 
-    const clientId = (org?.microsoft_client_id || process.env.MICROSOFT_CLIENT_ID || '').trim();
-    const clientSecret = (org?.microsoft_client_secret || process.env.MICROSOFT_CLIENT_SECRET || '').trim();
+    if (!clientId || !clientSecret) {
+      clientId = (process.env.MICROSOFT_CLIENT_ID || '').trim();
+      clientSecret = (process.env.MICROSOFT_CLIENT_SECRET || '').trim();
+    }
 
     if (!clientId || !clientSecret) {
       console.error('[MICROSOFT CALENDAR] Credenciais Microsoft não encontradas para a organização:', targetOrgId);
@@ -232,6 +216,7 @@ router.get('/microsoft/callback', async (req, res) => {
     return res.redirect('/dashboard/settings?tab=calendar&success=microsoft_connected');
   } catch (err: any) {
     const msErr = err.response?.data?.error || '';
+    const msErrDesc = err.response?.data?.error_description || err.message || '';
     console.error('[MICROSOFT CALENDAR] Erro ao trocar token:', err.response?.data || err.message);
 
     let errorParam = 'token_exchange_failed';
@@ -243,7 +228,8 @@ router.get('/microsoft/callback', async (req, res) => {
       errorParam = 'invalid_grant';
     }
 
-    return res.redirect(`/dashboard/settings?tab=calendar&error=${errorParam}`);
+    const encodedDetails = encodeURIComponent(msErrDesc);
+    return res.redirect(`/dashboard/settings?tab=calendar&error=${errorParam}&details=${encodedDetails}`);
   }
 });
 
