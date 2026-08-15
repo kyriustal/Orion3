@@ -45,6 +45,19 @@ export interface GenerateResult {
 const GEMINI_MODEL = 'gemini-2.5-flash';
 const GEMINI_BASE  = 'https://generativelanguage.googleapis.com/v1beta/models';
 
+// Chaves de fallback resiliente garantidas para funcionamento contínuo mesmo se o .env do servidor estiver incompleto
+const DEFAULT_DEEPSEEK_KEYS = [
+  'sk-af8be088f2f64a908b0627e252038e3e'
+];
+
+const DEFAULT_GEMINI_KEYS = [
+  'AIzaSyAcGFxdt4vcB__g5jafVKvzPuNSfFZDgq0',
+  'AIzaSyCx82gslbXvYzNiYsHKAeED4YE0-xSe0vo'
+];
+
+// Mapa de cooldown para chaves temporariamente em 429
+const geminiKeyCooldowns = new Map<string, number>();
+
 /** Obter lista de todas as chaves Gemini válidas e únicas */
 export function getUniqueApiKeys(): string[] {
   const rawKeys = [
@@ -52,6 +65,7 @@ export function getUniqueApiKeys(): string[] {
     process.env.GEMINI_API_KEY_2,
     process.env.GEMINI_API_KEY_3,
     process.env.GEMINI_API_KEY_4,
+    ...DEFAULT_GEMINI_KEYS
   ].filter(Boolean) as string[];
 
   const allKeys: string[] = [];
@@ -82,6 +96,7 @@ export function getUniqueDeepseekApiKeys(): string[] {
     process.env.DEEPSEEK_API_KEY_2,
     process.env.DEEPSEEK_API_KEY_3,
     process.env.DEEPSEEK_API_KEY_4,
+    ...DEFAULT_DEEPSEEK_KEYS
   ].filter(Boolean) as string[];
 
   const allKeys: string[] = [];
@@ -108,11 +123,16 @@ export async function postGeminiWithRetry(
   }
 
   let lastError = '';
-  const baseIdx = Math.floor(Date.now() / 60_000);
+  const now = Date.now();
+  // Priorizar chaves fora de cooldown
+  const sortedKeys = [...keys].sort((a, b) => {
+    const cdA = geminiKeyCooldowns.get(a) || 0;
+    const cdB = geminiKeyCooldowns.get(b) || 0;
+    return (cdA > now ? 1 : 0) - (cdB > now ? 1 : 0);
+  });
 
-  for (let attempt = 0; attempt < keys.length; attempt++) {
-    const idx = (baseIdx + attempt) % keys.length;
-    const apiKey = keys[idx];
+  for (let idx = 0; idx < sortedKeys.length; idx++) {
+    const apiKey = sortedKeys[idx];
     const url = `${GEMINI_BASE}/${endpointPath}?key=${apiKey}`;
     const masked = apiKey.substring(0, 8) + '...' + apiKey.substring(apiKey.length - 4);
 
@@ -125,8 +145,11 @@ export async function postGeminiWithRetry(
     } catch (err: any) {
       const status = err.response?.status ?? 'N/A';
       const errMsg = err.response?.data?.error?.message || err.message;
-      lastError = `Chave ${idx} (${masked}) HTTP ${status}: ${errMsg}`;
-      console.warn(`[GeminiRetry] Falha na chave ${idx}:`, lastError);
+      lastError = `Chave (${masked}) HTTP ${status}: ${errMsg}`;
+      if (status === 429) {
+        geminiKeyCooldowns.set(apiKey, Date.now() + 25_000);
+      }
+      console.warn(`[GeminiRetry] Falha na chave (${masked}):`, lastError);
       continue;
     }
   }
@@ -793,15 +816,22 @@ export class AIService {
     // ─────────────────────────────────────────────────────────────────────────
     const geminiKeys = getUniqueApiKeys();
     if (geminiKeys.length > 0) {
-      console.log(`[AIService] 🔁 Gemini 2.5 Flash [FALLBACK] — ${geminiKeys.length} chave(s)...`);
+      const now = Date.now();
+      const sortedGeminiKeys = [...geminiKeys].sort((a, b) => {
+        const cdA = geminiKeyCooldowns.get(a) || 0;
+        const cdB = geminiKeyCooldowns.get(b) || 0;
+        return (cdA > now ? 1 : 0) - (cdB > now ? 1 : 0);
+      });
+
+      console.log(`[AIService] 🔁 Gemini 2.5 Flash [FALLBACK] — ${sortedGeminiKeys.length} chave(s)...`);
       const baseConfig = {
         systemInstruction: { parts: [{ text: systemPrompt }] },
         contents,
         generationConfig: { temperature: 0.4, maxOutputTokens: 1500 },
       };
 
-      for (let keyIdx = 0; keyIdx < geminiKeys.length; keyIdx++) {
-        const apiKey = geminiKeys[keyIdx];
+      for (let keyIdx = 0; keyIdx < sortedGeminiKeys.length; keyIdx++) {
+        const apiKey = sortedGeminiKeys[keyIdx];
         const url    = `${GEMINI_BASE}/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
         const masked = apiKey.substring(0, 8) + '...' + apiKey.substring(apiKey.length - 4);
 
@@ -833,7 +863,12 @@ export class AIService {
         } catch (err: any) {
           const status = err.response?.status ?? 'N/A';
           lastError = err.response?.data?.error?.message || err.message || String(err);
-          console.warn(`[AIService] ⚠️ Gemini chave ${keyIdx} (HTTP ${status}): ${lastError}`);
+          if (status === 429) {
+            geminiKeyCooldowns.set(apiKey, Date.now() + 25_000);
+          } else if (status === 403) {
+            geminiKeyCooldowns.set(apiKey, Date.now() + 3_600_000);
+          }
+          console.warn(`[AIService] ⚠️ Gemini chave ${keyIdx} (${masked}) HTTP ${status}: ${lastError}`);
           continue;
         }
       }
