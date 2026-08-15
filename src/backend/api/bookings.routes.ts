@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { supabase } from '../config/supabase';
+import { createGoogleCalendarEvent } from '../services/calendar.service';
 
 const router = Router();
 
@@ -43,10 +44,38 @@ router.post('/', async (req, res) => {
     if (error) {
         console.warn('Tabela bookings não encontrada, simulando sucesso...', error.message);
         // Fallback para desenvolvimento
-        return res.status(200).json({ message: 'Agendamento simulado com sucesso!' });
     }
 
-    res.status(201).json({ message: 'Agendamento realizado!', data });
+    // 3. Sincronização automática com Google Calendar se ativado
+    let googleCalendarResult = null;
+    try {
+      const targetOrgId = orgId || 'default';
+      const fullName = `${firstName || ''} ${lastName || ''}`.trim() || 'Cliente';
+      const eventSummary = service ? `${service} - ${fullName}` : `Agendamento - ${fullName}`;
+      const eventDescription = `Agendamento de Serviço\nServiço: ${service || 'Atendimento'}\nCliente: ${fullName}\nTelefone: ${phone || 'N/A'}\nEmail: ${email || 'N/A'}`;
+
+      googleCalendarResult = await createGoogleCalendarEvent(targetOrgId, {
+        summary: eventSummary,
+        description: eventDescription,
+        appointmentDate: date,
+        appointmentTime: time,
+        customerName: fullName,
+        customerEmail: email,
+        customerPhone: phone,
+      });
+
+      if (googleCalendarResult?.success) {
+        console.log('[BOOKINGS] Evento sincronizado com Google Calendar:', googleCalendarResult.eventId);
+      }
+    } catch (calErr: any) {
+      console.warn('[BOOKINGS] Aviso ao tentar sincronizar com calendário:', calErr.message);
+    }
+
+    res.status(201).json({ 
+      message: 'Agendamento realizado!', 
+      data,
+      calendar: googleCalendarResult?.success ? { synced: true, link: googleCalendarResult.htmlLink } : { synced: false }
+    });
   } catch (error: any) {
     res.status(500).json({ error: 'Erro ao processar agendamento', details: error.message });
   }

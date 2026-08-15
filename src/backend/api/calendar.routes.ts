@@ -103,6 +103,7 @@ router.get('/google/callback', async (req, res) => {
     const updateData: any = {};
     if (refresh_token) {
       updateData.google_refresh_token = refresh_token;
+      updateData.google_user_refresh_token = refresh_token;
     }
 
     // Sempre definir como provedor Google se conectado com sucesso
@@ -233,15 +234,75 @@ router.get('/microsoft/callback', async (req, res) => {
   }
 });
 
+import { testGoogleCalendarConnection } from '../services/calendar.service';
+
+// ─── POST /api/settings/calendar/google/test ─────────────────────────────────
+// Testa a conexão ativa com o Google Calendar
+router.post('/google/test', requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const orgId = req.user?.orgId || req.user?.id;
+    if (!orgId) {
+      return res.status(400).json({ error: 'ID da organização não identificado.' });
+    }
+
+    const { google_client_id, google_client_secret, google_user_refresh_token } = req.body || {};
+
+    const customCreds = (google_client_id || google_client_secret || google_user_refresh_token) ? {
+      clientId: google_client_id,
+      clientSecret: google_client_secret,
+      refreshToken: google_user_refresh_token,
+    } : undefined;
+
+    const result = await testGoogleCalendarConnection(orgId, customCreds);
+    if (!result.success) {
+      return res.status(400).json({ error: result.error || 'Falha no teste de conexão com o Google Calendar.' });
+    }
+
+    res.json({
+      success: true,
+      message: 'Conexão com o Google Calendar validada com sucesso!',
+      calendar: result.calendar,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── POST /api/settings/calendar/google/disconnect ───────────────────────────
+// Desconecta o Google Calendar da organização
+router.post('/google/disconnect', requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const orgId = req.user?.orgId || req.user?.id;
+    if (!orgId) {
+      return res.status(400).json({ error: 'ID da organização não identificado.' });
+    }
+
+    const { error } = await supabaseAdmin
+      .from('organizations')
+      .update({
+        google_refresh_token: null,
+        google_user_refresh_token: null,
+        calendar_provider: 'none',
+      })
+      .eq('id', orgId);
+
+    if (error) throw error;
+
+    res.json({ success: true, message: 'Google Calendar desconectado com sucesso.' });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── GET /api/settings/calendar/status ───────────────────────────────────────
 // Verifica o estado da ligação do calendário para a organização actual
 router.get('/status', requireAuth, async (req: AuthRequest, res) => {
   try {
-    const orgId = req.user?.orgId;
+    const orgId = req.user?.orgId || req.user?.id;
 
     const { data, error } = await supabaseAdmin
       .from('organizations')
-      .select('calendar_provider, google_refresh_token, microsoft_refresh_token, google_client_id, google_client_secret, microsoft_client_id, microsoft_client_secret')
+      .select('calendar_provider, google_refresh_token, google_user_refresh_token, google_direct_url, microsoft_refresh_token, google_client_id, google_client_secret, microsoft_client_id, microsoft_client_secret')
       .eq('id', orgId)
       .maybeSingle();
 
@@ -255,8 +316,10 @@ router.get('/status', requireAuth, async (req: AuthRequest, res) => {
 
     res.json({
       provider: data?.calendar_provider || 'none',
-      google_connected: !!(data?.google_refresh_token),
+      google_connected: !!(data?.google_refresh_token || data?.google_user_refresh_token),
       microsoft_connected: !!(data?.microsoft_refresh_token),
+      google_direct_url: data?.google_direct_url || '',
+      google_user_refresh_token: data?.google_user_refresh_token || data?.google_refresh_token || '',
       has_google_credentials: hasGoogleOrg || hasGoogleSystem,
       has_microsoft_credentials: hasMicrosoftOrg || hasMicrosoftSystem,
       system_google_client_id: process.env.GOOGLE_CLIENT_ID || '',

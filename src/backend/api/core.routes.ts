@@ -135,7 +135,8 @@ router.post('/settings/org', requireAuth, async (req: AuthRequest, res) => {
       'name', 'first_name', 'last_name', 'owner_email', 'phone', 'whatsapp', 'address',
       'contact_person', 'social_object', 'employees_count', 'product_description',
       'chatbot_name', 'use_emojis', 'emoji_mode', 'calendar_provider', 'calendar_link',
-      'google_client_id', 'google_client_secret', 'microsoft_client_id', 'microsoft_client_secret',
+      'google_client_id', 'google_client_secret', 'google_refresh_token', 'google_direct_url', 'google_user_refresh_token',
+      'microsoft_client_id', 'microsoft_client_secret', 'microsoft_refresh_token',
       'handover_mode', 'ai_tone', 'ai_prompt'
     ];
 
@@ -163,8 +164,12 @@ router.post('/settings/org', requireAuth, async (req: AuthRequest, res) => {
       const safeUpdate = { ...filteredUpdate };
       delete safeUpdate.google_client_id;
       delete safeUpdate.google_client_secret;
+      delete safeUpdate.google_refresh_token;
+      delete safeUpdate.google_direct_url;
+      delete safeUpdate.google_user_refresh_token;
       delete safeUpdate.microsoft_client_id;
       delete safeUpdate.microsoft_client_secret;
+      delete safeUpdate.microsoft_refresh_token;
       delete safeUpdate.calendar_provider;
       delete safeUpdate.calendar_link;
 

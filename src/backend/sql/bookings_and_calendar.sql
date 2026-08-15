@@ -4,6 +4,8 @@ ALTER TABLE organizations ADD COLUMN IF NOT EXISTS calendar_link TEXT;
 ALTER TABLE organizations ADD COLUMN IF NOT EXISTS google_client_id TEXT;
 ALTER TABLE organizations ADD COLUMN IF NOT EXISTS google_client_secret TEXT;
 ALTER TABLE organizations ADD COLUMN IF NOT EXISTS google_refresh_token TEXT;
+ALTER TABLE organizations ADD COLUMN IF NOT EXISTS google_direct_url TEXT;
+ALTER TABLE organizations ADD COLUMN IF NOT EXISTS google_user_refresh_token TEXT;
 ALTER TABLE organizations ADD COLUMN IF NOT EXISTS microsoft_client_id TEXT;
 ALTER TABLE organizations ADD COLUMN IF NOT EXISTS microsoft_client_secret TEXT;
 ALTER TABLE organizations ADD COLUMN IF NOT EXISTS microsoft_refresh_token TEXT;
