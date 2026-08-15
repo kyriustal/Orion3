@@ -1084,16 +1084,16 @@ router.post('/webhook', async (req, res) => {
       }
     }
 
-    if (!userText && !media) {
+    if (!userText && !media && !referral) {
       console.warn(`[WEBHOOK] Mensagem de ${fromNumber} sem conteúdo reconhecido. Ignorando.`);
       return;
     }
 
-    // ── 7. Enriquecer texto com contexto de anúncio ───────────────────────────
+    // ── 7. Enriquecer texto e estruturar metadados do cliente ────────────────
     let dbText = userText;
     if (!dbText) {
-      if (incomingMsg.type === 'text') {
-        dbText = referral ? '(Clique no anúncio)' : '(Mensagem vazia)';
+      if (incomingMsg.type === 'text' || incomingMsg.type === 'referral') {
+        dbText = referral ? 'Olá, tenho interesse no anúncio.' : '(Mensagem vazia)';
       } else {
         dbText = `(Mídia: ${incomingMsg.type})`;
       }
@@ -1101,27 +1101,29 @@ router.post('/webhook', async (req, res) => {
 
     if (referral) {
       const adIdentifier = referral.headline || referral.body || 'Anúncio';
-      let referralContext = `[Vindo do Anúncio: "${adIdentifier}"]`;
-      
-      if (referral.source_url) {
-        referralContext += `\nLink do Anúncio: ${referral.source_url}`;
-      }
-      
-      dbText = `${referralContext}\n\n${dbText}`;
-      console.log(`[WEBHOOK] Cliente vindo de anúncio: ${adIdentifier} (${referral.source_url || 'Sem link'})`);
+      console.log(`[WEBHOOK] 📣 Cliente vindo de anúncio: "${adIdentifier}" (${referral.source_url || 'Sem link'})`);
     }
 
     // ── 8. Persistir mensagem do cliente ─────────────────────────────────────
-    const clientMediaMetadata = clientMediaUrl
-      ? { mediaUrl: clientMediaUrl, fileName: clientFileName || 'ficheiro', mimeType: clientMimeType || 'application/octet-stream' }
-      : undefined;
+    const clientMetadata: Record<string, any> = {
+      platform: 'whatsapp',
+      message_id: messageId,
+    };
+    if (clientMediaUrl) {
+      clientMetadata.mediaUrl = clientMediaUrl;
+      clientMetadata.fileName = clientFileName || 'ficheiro';
+      clientMetadata.mimeType = clientMimeType || 'application/octet-stream';
+    }
+    if (referral) {
+      clientMetadata.referral = referral;
+    }
 
     await supabaseAdmin.from('conversation_history').insert({
       org_id: orgId,
       customer_phone: fromNumber,
       sender: 'user',
       text: dbText,
-      metadata: clientMediaMetadata,
+      metadata: clientMetadata,
     });
 
     // ── 8b. Emitir evento em tempo real para o Live Chat ──────────────────────
@@ -1133,7 +1135,7 @@ router.post('/webhook', async (req, res) => {
         time:      new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         timestamp: new Date().toISOString(),
         platform:  'whatsapp',
-        metadata:  clientMediaMetadata,
+        metadata:  clientMetadata,
       });
     } catch (_) { /* sem clientes conectados */ }
 

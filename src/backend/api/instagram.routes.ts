@@ -230,7 +230,10 @@ router.post('/webhook', async (req, res) => {
         }
       }
 
-      if (!messageText) continue;
+      const referral = (messaging as any).referral || (messaging.message as any)?.referral || (messaging as any).postback?.referral || undefined;
+      if (referral) {
+        console.log(`[INSTAGRAM WEBHOOK] 📣 Mensagem de anúncio detectada. Referral:`, JSON.stringify(referral).substring(0, 200));
+      }
 
       // 3. Buscar histórico das últimas 24h (max 50 mensagens)
       const last24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
@@ -249,11 +252,14 @@ router.post('/webhook', async (req, res) => {
       }));
 
       // 4. Persistir mensagem do utilizador
-      const igMediaMetadata: Record<string, string> = { platform: 'instagram', message_id: messageId };
+      const igMediaMetadata: Record<string, any> = { platform: 'instagram', message_id: messageId };
       if (attachmentMediaUrl) {
         igMediaMetadata.mediaUrl = attachmentMediaUrl;
         igMediaMetadata.fileName = attachmentFileName || 'ficheiro';
         igMediaMetadata.mimeType = attachmentMimeType || 'application/octet-stream';
+      }
+      if (referral) {
+        igMediaMetadata.referral = referral;
       }
 
       await supabaseAdmin.from('conversation_history').insert({
@@ -273,11 +279,7 @@ router.post('/webhook', async (req, res) => {
           time:      new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           timestamp: new Date().toISOString(),
           platform:  'instagram',
-          metadata:  attachmentMediaUrl ? {
-            mediaUrl: attachmentMediaUrl,
-            fileName: attachmentFileName || 'ficheiro',
-            mimeType: attachmentMimeType || 'application/octet-stream',
-          } : undefined,
+          metadata:  igMediaMetadata,
         });
       } catch (_) { /* sem clientes conectados */ }
 
@@ -285,40 +287,61 @@ router.post('/webhook', async (req, res) => {
       await InstagramService.markSeen(igUserId, senderId, accessToken);
       await InstagramService.sendTypingIndicator(igUserId, senderId, accessToken, 'typing_on');
 
-      // 6. Gerar resposta com IA (Gemini 2.5 Flash)
-      let aiReply = '';
-      let transfer = false;
-
+      // 6. Gerar resposta com IA
+      let aiResult;
       try {
-        const aiResult = await AIService.generateResponse({
+        aiResult = await AIService.generateResponse({
           message: messageText,
           orgId,
           history,
           botName:  botName || 'Assistente',
           mode:     'simulation',
           media,
+          referral: referral || undefined,
         });
-
-        aiReply  = aiResult.reply;
-        transfer = aiResult.transfer;
       } catch (aiErr: any) {
         console.error(`[INSTAGRAM IA] Erro ao gerar resposta: ${aiErr.message}`);
-        aiReply = 'Desculpe, tive um problema técnico temporário. Por favor tente novamente em breve.';
+
+        // NÃO enviar mensagem de erro ao cliente — apenas registar e sinalizar o painel.
+        try {
+          await supabaseAdmin.from('conversation_history').insert({
+            org_id:         orgId,
+            customer_phone: senderId,
+            sender:         'bot',
+            text:           `[ERRO INTERNO — NÃO ENVIADO AO CLIENTE]: ${aiErr.message}`,
+            metadata:       { platform: 'instagram', internal_error: true },
+          });
+        } catch (_) { /* silencioso */ }
+
+        try {
+          getIo().to(`org:${orgId}`).emit('chat_error', {
+            phone: senderId,
+            error: aiErr.message,
+            platform: 'instagram',
+          });
+        } catch (_) { /* silencioso */ }
+
+        continue;
       }
 
+      const aiReply  = aiResult.reply;
+      const transfer = aiResult.transfer;
+
       // 7. Enviar resposta via Instagram DM
-      await InstagramService.sendMessage(igUserId, senderId, aiReply, accessToken);
+      if (aiReply) {
+        await InstagramService.sendMessage(igUserId, senderId, aiReply, accessToken);
 
-      // 8. Persistir resposta do bot
-      await supabaseAdmin.from('conversation_history').insert({
-        org_id:         orgId,
-        customer_phone: senderId,
-        sender:         'bot',
-        text:           aiReply,
-        metadata:       { platform: 'instagram' },
-      });
+        // 8. Persistir resposta do bot
+        await supabaseAdmin.from('conversation_history').insert({
+          org_id:         orgId,
+          customer_phone: senderId,
+          sender:         'bot',
+          text:           aiReply,
+          metadata:       { platform: 'instagram' },
+        });
 
-      console.log(`[INSTAGRAM] Resposta enviada para ${senderId}. Transfer: ${transfer}`);
+        console.log(`[INSTAGRAM] Resposta enviada para ${senderId}. Transfer: ${transfer}`);
+      }
     }
   } catch (err: any) {
     console.error('[INSTAGRAM WEBHOOK] Erro fatal:', err.message);
