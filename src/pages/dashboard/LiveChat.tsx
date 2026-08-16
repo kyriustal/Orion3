@@ -469,18 +469,29 @@ export default function LiveChat() {
       setChats(prev => prev.map(c => c.id === data.phone ? { ...c, needs_confirm: true } : c));
     });
 
-    sock.on("message_status", (data: { phone: string; status: string }) => {
+    sock.on("message_status", (data: { phone: string; status: string; messageId?: string }) => {
       setActiveChatId(activeId => {
         if (activeId === data.phone) {
           setMessages(prev => prev.map(msg => {
-            if (msg.sender !== "user") {
-              const currentStatus = msg.metadata?.status;
-              if (data.status === "read") {
-                return { ...msg, metadata: { ...msg.metadata, status: "read" } };
-              } else if (data.status === "delivered" && currentStatus !== "read") {
+            // Só atualiza mensagens enviadas pelo bot ou pelo agente (não as do cliente)
+            if (msg.sender === "user") return msg;
+
+            const currentStatus = msg.metadata?.status;
+
+            // Hierarquia de status: read > delivered > sent
+            // Nunca fazer downgrade (ex: de "read" para "delivered")
+            if (data.status === "read") {
+              // "read" é o estado final, sempre aplica
+              return { ...msg, metadata: { ...msg.metadata, status: "read" } };
+            } else if (data.status === "delivered") {
+              // Só aplica "delivered" se ainda não estiver em "read"
+              if (currentStatus !== "read") {
                 return { ...msg, metadata: { ...msg.metadata, status: "delivered" } };
-              } else if (!currentStatus) {
-                return { ...msg, metadata: { ...msg.metadata, status: data.status } };
+              }
+            } else if (data.status === "sent") {
+              // Só aplica "sent" se não tiver status mais avançado
+              if (!currentStatus || currentStatus === "sending") {
+                return { ...msg, metadata: { ...msg.metadata, status: "sent" } };
               }
             }
             return msg;
@@ -489,6 +500,7 @@ export default function LiveChat() {
         return activeId;
       });
     });
+
 
     sock.on("new_message", (data: { phone: string; sender: string; text: string; time: string; timestamp: string; platform?: string; botName?: string; agentName?: string; metadata?: any; }) => {
       // Ignorar mensagens internas de erro — não são para mostrar ao operador nem ao cliente

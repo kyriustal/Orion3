@@ -27,6 +27,48 @@ function parseOAuthState(stateRaw: any): { targetOrgId: string; clientRedirectUr
   return { targetOrgId, clientRedirectUri };
 }
 
+// ─── GET /api/settings/calendar/google/auth-url ──────────────────────────────
+// Gera o link seguro de autorização OAuth2 com as credenciais do sistema (.env)
+router.get('/google/auth-url', requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const clientId = (process.env.GOOGLE_CLIENT_ID || '').trim();
+    if (!clientId) {
+      return res.status(400).json({
+        error: 'O administrador ainda não configurou o GOOGLE_CLIENT_ID no ficheiro .env do servidor.'
+      });
+    }
+
+    const orgId = req.user?.orgId || req.user?.id;
+    if (!orgId) {
+      return res.status(400).json({ error: 'ID de utilizador/organização não identificado.' });
+    }
+
+    const rawProto = (req.headers['x-forwarded-proto'] as string)?.split(',')[0].trim();
+    const protocol = rawProto || req.protocol || 'https';
+    const host = (req.headers['x-forwarded-host'] as string)?.split(',')[0].trim() || req.get('host');
+    const redirectUri = `${protocol}://${host}/api/settings/calendar/google/callback`;
+
+    const stateObj = { id: orgId, redirectUri };
+    const state = encodeURIComponent(Buffer.from(JSON.stringify(stateObj)).toString('base64'));
+
+    const params = new URLSearchParams({
+      client_id: clientId,
+      redirect_uri: redirectUri,
+      response_type: 'code',
+      scope: 'https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/calendar.events',
+      access_type: 'offline',
+      prompt: 'consent',
+      include_granted_scopes: 'true',
+      state: state
+    });
+
+    const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
+    res.json({ success: true, authUrl, redirectUri });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── GET /api/settings/calendar/google/callback ──────────────────────────────
 // Recebe o authorization code da Google após o utilizador autorizar
 router.get('/google/callback', async (req, res) => {
@@ -48,29 +90,11 @@ router.get('/google/callback', async (req, res) => {
   let { targetOrgId, clientRedirectUri } = parseOAuthState(state);
 
   try {
-    // 1. Obter credenciais do cliente especificamente para esta organização
-    let org: any = null;
-
-    if (targetOrgId) {
-      const { data } = await supabaseAdmin
-        .from('organizations')
-        .select('id, google_client_id, google_client_secret')
-        .eq('id', targetOrgId)
-        .maybeSingle();
-      org = data;
-    }
-
-    let clientId = (org?.google_client_id || '').trim();
-    let clientSecret = (org?.google_client_secret || '').trim();
-
-    // Se a organização não possuir o par completo de credenciais personalizadas na BD, usa as credenciais globais do .env (se existirem)
-    if (!clientId || !clientSecret) {
-      clientId = (process.env.GOOGLE_CLIENT_ID || '').trim();
-      clientSecret = (process.env.GOOGLE_CLIENT_SECRET || '').trim();
-    }
+    const clientId = (process.env.GOOGLE_CLIENT_ID || '').trim();
+    const clientSecret = (process.env.GOOGLE_CLIENT_SECRET || '').trim();
 
     if (!clientId || !clientSecret) {
-      console.error('[GOOGLE CALENDAR] Credenciais Google não encontradas para a organização:', targetOrgId);
+      console.error('[GOOGLE CALENDAR] GOOGLE_CLIENT_ID ou GOOGLE_CLIENT_SECRET não configurados no .env');
       return res.redirect('/dashboard/settings?tab=calendar&error=credentials_missing');
     }
 
@@ -80,7 +104,7 @@ router.get('/google/callback', async (req, res) => {
     const computedRedirectUri = `${protocol}://${host}/api/settings/calendar/google/callback`;
     const redirectUri = clientRedirectUri || computedRedirectUri;
 
-    // 2. Trocar code por tokens
+    // Trocar code por tokens com o Google
     const tokenRes = await axios.post('https://oauth2.googleapis.com/token', new URLSearchParams({
       code: code as string,
       client_id: clientId,
@@ -93,28 +117,29 @@ router.get('/google/callback', async (req, res) => {
       }
     });
 
-    const { refresh_token } = tokenRes.data;
+    const { refresh_token, access_token } = tokenRes.data;
 
     if (!refresh_token) {
-      console.warn('[GOOGLE CALENDAR] Nenhum refresh_token retornado. Utilizador pode já ter autorizado antes. A atualizar apenas a ligação.');
+      console.warn('[GOOGLE CALENDAR] Nenhum refresh_token retornado (já autorizado anteriormente). Mantendo tokens existentes.');
     }
 
-    // 3. Gravar na base de dados
-    const updateData: any = {};
+    // Gravar tokens na base de dados para o utilizador/organização específico
+    const updateData: any = {
+      calendar_provider: 'google'
+    };
+
     if (refresh_token) {
       updateData.google_refresh_token = refresh_token;
       updateData.google_user_refresh_token = refresh_token;
     }
 
-    // Sempre definir como provedor Google se conectado com sucesso
-    updateData.calendar_provider = 'google';
+    if (targetOrgId) {
+      const { error: updateErr } = await supabaseAdmin
+        .from('organizations')
+        .upsert({ id: targetOrgId, ...updateData }, { onConflict: 'id' });
 
-    const { error: updateErr } = await supabaseAdmin
-      .from('organizations')
-      .update(updateData)
-      .eq('id', targetOrgId || org?.id);
-
-    if (updateErr) throw updateErr;
+      if (updateErr) throw updateErr;
+    }
 
     return res.redirect('/dashboard/settings?tab=calendar&success=google_connected');
   } catch (err: any) {
@@ -129,9 +154,13 @@ router.get('/google/callback', async (req, res) => {
       errorParam = 'redirect_uri_mismatch';
     } else if (googleErr === 'invalid_grant') {
       errorParam = 'invalid_grant';
+    } else if (googleErr === 'invalid_request' || googleErrDesc.toLowerCase().includes('bad request')) {
+      errorParam = 'invalid_request';
+    } else if (googleErr === 'unauthorized_client') {
+      errorParam = 'unauthorized_client';
     }
 
-    const encodedDetails = encodeURIComponent(googleErrDesc);
+    const encodedDetails = encodeURIComponent(googleErrDesc || googleErr || 'Erro desconhecido');
     return res.redirect(`/dashboard/settings?tab=calendar&error=${errorParam}&details=${encodedDetails}`);
   }
 });

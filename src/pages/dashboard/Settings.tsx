@@ -4,7 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter }
 import { Button } from "@/src/components/ui/button";
 import { Input } from "@/src/components/ui/input";
 import { Label } from "@/src/components/ui/label";
-import { Save, Loader2, Key, User, Building2, Bot, ShieldCheck, Mail, Calendar, ExternalLink, CheckCircle2, XCircle, Clock, UploadCloud, Copy, RefreshCw, Unlink, Eye, EyeOff, Sparkles } from "lucide-react";
+import { Save, Loader2, Key, User, Building2, Bot, ShieldCheck, Mail, Calendar, ExternalLink, CheckCircle2, XCircle, Clock, RefreshCw, Unlink } from "lucide-react";
 import { toast } from "sonner";
 
 export default function Settings() {
@@ -13,7 +13,7 @@ export default function Settings() {
   const [isSaving, setIsSaving] = useState(false);
   const [isTestingGoogle, setIsTestingGoogle] = useState(false);
   const [isDisconnectingGoogle, setIsDisconnectingGoogle] = useState(false);
-  const [showRefreshToken, setShowRefreshToken] = useState(false);
+  const [isConnectingGoogle, setIsConnectingGoogle] = useState(false);
   const [activeTab, setActiveTab] = useState<"personal" | "company" | "ai" | "calendar" | "security">("personal");
   const [calendarConnected, setCalendarConnected] = useState<{ google: boolean; microsoft: boolean }>({ google: false, microsoft: false });
   const [calendarStatus, setCalendarStatus] = useState<any>(null);
@@ -35,10 +35,6 @@ export default function Settings() {
     use_emojis: true,
     emoji_mode: "moderate", // 'none' | 'moderate' | 'adaptive'
     calendar_provider: "none", // 'none' | 'microsoft' | 'google' | 'other'
-    google_client_id: "",
-    google_client_secret: "",
-    google_direct_url: "",
-    google_user_refresh_token: "",
     microsoft_client_id: "",
     microsoft_client_secret: "",
     calendar_link: "",
@@ -75,7 +71,11 @@ export default function Settings() {
       } else if (error === 'redirect_uri_mismatch') {
         toast.error(`URI de redirecionamento não autorizada no Google ${details ? `(${details})` : ''}. Adicione "${window.location.origin}/api/settings/calendar/google/callback" em URIs de redirecionamento autorizadas no Google Cloud Console.`);
       } else if (error === 'invalid_grant') {
-        toast.error(`O código de autorização expirou ou já foi utilizado ${details ? `(${details})` : ''}. Tente conectar novamente.`);
+        toast.error(`O código de autorização expirou ou o token é inválido ${details ? `(${details})` : ''}. Tente conectar novamente.`);
+      } else if (error === 'invalid_request') {
+        toast.error(`Erro na requisição Google (Bad Request) ${details ? `(${details})` : ''}. Certifique-se de que o OAuth Client foi criado como "Aplicação Web" e que a URI de Redirecionamento está registada no Google Cloud.`);
+      } else if (error === 'unauthorized_client') {
+        toast.error(`Cliente Google não autorizado ${details ? `(${details})` : ''}. Verifique o Client ID no Google Cloud Console.`);
       } else if (error === 'token_exchange_failed') {
         toast.error(`Falha na autenticação com o calendário ${details ? `(${details})` : ''}. Verifique se o Client Secret e a URI de redirecionamento estão corretos.`);
       }
@@ -154,6 +154,27 @@ export default function Settings() {
     }
   };
 
+  const handleConnectGoogleCalendar = async () => {
+    setIsConnectingGoogle(true);
+    try {
+      if ((settings as any).calendar_provider !== 'google') {
+        setSettings(prev => ({ ...prev, calendar_provider: 'google' }));
+      }
+      const response = await fetch("/api/settings/calendar/google/auth-url", {
+        headers: { "Authorization": `Bearer ${localStorage.getItem("token")}` }
+      });
+      const data = await response.json();
+      if (!response.ok || !data.authUrl) {
+        throw new Error(data.error || "Não foi possível iniciar a conexão com o Google Calendar.");
+      }
+      window.location.href = data.authUrl;
+    } catch (err: any) {
+      toast.error(err.message || "Erro ao conectar o Google Calendar.");
+    } finally {
+      setIsConnectingGoogle(false);
+    }
+  };
+
   const handleTestGoogleCalendar = async () => {
     setIsTestingGoogle(true);
     try {
@@ -162,12 +183,7 @@ export default function Settings() {
         headers: {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${localStorage.getItem("token")}`
-        },
-        body: JSON.stringify({
-          google_client_id: settings.google_client_id,
-          google_client_secret: settings.google_client_secret,
-          google_user_refresh_token: settings.google_user_refresh_token
-        })
+        }
       });
       const data = await response.json();
       if (!response.ok) {
@@ -630,233 +646,57 @@ export default function Settings() {
                       )}
                       <Button
                         size="sm"
+                        disabled={isConnectingGoogle}
                         className={`text-xs h-7 gap-1.5 ${
                           calendarConnected.google
                             ? 'bg-zinc-600 hover:bg-zinc-700'
                             : 'bg-emerald-600 hover:bg-emerald-700'
                         }`}
-                        onClick={async (e) => {
+                        onClick={(e) => {
                           e.stopPropagation();
-                          let clientId = ((settings as any).google_client_id || '').trim();
-                          let clientSecret = ((settings as any).google_client_secret || '').trim();
-
-                          // Fallback para Client ID do sistema se não houver personalizado
-                          if (!clientId && calendarStatus?.system_google_client_id) {
-                            clientId = calendarStatus.system_google_client_id.trim();
-                          }
-
-                          if (!clientId) {
-                            toast.error("Por favor, introduza o Google Client ID nos campos abaixo (ou cole o ficheiro JSON da Google).");
-                            return;
-                          }
-
-                          if (!clientSecret && !calendarStatus?.has_saved_google_secret) {
-                            toast.error("Por favor, introduza o Google Client Secret nos campos abaixo antes de conectar.");
-                            return;
-                          }
-
-                          // Guardar na base de dados se houver novos dados introduzidos pelo utilizador
-                          if ((settings as any).google_client_id || (settings as any).google_client_secret || (settings as any).google_direct_url || (settings as any).google_user_refresh_token) {
-                            try {
-                              await handleSave();
-                            } catch (_) {
-                              toast.error("Erro ao guardar credenciais antes de conectar. Tente novamente.");
-                              return;
-                            }
-                          }
-
-                          const redirectUri = `${window.location.origin}/api/settings/calendar/google/callback`;
-                          let targetOrgId = (settings as any).id;
-                          if (!targetOrgId) {
-                            try {
-                              const token = localStorage.getItem("token");
-                              if (token) {
-                                const payload = JSON.parse(atob(token.split('.')[1]));
-                                targetOrgId = payload.orgId || payload.id;
-                              }
-                            } catch (_) {}
-                          }
-                          const stateObj = { id: targetOrgId || '', redirectUri };
-                          const state = encodeURIComponent(btoa(JSON.stringify(stateObj)));
-                          const googleAuthUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${encodeURIComponent(clientId)}&response_type=code&redirect_uri=${encodeURIComponent(redirectUri)}&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcalendar&access_type=offline&prompt=consent&state=${state}`;
-                          const win = window.open(googleAuthUrl, '_blank');
-                          if (!win || win.closed || typeof win.closed === 'undefined') {
-                            window.location.href = googleAuthUrl;
-                          }
+                          handleConnectGoogleCalendar();
                         }}
                       >
-                        <ExternalLink className="w-3 h-3" />
-                        {calendarConnected.google ? 'Reconectar OAuth' : 'Conectar via OAuth Google'}
+                        {isConnectingGoogle ? <Loader2 className="w-3 h-3 animate-spin" /> : <ExternalLink className="w-3 h-3" />}
+                        {calendarConnected.google ? 'Reconectar' : 'Conectar Calendário Google'}
                       </Button>
                     </div>
                   </div>
                 )}
               </div>
 
-              {/* Se 'google' selecionado, mostrar campos detalhados de configuração */}
               {(settings as any).calendar_provider === 'google' && (
                 <Card className="border-emerald-200 bg-emerald-50/50">
                   <CardContent className="pt-4 space-y-4">
-                    {/* URL de Callback / Redirecionamento Autorizado */}
-                    <div className="p-3 bg-white border border-emerald-200 rounded-xl space-y-1.5">
-                      <div className="flex items-center justify-between">
-                        <Label className="text-xs font-bold text-emerald-800 flex items-center gap-1.5">
-                          <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
-                          URI de Redirecionamento Autorizada (Google Cloud Console)
-                        </Label>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className="h-6 px-2 text-xs text-emerald-700 hover:bg-emerald-50 gap-1"
-                          onClick={() => {
-                            const uri = `${window.location.origin}/api/settings/calendar/google/callback`;
-                            navigator.clipboard.writeText(uri);
-                            toast.success("URI de redirecionamento copiada!");
-                          }}
-                        >
-                          <Copy className="w-3 h-3" /> Copiar URI
-                        </Button>
+                    {/* Info: como funciona */}
+                    <div className="flex items-start gap-3 p-3 bg-white border border-emerald-200 rounded-xl">
+                      <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                      <div className="text-xs text-emerald-800 space-y-1">
+                        <p className="font-semibold">Autenticação OAuth 2.0 gerida pelo sistema</p>
+                        <p className="text-emerald-700 leading-relaxed">
+                          Ao clicar em <strong>Conectar Calendário Google</strong>, será redirecionado para a página de autorização da Google.
+                          Após autorizar, o sistema irá guardar o seu token de acesso de forma segura e sincronizará automaticamente os agendamentos.
+                        </p>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <code className="text-[11px] font-mono bg-zinc-50 border border-zinc-200 text-zinc-800 px-2 py-1 rounded w-full select-all">
-                          {window.location.origin}/api/settings/calendar/google/callback
-                        </code>
-                      </div>
-                      <p className="text-[10px] text-zinc-500 leading-tight">
-                        No <strong>Google Cloud Console</strong> &rarr; <strong>APIs e Serviços</strong> &rarr; <strong>Credenciais</strong> &rarr; Adicione esta URL em <strong>URIs de redirecionamento autorizados</strong>.
-                      </p>
-                    </div>
-
-                    {/* Google Client ID */}
-                    <div className="space-y-1.5">
-                      <Label className="text-xs font-bold text-emerald-800">Google Client ID (OAuth 2.0)</Label>
-                      <Input
-                        placeholder="Ex: 1234567890-abcdef.apps.googleusercontent.com"
-                        className="border-emerald-200 bg-white focus-visible:ring-emerald-400"
-                        autoComplete="off"
-                        value={(settings as any).google_client_id || ''}
-                        onChange={(e) => setSettings({ ...settings, google_client_id: e.target.value } as any)}
-                      />
-                    </div>
-
-                    {/* Google Client Secret */}
-                    <div className="space-y-1.5">
-                      <Label className="text-xs font-bold text-emerald-800">Google Client Secret</Label>
-                      <Input
-                        type="password"
-                        placeholder="Sua chave secreta do cliente OAuth (GOCSPX-...)"
-                        className="border-emerald-200 bg-white focus-visible:ring-emerald-400"
-                        autoComplete="new-password"
-                        value={(settings as any).google_client_secret || ''}
-                        onChange={(e) => setSettings({ ...settings, google_client_secret: e.target.value } as any)}
-                      />
-                    </div>
-
-                    {/* Google Direct URL */}
-                    <div className="space-y-1.5">
-                      <div className="flex items-center justify-between">
-                        <Label className="text-xs font-bold text-emerald-800">Google Direct URL (URL Direta de Autorização / Google Console)</Label>
-                        {(settings as any).google_direct_url && (
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            className="h-6 px-2 text-xs text-emerald-700 hover:bg-emerald-50 gap-1"
-                            onClick={() => window.open((settings as any).google_direct_url, '_blank')}
-                          >
-                            <ExternalLink className="w-3 h-3" /> Abrir Link Direto
-                          </Button>
-                        )}
-                      </div>
-                      <Input
-                        placeholder="Ex: https://accounts.google.com/o/oauth2/v2/auth?..."
-                        className="border-emerald-200 bg-white focus-visible:ring-emerald-400"
-                        autoComplete="off"
-                        value={(settings as any).google_direct_url || ''}
-                        onChange={(e) => setSettings({ ...settings, google_direct_url: e.target.value } as any)}
-                      />
-                      <p className="text-[10px] text-emerald-600">
-                        Insira aqui a URL direta de autorização ou endpoint configurado no Google Console (opcional para fluxos diretos).
-                      </p>
-                    </div>
-
-                    {/* Google User Refresh Token */}
-                    <div className="space-y-1.5">
-                      <div className="flex items-center justify-between">
-                        <Label className="text-xs font-bold text-emerald-800">Google User Refresh Token (Refresh Token do Utilizador)</Label>
-                        <button
-                          type="button"
-                          onClick={() => setShowRefreshToken(!showRefreshToken)}
-                          className="text-xs text-emerald-700 hover:text-emerald-900 flex items-center gap-1"
-                        >
-                          {showRefreshToken ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-                          {showRefreshToken ? 'Ocultar' : 'Ver Token'}
-                        </button>
-                      </div>
-                      <Input
-                        type={showRefreshToken ? "text" : "password"}
-                        placeholder="Ex: 1//04abcdefgh123456789..."
-                        className="border-emerald-200 bg-white font-mono text-xs focus-visible:ring-emerald-400"
-                        autoComplete="off"
-                        value={(settings as any).google_user_refresh_token || ''}
-                        onChange={(e) => setSettings({ ...settings, google_user_refresh_token: e.target.value } as any)}
-                      />
-                      <p className="text-[10px] text-emerald-600">
-                        Token de atualização permanente. É obtido automaticamente ao clicar em "Conectar via OAuth Google" ou pode ser colado manualmente (ex: Google OAuth Playground).
-                      </p>
                     </div>
 
                     {/* Testar Conexão Google Calendar */}
-                    <div className="pt-2 flex items-center justify-between border-t border-emerald-200/60">
-                      <p className="text-xs text-emerald-800 font-medium">Validar conexão e permissões do Google Calendar:</p>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        disabled={isTestingGoogle}
-                        className="border-emerald-300 text-emerald-800 hover:bg-emerald-100 gap-1.5 text-xs h-8"
-                        onClick={handleTestGoogleCalendar}
-                      >
-                        {isTestingGoogle ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
-                        Testar Conexão Google
-                      </Button>
-                    </div>
-
-                    {/* Importador JSON */}
-                    <div className="space-y-2 pt-2 border-t border-emerald-200/60">
-                      <Label className="text-xs font-bold text-emerald-800 flex items-center gap-1.5">
-                        <UploadCloud className="w-3.5 h-3.5" /> Importar Ficheiro JSON do Google Cloud (Opcional)
-                      </Label>
-                      <textarea
-                        rows={3}
-                        placeholder='Cole aqui o texto do ficheiro JSON descarregado do Google Cloud (ex: {"web":{"client_id":"...","client_secret":"...","auth_uri":"..."}})'
-                        className="w-full text-xs font-mono p-2 rounded-lg border border-emerald-200 bg-white focus:outline-none focus:ring-1 focus:ring-emerald-400 resize-none transition-all"
-                        onChange={(e) => {
-                          try {
-                            const val = e.target.value.trim();
-                            if (!val) return;
-                            const parsed = JSON.parse(val);
-                            const web = parsed.web || parsed.installed || parsed;
-                            if (web && (web.client_id || web.client_secret || web.auth_uri || web.refresh_token)) {
-                              setSettings(prev => ({
-                                ...prev,
-                                google_client_id: web.client_id || prev.google_client_id,
-                                google_client_secret: web.client_secret || prev.google_client_secret,
-                                google_direct_url: web.auth_uri || web.direct_url || prev.google_direct_url,
-                                google_user_refresh_token: web.refresh_token || prev.google_user_refresh_token
-                              }));
-                              toast.success("Credenciais e URLs extraídas e preenchidas com sucesso a partir do JSON!");
-                            }
-                          } catch (_) {
-                            // JSON parcial enquanto digita
-                          }
-                        }}
-                      />
-                      <p className="text-[10px] text-emerald-600">
-                        Cole o conteúdo do ficheiro <code>client_secret.json</code> para preencher Client ID, Client Secret e URL direta automaticamente.
-                      </p>
-                    </div>
+                    {calendarConnected.google && (
+                      <div className="pt-2 flex items-center justify-between border-t border-emerald-200/60">
+                        <p className="text-xs text-emerald-800 font-medium">Validar conexão e permissões do Google Calendar:</p>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={isTestingGoogle}
+                          className="border-emerald-300 text-emerald-800 hover:bg-emerald-100 gap-1.5 text-xs h-8"
+                          onClick={handleTestGoogleCalendar}
+                        >
+                          {isTestingGoogle ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                          Testar Conexão Google
+                        </Button>
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
               )}

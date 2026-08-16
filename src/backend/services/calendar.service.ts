@@ -25,27 +25,33 @@ export async function getGoogleAccessToken(
     let refreshToken = customCredentials?.refreshToken?.trim();
 
     if (!clientId || !clientSecret || !refreshToken) {
-      const { data: org, error } = await supabaseAdmin
-        .from('organizations')
-        .select('google_client_id, google_client_secret, google_user_refresh_token, google_refresh_token')
-        .eq('id', orgId)
-        .maybeSingle();
+      if (orgId) {
+        const { data: org, error } = await supabaseAdmin
+          .from('organizations')
+          .select('google_client_id, google_client_secret, google_user_refresh_token, google_refresh_token')
+          .eq('id', orgId)
+          .maybeSingle();
 
-      if (error) {
-        console.error('[CALENDAR SERVICE] Erro ao buscar organização:', error.message);
-        return { accessToken: null, error: 'Organização não encontrada.' };
+        if (error) {
+          console.warn('[CALENDAR SERVICE] Aviso ao consultar organização:', error.message);
+        }
+
+        if (org) {
+          clientId = clientId || org.google_client_id?.trim();
+          clientSecret = clientSecret || org.google_client_secret?.trim();
+          refreshToken = refreshToken || org.google_user_refresh_token?.trim() || org.google_refresh_token?.trim();
+        }
       }
 
-      clientId = clientId || org?.google_client_id?.trim() || process.env.GOOGLE_CLIENT_ID?.trim();
-      clientSecret = clientSecret || org?.google_client_secret?.trim() || process.env.GOOGLE_CLIENT_SECRET?.trim();
-      refreshToken = refreshToken || org?.google_user_refresh_token?.trim() || org?.google_refresh_token?.trim();
+      clientId = clientId || process.env.GOOGLE_CLIENT_ID?.trim();
+      clientSecret = clientSecret || process.env.GOOGLE_CLIENT_SECRET?.trim();
     }
 
     if (!refreshToken) {
-      return { accessToken: null, error: 'Google Refresh Token não configurado.' };
+      return { accessToken: null, error: 'Google Refresh Token não configurado. Por favor, clique em "Conectar via OAuth Google" para autorizar a conta.' };
     }
     if (!clientId || !clientSecret) {
-      return { accessToken: null, error: 'Google Client ID ou Client Secret ausentes.' };
+      return { accessToken: null, error: 'Google Client ID ou Client Secret ausentes. Por favor, preencha as credenciais no painel.' };
     }
 
     const tokenRes = await axios.post(
@@ -69,9 +75,22 @@ export async function getGoogleAccessToken(
 
     return { accessToken };
   } catch (err: any) {
-    const errorDetails = err.response?.data?.error_description || err.response?.data?.error || err.message;
-    console.error('[CALENDAR SERVICE] Erro ao obter access_token da Google:', errorDetails);
-    return { accessToken: null, error: errorDetails };
+    const rawError = err.response?.data?.error;
+    const rawDesc = err.response?.data?.error_description || '';
+    console.error('[CALENDAR SERVICE] Erro ao obter access_token da Google:', { error: rawError, description: rawDesc, message: err.message });
+
+    let friendlyError = rawDesc || rawError || err.message;
+    if (rawError === 'invalid_grant' || rawDesc.toLowerCase().includes('bad request')) {
+      friendlyError = 'Refresh Token inválido ou expirado. Por favor, clique em "Conectar via OAuth Google" para gerar uma nova autorização.';
+    } else if (rawError === 'invalid_client') {
+      friendlyError = 'Google Client ID ou Client Secret incorretos. Verifique as credenciais no Google Cloud Console.';
+    } else if (rawError === 'unauthorized_client') {
+      friendlyError = 'Cliente OAuth não autorizado para este tipo de concessão.';
+    } else if (rawError === 'redirect_uri_mismatch') {
+      friendlyError = 'URI de Redirecionamento não autorizada no Google Cloud Console.';
+    }
+
+    return { accessToken: null, error: friendlyError };
   }
 }
 
