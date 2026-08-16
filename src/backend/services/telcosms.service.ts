@@ -72,12 +72,18 @@ export class TelcoSMSService {
         }
       }
 
-      // Se a organização não tiver API Key configurada, regista aviso silencioso e não quebra o fluxo
+      // 2. Se a organização não tiver chave direta, verificar variáveis de ambiente (.env)
+      if (!apiKey) {
+        apiKey = process.env.TELCOSMS_API_KEY?.trim();
+        senderId = senderId || process.env.TELCOSMS_SENDER_ID?.trim();
+      }
+
+      // Se a organização e o sistema não tiverem API Key configurada, regista aviso e não quebra o fluxo
       if (!apiKey) {
         console.warn(`[TELCOSMS] ℹ️ API Key não configurada para a organização "${orgId || 'desconhecida'}". Envio de SMS ignorado.`);
         return {
           success: false,
-          error: 'TelcoSMS API Key não configurada no painel.'
+          error: 'TelcoSMS API Key não configurada no painel ou .env.'
         };
       }
 

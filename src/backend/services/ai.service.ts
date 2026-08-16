@@ -260,16 +260,18 @@ REGRAS:
   const bookingRule = `
 ═══ FLUXO OBRIGATÓRIO DE AGENDAMENTO (WHATSAPP) ═══
 Quando o cliente quiser agendar um compromisso, marcação, reunião, consulta ou serviço:
-1. Você deve recolher OBRIGATORIAMENTE os seguintes 4 dados essenciais através de conversação natural e prestativa:
-   - 👤 Nome completo do cliente
+1. Você deve recolher os 4 dados essenciais (se o nome do cliente já for conhecido da conversa anterior ou do perfil, NÃO volte a perguntar o nome, use o nome já conhecido!):
+   - 👤 Nome do cliente
    - ✉️ E-mail do cliente (essencial para envio do convite automático da agenda)
    - 📋 Assunto a tratar (motivo específico ou tipo de serviço pretendido)
    - 📅 Data e Hora desejada (ex: 2026-08-20 às 15:00)
 
 2. Dinâmica de Conversação:
-   - Se faltar qualquer um destes 4 dados, pergunte amigavelmente e de forma fluida apenas pelos dados em falta.
-   - Assim que o cliente fornecer todos os 4 dados completos e confirmar os detalhes, inclua OBRIGATORIAMENTE no INÍCIO da sua resposta o token:
-     [BOOKING_CONFIRMED:{"name":"<Nome Completo>","email":"<email@dominio.com>","subject":"<Assunto>","date":"<YYYY-MM-DD>","time":"<HH:MM>"}]
+   - Se faltar qualquer um destes dados, pergunte amigavelmente e de forma fluida apenas pelos dados em falta.
+   - REGRA OBRIGATÓRIA E INEGOCIÁVEL: No momento em que você confirmar o agendamento ao cliente (quando tiver os dados ou quando o cliente fornecer a data/hora/email), você DEVE OBRIGATORIAMENTE incluir no INÍCIO da sua resposta o token:
+     [BOOKING_CONFIRMED:{"name":"<Nome do Cliente>","email":"<email@dominio.com>","subject":"<Assunto>","date":"<YYYY-MM-DD>","time":"<HH:MM>"}]
+   - Se o nome não estiver na mensagem imediata mas for conhecido de antes, preencha o campo "name" com o nome conhecido.
+   - O campo "date" no token DEVE ser SEMPRE em formato ISO YYYY-MM-DD (ex: 2026-08-18) e a hora no formato HH:MM (ex: 10:00).
    - Confirme com entusiasmo ao cliente que a sua marcação foi agendada com sucesso, que o convite foi enviado para o seu e-mail e que receberá um SMS de confirmação.
    - Caso o cliente apenas pergunte como agendar mas ainda não forneceu os dados, inclua o token [AGENDAR] e solicite os dados necessários.
 `;
@@ -760,6 +762,122 @@ export class AIService {
       return raw;
     }
 
+    // Auxiliar robusto para extração de BookingData (com suporte a fallback de texto natural)
+    function parseBookingData(
+      text: string,
+      historyList: ChatMessage[] = [],
+      currentMsg: string = '',
+      cProfile?: CustomerProfile
+    ): BookingData | undefined {
+      // 1. Tentar extração direta via token [BOOKING_CONFIRMED:...]
+      const tag = '[BOOKING_CONFIRMED:';
+      const tagIdx = text.indexOf(tag);
+      if (tagIdx !== -1) {
+        const jsonStart = tagIdx + tag.length;
+        let depth = 0, jsonEnd = -1;
+        for (let ci = jsonStart; ci < text.length; ci++) {
+          if (text[ci] === '{') depth++;
+          else if (text[ci] === '}') {
+            depth--;
+            if (depth === 0) { jsonEnd = ci; break; }
+          }
+        }
+        if (jsonEnd !== -1) {
+          const jsonStr = text.substring(jsonStart, jsonEnd + 1);
+          console.log('[AIService] BOOKING_CONFIRMED JSON extraido:', jsonStr);
+          try {
+            const b = JSON.parse(jsonStr);
+            const name = (b.name || cProfile?.name || 'Cliente').trim();
+            const email = (b.email || cProfile?.email || '').trim();
+            const subject = (b.subject || 'Consulta / Atendimento').trim();
+            let date = (b.date || '').trim();
+            let time = (b.time || '').trim();
+
+            if (date && time && email.includes('@')) {
+              if (time.length === 5 && !time.includes(':')) {
+                time = `${time.substring(0, 2)}:${time.substring(2)}`;
+              }
+              return { name, email, subject, date, time };
+            }
+          } catch (pe: any) {
+            console.error('[AIService] BOOKING_CONFIRMED parse error:', pe.message, '| JSON:', jsonStr);
+          }
+        }
+      }
+
+      // 2. Fallback de Recuperação Automática:
+      // Se a IA confirmou a marcação no texto mas omitiu o token de máquina
+      const isConfirmedInText = /marcação\s+(?:está\s+)?confirmada|agendamento\s+(?:está\s+)?confirmado|consulta\s+(?:está\s+)?confirmada|marcação\s+confirmada|agendamento\s+confirmado|sua\s+marcação\s+está\s+confirmada/i.test(text);
+
+      if (isConfirmedInText) {
+        console.log('[AIService] 🔍 Detetada confirmação de agendamento no texto! A recuperar dados com fallback inteligente...');
+
+        const fullContext = [
+          text,
+          currentMsg,
+          ...historyList.slice(-4).map(h => h.text),
+          cProfile?.name,
+          cProfile?.email,
+        ].filter(Boolean).join('\n');
+
+        // Extrair E-mail
+        const emailMatch = fullContext.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
+        const email = emailMatch ? emailMatch[1].trim() : (cProfile?.email || '');
+
+        // Extrair Hora (ex: "10h00", "10:00", "15h30", "às 10h", "10:00")
+        let time = '';
+        const timeMatch = fullContext.match(/(?:às|as|hora|horário|horario|ás)?\s*(\b[0-2]?[0-9])[:hH]([0-5][0-9])\b/i) ||
+                          fullContext.match(/(?:às|as)\s*(\b[0-2]?[0-9])\s*h(?:oras)?\b/i);
+
+        if (timeMatch) {
+          const hh = timeMatch[1].padStart(2, '0');
+          const mm = timeMatch[2] ? timeMatch[2] : '00';
+          time = `${hh}:${mm}`;
+        }
+
+        // Extrair Data
+        let date = '';
+        const isoDateMatch = fullContext.match(/\b(202[4-9])-([0-1][0-9])-([0-3][0-9])\b/);
+        if (isoDateMatch) {
+          date = isoDateMatch[0];
+        } else {
+          const monthsMap: Record<string, string> = {
+            'janeiro': '01', 'fevereiro': '02', 'março': '03', 'marco': '03',
+            'abril': '04', 'maio': '05', 'junho': '06', 'julho': '07',
+            'agosto': '08', 'setembro': '09', 'outubro': '10', 'novembro': '11', 'dezembro': '12'
+          };
+
+          const datePtMatch = fullContext.match(/\b([0-3]?[0-9])\s+de\s+(janeiro|fevereiro|março|marco|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)(?:\s+de\s+(202[4-9]))?\b/i);
+          if (datePtMatch) {
+            const day = datePtMatch[1].padStart(2, '0');
+            const month = monthsMap[datePtMatch[2].toLowerCase()] || '01';
+            const year = datePtMatch[3] || new Date().getFullYear().toString();
+            date = `${year}-${month}-${day}`;
+          }
+        }
+
+        // Extrair Assunto
+        let subject = 'Consulta / Atendimento';
+        const subjectMatch = text.match(/(?:Assunto|Serviço|Motivo):\s*\*?\*?([^\n\r*]+)/i) ||
+                             currentMsg.match(/(?:visto|consulta|reunião|processo|serviço)[^\n\r]*/i);
+        if (subjectMatch) {
+          subject = subjectMatch[1] ? subjectMatch[1].trim() : subjectMatch[0].trim();
+        }
+
+        // Nome
+        const name = cProfile?.name || 'Cliente';
+
+        if (email && email.includes('@') && date && time) {
+          console.log(`[AIService] ✅ Agendamento recuperado com sucesso via fallback:`, { name, email, subject, date, time });
+          return { name, email, subject, date, time };
+        } else {
+          console.warn(`[AIService] ⚠️ Confirmação no texto detetada mas faltam dados para fallback:`, { hasEmail: !!email, hasDate: !!date, hasTime: !!time });
+        }
+      }
+
+      return undefined;
+    }
+
     // 2. Construir System Prompt
     const fullKnowledge = `${org?.product_description || ''}\n\n${externalKnowledge}\n\n${availableAssets}`.trim();
 
@@ -831,25 +949,15 @@ export class AIService {
             ? (() => { try { return JSON.parse(contactMatch[1]); } catch { return undefined; } })()
             : undefined;
 
-          const bookingConfirmMatch = cleanedText.match(/\[BOOKING_CONFIRMED:(\{[^}]+\})\]/);
-          const bookingData = bookingConfirmMatch
-            ? (() => {
-                try {
-                  const b = JSON.parse(bookingConfirmMatch[1]);
-                  if (b.name && b.email && b.subject && b.date && b.time) return b as BookingData;
-                  return undefined;
-                } catch {
-                  return undefined;
-                }
-              })()
-            : undefined;
+          // Parser robusto: extrai JSON ou recupera dados via fallback inteligente
+          const bookingData = parseBookingData(cleanedText, history, enrichedMessage, customerProfile);
 
           const cleanReply = cleanedText
-            .replace(/\[TRANSFERIR_HUMANO\]|\[AGENDAR\]|\[PROPOSTA\]|\[CONFIRMAR_INFORMAÇÃO\]|\[CONTATO:\{[^}]+\}\]|\[BOOKING_CONFIRMED:\{[^}]+\}\]/g, '')
+            .replace(/\[TRANSFERIR_HUMANO\]|\[AGENDAR\]|\[PROPOSTA\]|\[CONFIRMAR_INFORMAÇÃO\]|\[CONTATO:\{[^}]+\}\]|\[BOOKING_CONFIRMED:\{[\s\S]*?\}\]/g, '')
             .trim();
 
           console.log(`[AIService] ✅ Resposta via DeepSeek [PRINCIPAL] (${cleanReply.length} chars). BookingData:`, bookingData ? 'Detectado' : 'Não');
-          return { reply: cleanReply || cleanedText, transfer, booking, bookingData, proposal, contactData, confirm };
+          return { reply: cleanReply || cleanedText, transfer, booking: booking || !!bookingData, bookingData, proposal, contactData, confirm };
 
         } catch (dsErr: any) {
           const httpStatus = dsErr.response?.status ?? 'N/A';
@@ -906,25 +1014,15 @@ export class AIService {
             ? (() => { try { return JSON.parse(contactMatch[1]); } catch { return undefined; } })()
             : undefined;
 
-          const bookingConfirmMatch = cleanText.match(/\[BOOKING_CONFIRMED:(\{[^}]+\})\]/);
-          const bookingData = bookingConfirmMatch
-            ? (() => {
-                try {
-                  const b = JSON.parse(bookingConfirmMatch[1]);
-                  if (b.name && b.email && b.subject && b.date && b.time) return b as BookingData;
-                  return undefined;
-                } catch {
-                  return undefined;
-                }
-              })()
-            : undefined;
+          // Parser robusto: extrai JSON ou recupera dados via fallback inteligente
+          const bookingData = parseBookingData(cleanText, history, enrichedMessage, customerProfile);
 
           const cleanReply = cleanText
-            .replace(/\[TRANSFERIR_HUMANO\]|\[AGENDAR\]|\[PROPOSTA\]|\[CONFIRMAR_INFORMAÇÃO\]|\[CONTATO:\{[^}]+\}\]|\[BOOKING_CONFIRMED:\{[^}]+\}\]/g, '')
+            .replace(/\[TRANSFERIR_HUMANO\]|\[AGENDAR\]|\[PROPOSTA\]|\[CONFIRMAR_INFORMAÇÃO\]|\[CONTATO:\{[^}]+\}\]|\[BOOKING_CONFIRMED:\{[\s\S]*?\}\]/g, '')
             .trim();
 
           console.log(`[AIService] ✅ Resposta via Gemini [FALLBACK] chave ${keyIdx}. BookingData:`, bookingData ? 'Detectado' : 'Não');
-          return { reply: cleanReply || cleanText, transfer, booking, bookingData, proposal, contactData, confirm };
+          return { reply: cleanReply || cleanText, transfer, booking: booking || !!bookingData, bookingData, proposal, contactData, confirm };
 
         } catch (err: any) {
           const status = err.response?.status ?? 'N/A';
