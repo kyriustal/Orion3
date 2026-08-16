@@ -136,9 +136,13 @@ router.get('/google/callback', async (req, res) => {
     if (targetOrgId) {
       const { error: updateErr } = await supabaseAdmin
         .from('organizations')
-        .upsert({ id: targetOrgId, ...updateData }, { onConflict: 'id' });
+        .update(updateData)
+        .eq('id', targetOrgId);
 
-      if (updateErr) throw updateErr;
+      if (updateErr) {
+        console.error('[GOOGLE CALENDAR] Erro ao gravar token no Supabase:', updateErr.message);
+        return res.redirect(`/dashboard/settings?tab=calendar&error=database_error&details=${encodeURIComponent(updateErr.message)}`);
+      }
     }
 
     return res.redirect('/dashboard/settings?tab=calendar&success=google_connected');
@@ -335,12 +339,27 @@ router.get('/status', requireAuth, async (req: AuthRequest, res) => {
       .eq('id', orgId)
       .maybeSingle();
 
-    if (error) throw error;
-
     const hasGoogleSystem = !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
-    const hasGoogleOrg = !!(data?.google_client_id && data?.google_client_secret);
-
     const hasMicrosoftSystem = !!(process.env.MICROSOFT_CLIENT_ID && process.env.MICROSOFT_CLIENT_SECRET);
+
+    if (error) {
+      console.warn('[CALENDAR STATUS] Aviso ao consultar colunas de calendário:', error.message);
+      return res.json({
+        provider: 'none',
+        google_connected: false,
+        microsoft_connected: false,
+        google_direct_url: '',
+        google_user_refresh_token: '',
+        has_google_credentials: hasGoogleSystem,
+        has_microsoft_credentials: hasMicrosoftSystem,
+        system_google_client_id: process.env.GOOGLE_CLIENT_ID || '',
+        system_microsoft_client_id: process.env.MICROSOFT_CLIENT_ID || '',
+        has_saved_google_secret: !!process.env.GOOGLE_CLIENT_SECRET,
+        has_saved_microsoft_secret: !!process.env.MICROSOFT_CLIENT_SECRET,
+      });
+    }
+
+    const hasGoogleOrg = !!(data?.google_client_id && data?.google_client_secret);
     const hasMicrosoftOrg = !!(data?.microsoft_client_id && data?.microsoft_client_secret);
 
     res.json({

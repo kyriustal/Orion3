@@ -25,6 +25,11 @@ jobs:
       - name: Build Project (Client & Server)
         run: npm run build
 
+      - name: Prepare Restart Signal for Hostinger Node.js
+        run: |
+          mkdir -p tmp
+          touch tmp/restart.txt
+
       - name: Deploy via FTP
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:

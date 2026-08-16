@@ -78,6 +78,8 @@ export default function Settings() {
         toast.error(`Cliente Google não autorizado ${details ? `(${details})` : ''}. Verifique o Client ID no Google Cloud Console.`);
       } else if (error === 'token_exchange_failed') {
         toast.error(`Falha na autenticação com o calendário ${details ? `(${details})` : ''}. Verifique se o Client Secret e a URI de redirecionamento estão corretos.`);
+      } else if (error === 'database_error') {
+        toast.error(`Autenticação Google/Microsoft autorizada com sucesso, mas falhou ao gravar na base de dados (${details}). Certifique-se de que executou a migração SQL das colunas de calendário no painel do Supabase.`);
       }
 
       // Limpar os parâmetros da URL para evitar que a notificação persista ao recarregar a página
