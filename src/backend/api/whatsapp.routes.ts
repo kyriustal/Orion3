@@ -669,7 +669,7 @@ async function triggerAIResponse(params: {
     // ── Automação Pós-Confirmação de Agendamento (Google Calendar + TelcoSMS + Email) ──
     if (aiResult.bookingData) {
       const bData = aiResult.bookingData;
-      console.log(`[BOOKING-AUTO] 📅 Agendamento confirmado via WhatsApp para ${bData.name} (${bData.date} às ${bData.time})`);
+      console.log(`[BOOKING-AUTO] 📅 Agendamento confirmado via WhatsApp para ${bData.name} (${bData.date} às ${bData.time}) | Email: ${bData.email} | Tel: ${bData.phone || fromNumber}`);
 
       // Obter dados da organização (nome, telefone, endereço, maps_link, credenciais TelcoSMS)
       let orgData: any = null;
@@ -688,15 +688,19 @@ async function triggerAIResponse(params: {
       const companyPhone = orgData?.phone?.trim() || orgData?.whatsapp?.trim() || '';
       const companyAddress = orgData?.address?.trim() || '';
       const mapsLink = orgData?.maps_link?.trim() || '';
+      const customerPhone = (bData.phone && bData.phone.replace(/[^\d+]/g, '').length >= 8) 
+        ? bData.phone.replace(/[^\d+]/g, '') 
+        : fromNumber;
 
       // 1. Google Calendar — Criação do evento na agenda
       try {
+        console.log(`[BOOKING-AUTO] 📆 A sincronizar com o Google Calendar da organização (${orgId})...`);
         const descLines = [
           `Agendamento confirmado via Orion WhatsApp Chatbot`,
           `Empresa: ${companyName}`,
           `Assunto: ${bData.subject}`,
           `Cliente: ${bData.name}`,
-          `Telefone: ${fromNumber}`,
+          `Telefone: ${customerPhone}`,
           `Email: ${bData.email}`,
         ];
         if (companyAddress) descLines.push(`Endereço: ${companyAddress}`);
@@ -710,12 +714,12 @@ async function triggerAIResponse(params: {
           location: companyAddress || mapsLink || undefined,
           customerName: bData.name,
           customerEmail: bData.email,
-          customerPhone: fromNumber,
+          customerPhone: customerPhone,
           description: descLines.join('\n'),
         });
 
         if (calResult.success) {
-          console.log(`[BOOKING-AUTO] ✅ Evento criado no Google Calendar com sucesso (${calResult.eventId})`);
+          console.log(`[BOOKING-AUTO] ✅ Evento criado no Google Calendar com sucesso! Event ID: ${calResult.eventId}`);
         } else {
           console.warn(`[BOOKING-AUTO] ℹ️ Google Calendar: ${calResult.error}`);
         }
@@ -725,6 +729,7 @@ async function triggerAIResponse(params: {
 
       // 2. Disparo de SMS (TelcoSMS)
       try {
+        console.log(`[BOOKING-AUTO] 📱 A enviar SMS via TelcoSMS para ${customerPhone}...`);
         let smsMessage = `Olá ${bData.name}, a sua marcação para o dia ${bData.date} às ${bData.time} foi confirmada com sucesso!`;
         if (mapsLink) {
           smsMessage += ` Localizar no Google Maps: ${mapsLink}`;
@@ -733,16 +738,16 @@ async function triggerAIResponse(params: {
 
         const smsResult = await TelcoSMSService.sendSMS({
           orgId,
-          to: fromNumber,
+          to: customerPhone,
           message: smsMessage,
-          apiKey: orgData?.telcosms_api_key,
-          senderId: orgData?.telcosms_sender_id,
+          apiKey: orgData?.telcosms_api_key || process.env.TELCOSMS_API_KEY,
+          senderId: orgData?.telcosms_sender_id || process.env.TELCOSMS_SENDER_ID,
         });
 
         if (smsResult.success) {
-          console.log(`[BOOKING-AUTO] ✅ SMS enviado com sucesso via TelcoSMS para ${fromNumber}`);
+          console.log(`[BOOKING-AUTO] ✅ SMS enviado com sucesso via TelcoSMS para ${customerPhone}`);
         } else {
-          console.warn(`[BOOKING-AUTO] ℹ️ TelcoSMS: ${smsResult.error}`);
+          console.warn(`[BOOKING-AUTO] ℹ️ TelcoSMS Aviso: ${smsResult.error}`);
         }
       } catch (smsErr: any) {
         console.error('[BOOKING-AUTO] ❌ Erro no disparo TelcoSMS (não bloqueante):', smsErr.message);
@@ -750,6 +755,7 @@ async function triggerAIResponse(params: {
 
       // 3. Envio de Email de Confirmação para o Cliente
       if (bData.email && bData.email.includes('@')) {
+        console.log(`[BOOKING-AUTO] ✉️ A enviar e-mail de confirmação para o cliente (${bData.email})...`);
         EmailService.sendBookingConfirmationToCustomer({
           customerEmail: bData.email,
           customerName: bData.name,
@@ -760,7 +766,11 @@ async function triggerAIResponse(params: {
           companyPhone,
           companyAddress,
           mapsLink,
-        }).catch(e => console.error('[BOOKING-AUTO] Erro ao enviar email de confirmação para cliente:', e.message));
+        })
+        .then(() => console.log(`[BOOKING-AUTO] ✅ E-mail de confirmação enviado com sucesso para ${bData.email}`))
+        .catch(e => console.error('[BOOKING-AUTO] ❌ Erro ao enviar email de confirmação para cliente:', e.message));
+      } else {
+        console.warn(`[BOOKING-AUTO] ⚠️ E-mail inválido ou ausente (${bData.email}), envio de e-mail cancelado.`);
       }
 
       // 4. Gravar na tabela de agendamentos e contactos
@@ -773,7 +783,7 @@ async function triggerAIResponse(params: {
           first_name: firstName || bData.name,
           last_name: lastName || null,
           email: bData.email,
-          phone: fromNumber,
+          phone: customerPhone,
           service: bData.subject,
           appointment_date: bData.date,
           appointment_time: bData.time,
@@ -783,9 +793,10 @@ async function triggerAIResponse(params: {
           org_id: orgId,
           name: bData.name,
           email: bData.email,
-          phone: fromNumber,
+          phone: customerPhone,
           updated_at: new Date().toISOString(),
         }, { onConflict: 'org_id,phone' });
+        console.log(`[BOOKING-AUTO] ✅ Agendamento e contacto guardados na base de dados (Supabase).`);
       } catch (dbErr: any) {
         console.warn('[BOOKING-AUTO] Aviso ao gravar booking/contacto na BD:', dbErr.message);
       }

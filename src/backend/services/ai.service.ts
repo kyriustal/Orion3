@@ -32,6 +32,7 @@ export interface GenerateOptions {
 
 export interface BookingData {
   name: string;
+  phone?: string;
   email: string;
   subject: string;
   date: string; // YYYY-MM-DD
@@ -260,18 +261,19 @@ REGRAS:
   const bookingRule = `
 ═══ FLUXO OBRIGATÓRIO DE AGENDAMENTO (WHATSAPP) ═══
 Quando o cliente quiser agendar um compromisso, marcação, reunião, consulta ou serviço:
-1. Você deve recolher os 4 dados essenciais (se o nome do cliente já for conhecido da conversa anterior ou do perfil, NÃO volte a perguntar o nome, use o nome já conhecido!):
+1. Você deve recolher os dados essenciais (se o nome ou email do cliente já for conhecido da conversa anterior ou do perfil, NÃO volte a perguntar, use o já conhecido!):
    - 👤 Nome do cliente
-   - ✉️ E-mail do cliente (essencial para envio do convite automático da agenda)
+   - 📱 Telefone do cliente (se não for explicitado, será usado o número do WhatsApp)
+   - ✉️ E-mail do cliente (essencial para envio do convite automático da agenda e confirmação)
    - 📋 Assunto a tratar (motivo específico ou tipo de serviço pretendido)
    - 📅 Data e Hora desejada (ex: 2026-08-20 às 15:00)
 
 2. Dinâmica de Conversação:
-   - Se faltar qualquer um destes dados, pergunte amigavelmente e de forma fluida apenas pelos dados em falta.
-   - REGRA OBRIGATÓRIA E INEGOCIÁVEL: No momento em que você confirmar o agendamento ao cliente (quando tiver os dados ou quando o cliente fornecer a data/hora/email), você DEVE OBRIGATORIAMENTE incluir no INÍCIO da sua resposta o token:
-     [BOOKING_CONFIRMED:{"name":"<Nome do Cliente>","email":"<email@dominio.com>","subject":"<Assunto>","date":"<YYYY-MM-DD>","time":"<HH:MM>"}]
-   - Se o nome não estiver na mensagem imediata mas for conhecido de antes, preencha o campo "name" com o nome conhecido.
-   - O campo "date" no token DEVE ser SEMPRE em formato ISO YYYY-MM-DD (ex: 2026-08-18) e a hora no formato HH:MM (ex: 10:00).
+   - Se faltar qualquer um destes dados (nome, email, assunto, data/hora), pergunte amigavelmente e de forma fluida apenas pelos dados em falta.
+   - REGRA OBRIGATÓRIA E INEGOCIÁVEL: No momento em que você confirmar o agendamento ao cliente (quando tiver os dados ou quando o cliente fornecer/confirmar a data, hora, email e assunto), você DEVE OBRIGATORIAMENTE incluir no INÍCIO da sua resposta o token:
+     [BOOKING_CONFIRMED:{"name":"<Nome do Cliente>","phone":"<Telefone>","email":"<email@dominio.com>","subject":"<Assunto>","date":"<YYYY-MM-DD>","time":"<HH:MM>"}]
+   - Se o telefone não for especificado no texto, preencha o que tiver ou omita o campo phone.
+   - O campo "date" no token DEVE ser SEMPRE em formato ISO YYYY-MM-DD (ex: 2026-08-20) e a hora no formato HH:MM (ex: 10:00).
    - Confirme com entusiasmo ao cliente que a sua marcação foi agendada com sucesso, que o convite foi enviado para o seu e-mail e que receberá um SMS de confirmação.
    - Caso o cliente apenas pergunte como agendar mas ainda não forneceu os dados, inclua o token [AGENDAR] e solicite os dados necessários.
 `;
@@ -788,6 +790,7 @@ export class AIService {
           try {
             const b = JSON.parse(jsonStr);
             const name = (b.name || cProfile?.name || 'Cliente').trim();
+            const phone = (b.phone || cProfile?.phone || '').trim();
             const email = (b.email || cProfile?.email || '').trim();
             const subject = (b.subject || 'Consulta / Atendimento').trim();
             let date = (b.date || '').trim();
@@ -797,7 +800,7 @@ export class AIService {
               if (time.length === 5 && !time.includes(':')) {
                 time = `${time.substring(0, 2)}:${time.substring(2)}`;
               }
-              return { name, email, subject, date, time };
+              return { name, phone: phone || undefined, email, subject, date, time };
             }
           } catch (pe: any) {
             console.error('[AIService] BOOKING_CONFIRMED parse error:', pe.message, '| JSON:', jsonStr);
@@ -807,7 +810,8 @@ export class AIService {
 
       // 2. Fallback de Recuperação Automática:
       // Se a IA confirmou a marcação no texto mas omitiu o token de máquina
-      const isConfirmedInText = /marcação\s+(?:está\s+)?confirmada|agendamento\s+(?:está\s+)?confirmado|consulta\s+(?:está\s+)?confirmada|marcação\s+confirmada|agendamento\s+confirmado|sua\s+marcação\s+está\s+confirmada/i.test(text);
+      const isConfirmedInText = /marcação|agendamento|consulta|reunião|compromisso|atendimento/i.test(text) &&
+        /confirmad[oa]|agendad[oa]|marcad[oa]|realizad[oa]|sucesso|reservad[oa]|marcado\s+para|agendado\s+para/i.test(text);
 
       if (isConfirmedInText) {
         console.log('[AIService] 🔍 Detetada confirmação de agendamento no texto! A recuperar dados com fallback inteligente...');
@@ -815,19 +819,29 @@ export class AIService {
         const fullContext = [
           text,
           currentMsg,
-          ...historyList.slice(-4).map(h => h.text),
+          ...historyList.slice(-6).map(h => h.text),
           cProfile?.name,
           cProfile?.email,
+          cProfile?.phone,
         ].filter(Boolean).join('\n');
 
         // Extrair E-mail
         const emailMatch = fullContext.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
         const email = emailMatch ? emailMatch[1].trim() : (cProfile?.email || '');
 
-        // Extrair Hora (ex: "10h00", "10:00", "15h30", "às 10h", "10:00")
+        // Extrair Telefone (Angola 9 dígitos ou internacional)
+        let phone = cProfile?.phone || '';
+        const phoneMatch = fullContext.match(/(?:\+244\s*)?(9\d{2}[\s.-]?\d{3}[\s.-]?\d{3})/i) ||
+                           fullContext.match(/(?:\+|00)\d{9,15}/);
+        if (phoneMatch) {
+          phone = phoneMatch[0].replace(/[^\d+]/g, '');
+        }
+
+        // Extrair Hora (ex: "10h00", "10:00", "15h30", "às 10h", "10:00", "10h")
         let time = '';
         const timeMatch = fullContext.match(/(?:às|as|hora|horário|horario|ás)?\s*(\b[0-2]?[0-9])[:hH]([0-5][0-9])\b/i) ||
-                          fullContext.match(/(?:às|as)\s*(\b[0-2]?[0-9])\s*h(?:oras)?\b/i);
+                          fullContext.match(/(?:às|as)\s*(\b[0-2]?[0-9])\s*h(?:oras)?\b/i) ||
+                          fullContext.match(/\b([0-2]?[0-9])[:hH]([0-5][0-9])\b/i);
 
         if (timeMatch) {
           const hh = timeMatch[1].padStart(2, '0');
@@ -838,8 +852,15 @@ export class AIService {
         // Extrair Data
         let date = '';
         const isoDateMatch = fullContext.match(/\b(202[4-9])-([0-1][0-9])-([0-3][0-9])\b/);
+        const ptSlashDateMatch = fullContext.match(/\b([0-3]?[0-9])[\/\-]([0-1]?[0-9])(?:[\/\-](202[4-9]))?\b/);
+
         if (isoDateMatch) {
           date = isoDateMatch[0];
+        } else if (ptSlashDateMatch) {
+          const day = ptSlashDateMatch[1].padStart(2, '0');
+          const month = ptSlashDateMatch[2].padStart(2, '0');
+          const year = ptSlashDateMatch[3] || new Date().getFullYear().toString();
+          date = `${year}-${month}-${day}`;
         } else {
           const monthsMap: Record<string, string> = {
             'janeiro': '01', 'fevereiro': '02', 'março': '03', 'marco': '03',
@@ -853,6 +874,12 @@ export class AIService {
             const month = monthsMap[datePtMatch[2].toLowerCase()] || '01';
             const year = datePtMatch[3] || new Date().getFullYear().toString();
             date = `${year}-${month}-${day}`;
+          } else if (/hoje/i.test(currentMsg) || /hoje/i.test(text)) {
+            const now = new Date();
+            date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+          } else if (/amanhã|amanha/i.test(currentMsg) || /amanhã|amanha/i.test(text)) {
+            const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000);
+            date = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, '0')}-${String(tomorrow.getDate()).padStart(2, '0')}`;
           }
         }
 
@@ -868,8 +895,8 @@ export class AIService {
         const name = cProfile?.name || 'Cliente';
 
         if (email && email.includes('@') && date && time) {
-          console.log(`[AIService] ✅ Agendamento recuperado com sucesso via fallback:`, { name, email, subject, date, time });
-          return { name, email, subject, date, time };
+          console.log(`[AIService] ✅ Agendamento recuperado com sucesso via fallback:`, { name, phone, email, subject, date, time });
+          return { name, phone: phone || undefined, email, subject, date, time };
         } else {
           console.warn(`[AIService] ⚠️ Confirmação no texto detetada mas faltam dados para fallback:`, { hasEmail: !!email, hasDate: !!date, hasTime: !!time });
         }
