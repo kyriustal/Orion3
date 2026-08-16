@@ -17,45 +17,36 @@ export interface SendSMSResult {
 }
 
 /**
- * Formata um número de telefone com o indicativo internacional de país (E.164)
- * Suporta Moçambique (+258), Angola (+244), Portugal (+351), Brasil (+55), etc.
+ * Formata um número para a TelcoSMS (Angola / Internacional).
+ * Para números de Angola (+244 9xxxxxxxx), extrai os 9 dígitos locais padrão (9xxxxxxxx)
+ * ou mantém o formato internacional com indicativo se for de outro país.
  */
-export function formatInternationalPhone(phone: string, defaultCountryCode: string = '258'): string {
-  if (!phone) return '';
+export function formatPhoneForTelcoSMS(phone: string): { local: string; international: string } {
+  if (!phone) return { local: '', international: '' };
   
   // Limpar espaços, traços, parênteses e caracteres não numéricos exceto o +
   let cleaned = phone.trim().replace(/[^\d+]/g, '');
 
-  if (cleaned.startsWith('+')) {
-    return cleaned;
+  if (cleaned.startsWith('+244')) {
+    cleaned = cleaned.substring(4);
+  } else if (cleaned.startsWith('244') && cleaned.length >= 12) {
+    cleaned = cleaned.substring(3);
+  } else if (cleaned.startsWith('+')) {
+    cleaned = cleaned.substring(1);
   }
 
-  if (cleaned.startsWith('00')) {
-    return '+' + cleaned.substring(2);
-  }
+  // Se for número de 9 dígitos de Angola (91, 92, 93, 94, 95, 99)
+  const isAngolaLocal = /^9\d{8}$/.test(cleaned);
+  const local = isAngolaLocal ? cleaned : cleaned;
+  const international = isAngolaLocal ? `+244${cleaned}` : `+${cleaned}`;
 
-  // Se o número começa com indicativos conhecidos comuns (258, 244, 351, 55)
-  if (/^(258|244|351|55)\d{8,11}$/.test(cleaned)) {
-    return '+' + cleaned;
-  }
-
-  // Se for um número local de Moçambique (82, 83, 84, 85, 86, 87) com 9 dígitos
-  if (/^8[2-7]\d{7}$/.test(cleaned)) {
-    return `+258${cleaned}`;
-  }
-
-  // Se for um número local de Angola (91, 92, 93, 94, 95, 99) com 9 dígitos
-  if (/^9\d{8}$/.test(cleaned) && defaultCountryCode === '244') {
-    return `+244${cleaned}`;
-  }
-
-  // Fallback adicionando o código padrão
-  return `+${defaultCountryCode}${cleaned}`;
+  return { local, international };
 }
 
 export class TelcoSMSService {
   /**
    * Envia um SMS através da API da TelcoSMS de forma multi-tenant e resiliente.
+   * Suporta TelcoSMS Angola (v2 e v1) e gateways padrão.
    */
   static async sendSMS(options: SendSMSOptions): Promise<SendSMSResult> {
     const { to, message, orgId } = options;
@@ -63,7 +54,7 @@ export class TelcoSMSService {
     let senderId = options.senderId?.trim();
 
     try {
-      // Se não tiver apiKey passada diretamente, busca na base de dados pela organização
+      // 1. Se não tiver apiKey passada diretamente, busca na base de dados pela organização
       if (!apiKey && orgId) {
         const { data: org, error } = await supabaseAdmin
           .from('organizations')
@@ -90,8 +81,8 @@ export class TelcoSMSService {
         };
       }
 
-      const formattedTo = formatInternationalPhone(to);
-      if (!formattedTo || formattedTo.length < 8) {
+      const { local: phoneLocal, international: phoneIntl } = formatPhoneForTelcoSMS(to);
+      if (!phoneLocal || phoneLocal.length < 8) {
         console.warn(`[TELCOSMS] Número de destinatário inválido: "${to}"`);
         return {
           success: false,
@@ -99,41 +90,77 @@ export class TelcoSMSService {
         };
       }
 
-      const payload = {
-        to: formattedTo,
-        message: message,
-        sender_id: senderId || 'Orion',
-        api_key: apiKey
-      };
+      console.log(`[TELCOSMS] A enviar SMS para ${phoneLocal} (${phoneIntl})...`);
 
-      console.log(`[TELCOSMS] A enviar SMS para ${formattedTo} (Sender: ${payload.sender_id})...`);
+      // Endpoints oficiais da TelcoSMS (Angola)
+      const endpoints = [
+        process.env.TELCOSMS_API_URL,
+        'https://www.telcosms.co.ao/api/v2/send_message',
+        'https://telcosms.co.ao/api/v2/send_message',
+        'https://www.telcosms.co.ao/send_message',
+      ].filter(Boolean) as string[];
 
-      // TelcoSMS API endpoint principal (suporta envio JSON via POST)
-      const telcoUrl = process.env.TELCOSMS_API_URL || 'https://api.telcosms.co.mz/v1/messages';
+      let lastError = '';
+      let lastDetails: any = null;
 
-      const response = await axios.post(telcoUrl, payload, {
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
-          'X-API-Key': apiKey,
-          'api-key': apiKey
-        },
-        timeout: 15000 // 15 segundos de timeout para máxima resiliência
-      });
+      for (const endpoint of endpoints) {
+        try {
+          // Payload oficial TelcoSMS v2 / v1
+          const payload = {
+            message: {
+              api_key_app: apiKey,
+              phone_number: phoneLocal,
+              message_body: message,
+              sender_id: senderId || undefined
+            }
+          };
 
-      console.log(`[TELCOSMS] ✅ SMS enviado com sucesso para ${formattedTo}:`, response.data);
+          const response = await axios.post(endpoint, payload, {
+            headers: {
+              'Content-Type': 'application/json',
+              'Accept': 'application/json'
+            },
+            timeout: 12000
+          });
 
+          console.log(`[TELCOSMS] Resposta recebida de ${endpoint}:`, response.data);
+
+          // Verificar resposta da TelcoSMS
+          const data = response.data;
+          const status = data?.status || data?.message?.status || (data?.success ? 'success' : '');
+          const errorMsg = data?.error || data?.message?.error || data?.detail;
+
+          if (errorMsg && status !== 'success') {
+            lastError = typeof errorMsg === 'string' ? errorMsg : JSON.stringify(errorMsg);
+            lastDetails = data;
+            console.warn(`[TELCOSMS] Aviso de endpoint ${endpoint}:`, lastError);
+            continue;
+          }
+
+          console.log(`[TELCOSMS] ✅ SMS enviado com sucesso para ${phoneLocal}!`);
+          return {
+            success: true,
+            messageId: data?.id || data?.message_id || data?.message?.id || 'sent',
+            details: data
+          };
+        } catch (err: any) {
+          lastError = err.response?.data?.message || err.response?.data?.error || err.message || 'Falha de comunicação';
+          lastDetails = err.response?.data;
+          console.warn(`[TELCOSMS] Tentativa em ${endpoint} falhou:`, lastError);
+        }
+      }
+
+      console.error('[TELCOSMS] ❌ Todas as tentativas de envio falharam:', lastError);
       return {
-        success: true,
-        messageId: response.data?.message_id || response.data?.id || response.data?.data?.id || 'sent',
-        details: response.data
+        success: false,
+        error: lastError,
+        details: lastDetails
       };
 
     } catch (err: any) {
       const errMsg = err.response?.data?.message || err.response?.data?.error || err.message || 'Erro de comunicação com a TelcoSMS';
-      console.error('[TELCOSMS] ❌ Falha no disparo de SMS:', errMsg);
+      console.error('[TELCOSMS] ❌ Erro inesperado no envio de SMS:', errMsg);
 
-      // Nunca quebra o fluxo superior (retorna objeto com success: false)
       return {
         success: false,
         error: errMsg,
