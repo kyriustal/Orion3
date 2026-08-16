@@ -4,6 +4,7 @@ import { supabaseAdmin } from '../config/supabase';
 export interface GoogleCalendarEventInput {
   summary: string;
   description?: string;
+  location?: string;
   appointmentDate: string; // YYYY-MM-DD
   appointmentTime: string; // HH:mm or HH:mm:ss
   durationMinutes?: number;
@@ -170,6 +171,10 @@ export async function createGoogleCalendarEvent(
         dateTime: endDateTime.toISOString(),
       },
     };
+
+    if (input.location) {
+      eventPayload.location = input.location;
+    }
 
     if (input.customerEmail && input.customerEmail.includes('@')) {
       eventPayload.attendees = [

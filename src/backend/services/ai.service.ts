@@ -30,10 +30,19 @@ export interface GenerateOptions {
   customerProfile?: CustomerProfile;
 }
 
+export interface BookingData {
+  name: string;
+  email: string;
+  subject: string;
+  date: string; // YYYY-MM-DD
+  time: string; // HH:MM
+}
+
 export interface GenerateResult {
   reply: string;
   transfer: boolean;
   booking?: boolean;
+  bookingData?: BookingData;
   proposal?: boolean;
   contactData?: { name?: string; email?: string; phone?: string };
   confirm?: boolean;
@@ -162,6 +171,10 @@ export async function postGeminiWithRetry(
 // ─────────────────────────────────────────────────────────────────────────────
 interface OrgProfile {
   name?: string;
+  phone?: string;
+  whatsapp?: string;
+  address?: string;
+  maps_link?: string;
   social_object?: string;
   product_description?: string;
   chatbot_name?: string;
@@ -202,6 +215,22 @@ REGRAS:
   const emojiMode   = org?.emoji_mode || 'moderate';
   const tone        = org?.ai_tone || 'friendly';
 
+  const companyPhone = org?.phone || org?.whatsapp || '';
+  const companyAddress = org?.address || '';
+  const mapsLink = org?.maps_link || '';
+
+  let companyContactInfo = '';
+  if (companyPhone || companyAddress || mapsLink) {
+    const infoLines: string[] = [];
+    if (companyPhone) infoLines.push(`- Telefone / WhatsApp da Empresa: ${companyPhone}`);
+    if (companyAddress) infoLines.push(`- Endereço / Localização física: ${companyAddress}`);
+    if (mapsLink) {
+      infoLines.push(`- Link do Google Maps: ${mapsLink}`);
+      infoLines.push(`- REGRA OBRIGATÓRIA DE LOCALIZAÇÃO: Quando o cliente pedir a localização, morada, mapa ou como chegar, forneça a morada física e envie SEMPRE o link exatamente no formato clicável: [Localizar no Google Maps](${mapsLink}).`);
+    }
+    companyContactInfo = `\n═══ CONTACTO E LOCALIZAÇÃO OFICIAL DA EMPRESA ═══\n${infoLines.join('\n')}\n`;
+  }
+
   const emojiRules: Record<string, string> = {
     none:     'NÃO use emojis em nenhuma circunstância. Seja puramente textual e formal.',
     moderate: 'Use emojis com muita parcimónia — máximo 1 por mensagem e apenas quando natural.',
@@ -228,14 +257,22 @@ REGRAS:
 
   const transferRule = '- Se o cliente pedir explicitamente para falar com um humano, atendente ou pessoa real, inicie a sua resposta com o token [TRANSFERIR_HUMANO] e despeça-se gentilmente.';
 
-  let bookingRule = '- Se o cliente solicitar agendamento, marcação de consulta ou pedir para agendar um serviço, inicie a sua resposta com o token [AGENDAR].';
-  if (org?.calendar_provider === 'other' && org.calendar_link) {
-    bookingRule += ` Além disso, informe amigavelmente o cliente que ele pode agendar diretamente através do seguinte link: ${org.calendar_link}`;
-  } else if (org?.calendar_provider === 'google' || org?.calendar_provider === 'microsoft') {
-    bookingRule += ` Além disso, informe que a marcação será integrada com o nosso calendário (${org.calendar_provider === 'google' ? 'Google Calendar' : 'Outlook Calendar'}) de forma automática.`;
-  } else {
-    bookingRule += ` Além disso, informe amigavelmente o cliente que o seu pedido de agendamento foi registado com sucesso e que a nossa equipa entrará em contacto muito em breve para agendar e confirmar os detalhes.`;
-  }
+  const bookingRule = `
+═══ FLUXO OBRIGATÓRIO DE AGENDAMENTO (WHATSAPP) ═══
+Quando o cliente quiser agendar um compromisso, marcação, reunião, consulta ou serviço:
+1. Você deve recolher OBRIGATORIAMENTE os seguintes 4 dados essenciais através de conversação natural e prestativa:
+   - 👤 Nome completo do cliente
+   - ✉️ E-mail do cliente (essencial para envio do convite automático da agenda)
+   - 📋 Assunto a tratar (motivo específico ou tipo de serviço pretendido)
+   - 📅 Data e Hora desejada (ex: 2026-08-20 às 15:00)
+
+2. Dinâmica de Conversação:
+   - Se faltar qualquer um destes 4 dados, pergunte amigavelmente e de forma fluida apenas pelos dados em falta.
+   - Assim que o cliente fornecer todos os 4 dados completos e confirmar os detalhes, inclua OBRIGATORIAMENTE no INÍCIO da sua resposta o token:
+     [BOOKING_CONFIRMED:{"name":"<Nome Completo>","email":"<email@dominio.com>","subject":"<Assunto>","date":"<YYYY-MM-DD>","time":"<HH:MM>"}]
+   - Confirme com entusiasmo ao cliente que a sua marcação foi agendada com sucesso, que o convite foi enviado para o seu e-mail e que receberá um SMS de confirmação.
+   - Caso o cliente apenas pergunte como agendar mas ainda não forneceu os dados, inclua o token [AGENDAR] e solicite os dados necessários.
+`;
 
   const proposalRule = '- PROPOSTAS COMERCIAIS DO CLIENTE: Se o cliente enviar uma proposta comercial (oferta de parceria, prestação de serviços, etc.), responda de forma diplomática e profissional, informe que irá encaminhar para a área competente, e inclua o token [PROPOSTA] no INÍCIO da sua resposta.';
 
@@ -293,6 +330,7 @@ INSTRUÇÕES CRÍTICAS PARA ATENDIMENTO DE LEADS DE ANÚNCIOS:
 
   return `Você é ${botName}, assistente virtual oficial da empresa "${companyName}".
 ${customerMemorySection}
+${companyContactInfo}
 ${sector ? `Sector de actividade: ${sector}.` : ''}
 
 ═══ SUA PERSONALIDADE E COMPORTAMENTO (DEFINIDOS PELO USUÁRIO NO PAINEL) ═══
@@ -653,7 +691,7 @@ export class AIService {
     if (orgId && mode !== 'support') {
       const { data: orgData } = await supabaseAdmin
         .from('organizations')
-        .select('name, social_object, product_description, chatbot_name, emoji_mode, handover_mode, ai_prompt, ai_tone, calendar_provider, calendar_link')
+        .select('name, phone, whatsapp, address, maps_link, social_object, product_description, chatbot_name, emoji_mode, handover_mode, ai_prompt, ai_tone, calendar_provider, calendar_link')
         .eq('id', orgId)
         .maybeSingle();
       org = orgData;
@@ -786,18 +824,32 @@ export class AIService {
           const cleanedText  = rawText.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
           const confirm      = cleanedText.includes('[CONFIRMAR_INFORMAÇÃO]');
           const transfer     = cleanedText.includes('[TRANSFERIR_HUMANO]');
-          const booking      = cleanedText.includes('[AGENDAR]');
+          const booking      = cleanedText.includes('[AGENDAR]') || cleanedText.includes('[BOOKING_CONFIRMED:');
           const proposal     = cleanedText.includes('[PROPOSTA]');
           const contactMatch = cleanedText.match(/\[CONTATO:(\{[^}]+\})\]/);
           const contactData  = contactMatch
             ? (() => { try { return JSON.parse(contactMatch[1]); } catch { return undefined; } })()
             : undefined;
+
+          const bookingConfirmMatch = cleanedText.match(/\[BOOKING_CONFIRMED:(\{[^}]+\})\]/);
+          const bookingData = bookingConfirmMatch
+            ? (() => {
+                try {
+                  const b = JSON.parse(bookingConfirmMatch[1]);
+                  if (b.name && b.email && b.subject && b.date && b.time) return b as BookingData;
+                  return undefined;
+                } catch {
+                  return undefined;
+                }
+              })()
+            : undefined;
+
           const cleanReply = cleanedText
-            .replace(/\[TRANSFERIR_HUMANO\]|\[AGENDAR\]|\[PROPOSTA\]|\[CONFIRMAR_INFORMAÇÃO\]|\[CONTATO:\{[^}]+\}\]/g, '')
+            .replace(/\[TRANSFERIR_HUMANO\]|\[AGENDAR\]|\[PROPOSTA\]|\[CONFIRMAR_INFORMAÇÃO\]|\[CONTATO:\{[^}]+\}\]|\[BOOKING_CONFIRMED:\{[^}]+\}\]/g, '')
             .trim();
 
-          console.log(`[AIService] ✅ Resposta via DeepSeek [PRINCIPAL] (${cleanReply.length} chars).`);
-          return { reply: cleanReply || cleanedText, transfer, booking, proposal, contactData, confirm };
+          console.log(`[AIService] ✅ Resposta via DeepSeek [PRINCIPAL] (${cleanReply.length} chars). BookingData:`, bookingData ? 'Detectado' : 'Não');
+          return { reply: cleanReply || cleanedText, transfer, booking, bookingData, proposal, contactData, confirm };
 
         } catch (dsErr: any) {
           const httpStatus = dsErr.response?.status ?? 'N/A';
@@ -847,18 +899,32 @@ export class AIService {
 
           const confirm      = cleanText.includes('[CONFIRMAR_INFORMAÇÃO]');
           const transfer     = cleanText.includes('[TRANSFERIR_HUMANO]');
-          const booking      = cleanText.includes('[AGENDAR]');
+          const booking      = cleanText.includes('[AGENDAR]') || cleanText.includes('[BOOKING_CONFIRMED:');
           const proposal     = cleanText.includes('[PROPOSTA]');
           const contactMatch = cleanText.match(/\[CONTATO:(\{[^}]+\})\]/);
           const contactData  = contactMatch
             ? (() => { try { return JSON.parse(contactMatch[1]); } catch { return undefined; } })()
             : undefined;
+
+          const bookingConfirmMatch = cleanText.match(/\[BOOKING_CONFIRMED:(\{[^}]+\})\]/);
+          const bookingData = bookingConfirmMatch
+            ? (() => {
+                try {
+                  const b = JSON.parse(bookingConfirmMatch[1]);
+                  if (b.name && b.email && b.subject && b.date && b.time) return b as BookingData;
+                  return undefined;
+                } catch {
+                  return undefined;
+                }
+              })()
+            : undefined;
+
           const cleanReply = cleanText
-            .replace(/\[TRANSFERIR_HUMANO\]|\[AGENDAR\]|\[PROPOSTA\]|\[CONFIRMAR_INFORMAÇÃO\]|\[CONTATO:\{[^}]+\}\]/g, '')
+            .replace(/\[TRANSFERIR_HUMANO\]|\[AGENDAR\]|\[PROPOSTA\]|\[CONFIRMAR_INFORMAÇÃO\]|\[CONTATO:\{[^}]+\}\]|\[BOOKING_CONFIRMED:\{[^}]+\}\]/g, '')
             .trim();
 
-          console.log(`[AIService] ✅ Resposta via Gemini [FALLBACK] chave ${keyIdx}.`);
-          return { reply: cleanReply || cleanText, transfer, booking, proposal, contactData, confirm };
+          console.log(`[AIService] ✅ Resposta via Gemini [FALLBACK] chave ${keyIdx}. BookingData:`, bookingData ? 'Detectado' : 'Não');
+          return { reply: cleanReply || cleanText, transfer, booking, bookingData, proposal, contactData, confirm };
 
         } catch (err: any) {
           const status = err.response?.status ?? 'N/A';

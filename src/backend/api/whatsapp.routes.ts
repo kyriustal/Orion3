@@ -7,6 +7,8 @@ import { AudioService } from '../services/audio.service';
 import { DocumentService } from '../services/document.service';
 import { EmailService } from '../services/email.service';
 import { PushService } from '../services/push.service';
+import { createGoogleCalendarEvent } from '../services/calendar.service';
+import { TelcoSMSService } from '../services/telcosms.service';
 import { getIo } from '../socket';
 import axios from 'axios';
 import fs from 'fs';
@@ -661,6 +663,131 @@ async function triggerAIResponse(params: {
       if (aiResult.transfer || aiResult.confirm) {
         aiPauses.set(historyKey, Date.now() + 24 * 60 * 60 * 1000);
         console.log(`[IA] Handover/Confirmação detectado. IA pausada automaticamente por 24h para ${fromNumber}`);
+      }
+    }
+
+    // ── Automação Pós-Confirmação de Agendamento (Google Calendar + TelcoSMS + Email) ──
+    if (aiResult.bookingData) {
+      const bData = aiResult.bookingData;
+      console.log(`[BOOKING-AUTO] 📅 Agendamento confirmado via WhatsApp para ${bData.name} (${bData.date} às ${bData.time})`);
+
+      // Obter dados da organização (nome, telefone, endereço, maps_link, credenciais TelcoSMS)
+      let orgData: any = null;
+      try {
+        const { data } = await supabaseAdmin
+          .from('organizations')
+          .select('name, phone, whatsapp, address, maps_link, telcosms_api_key, telcosms_sender_id')
+          .eq('id', orgId)
+          .maybeSingle();
+        orgData = data;
+      } catch (err: any) {
+        console.warn('[BOOKING-AUTO] Aviso ao carregar dados da empresa:', err.message);
+      }
+
+      const companyName = orgData?.name?.trim() || 'Nossa Empresa';
+      const companyPhone = orgData?.phone?.trim() || orgData?.whatsapp?.trim() || '';
+      const companyAddress = orgData?.address?.trim() || '';
+      const mapsLink = orgData?.maps_link?.trim() || '';
+
+      // 1. Google Calendar — Criação do evento na agenda
+      try {
+        const descLines = [
+          `Agendamento confirmado via Orion WhatsApp Chatbot`,
+          `Empresa: ${companyName}`,
+          `Assunto: ${bData.subject}`,
+          `Cliente: ${bData.name}`,
+          `Telefone: ${fromNumber}`,
+          `Email: ${bData.email}`,
+        ];
+        if (companyAddress) descLines.push(`Endereço: ${companyAddress}`);
+        if (companyPhone) descLines.push(`Telefone da Empresa: ${companyPhone}`);
+        if (mapsLink) descLines.push(`Localização: [Localizar no Google Maps](${mapsLink})`);
+
+        const calResult = await createGoogleCalendarEvent(orgId, {
+          summary: `${bData.subject} - ${bData.name}`,
+          appointmentDate: bData.date,
+          appointmentTime: bData.time,
+          location: companyAddress || mapsLink || undefined,
+          customerName: bData.name,
+          customerEmail: bData.email,
+          customerPhone: fromNumber,
+          description: descLines.join('\n'),
+        });
+
+        if (calResult.success) {
+          console.log(`[BOOKING-AUTO] ✅ Evento criado no Google Calendar com sucesso (${calResult.eventId})`);
+        } else {
+          console.warn(`[BOOKING-AUTO] ℹ️ Google Calendar: ${calResult.error}`);
+        }
+      } catch (calErr: any) {
+        console.error('[BOOKING-AUTO] ❌ Erro ao integrar Google Calendar (não bloqueante):', calErr.message);
+      }
+
+      // 2. Disparo de SMS (TelcoSMS)
+      try {
+        let smsMessage = `Olá ${bData.name}, a sua marcação para o dia ${bData.date} às ${bData.time} foi confirmada com sucesso!`;
+        if (mapsLink) {
+          smsMessage += ` Localizar no Google Maps: ${mapsLink}`;
+        }
+        smsMessage += ` Obrigado, ${companyName}.`;
+
+        const smsResult = await TelcoSMSService.sendSMS({
+          orgId,
+          to: fromNumber,
+          message: smsMessage,
+          apiKey: orgData?.telcosms_api_key,
+          senderId: orgData?.telcosms_sender_id,
+        });
+
+        if (smsResult.success) {
+          console.log(`[BOOKING-AUTO] ✅ SMS enviado com sucesso via TelcoSMS para ${fromNumber}`);
+        } else {
+          console.warn(`[BOOKING-AUTO] ℹ️ TelcoSMS: ${smsResult.error}`);
+        }
+      } catch (smsErr: any) {
+        console.error('[BOOKING-AUTO] ❌ Erro no disparo TelcoSMS (não bloqueante):', smsErr.message);
+      }
+
+      // 3. Envio de Email de Confirmação para o Cliente
+      if (bData.email && bData.email.includes('@')) {
+        EmailService.sendBookingConfirmationToCustomer({
+          customerEmail: bData.email,
+          customerName: bData.name,
+          date: bData.date,
+          time: bData.time,
+          subject: bData.subject,
+          companyName,
+          companyPhone,
+          companyAddress,
+          mapsLink,
+        }).catch(e => console.error('[BOOKING-AUTO] Erro ao enviar email de confirmação para cliente:', e.message));
+      }
+
+      // 4. Gravar na tabela de agendamentos e contactos
+      try {
+        const [firstName, ...rest] = (bData.name || '').trim().split(/\s+/);
+        const lastName = rest.join(' ') || '';
+
+        await supabaseAdmin.from('bookings').insert({
+          org_id: orgId,
+          first_name: firstName || bData.name,
+          last_name: lastName || null,
+          email: bData.email,
+          phone: fromNumber,
+          service: bData.subject,
+          appointment_date: bData.date,
+          appointment_time: bData.time,
+        });
+
+        await supabaseAdmin.from('contacts').upsert({
+          org_id: orgId,
+          name: bData.name,
+          email: bData.email,
+          phone: fromNumber,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'org_id,phone' });
+      } catch (dbErr: any) {
+        console.warn('[BOOKING-AUTO] Aviso ao gravar booking/contacto na BD:', dbErr.message);
       }
     }
 

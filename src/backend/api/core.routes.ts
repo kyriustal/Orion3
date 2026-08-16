@@ -132,11 +132,12 @@ router.post('/settings/org', requireAuth, async (req: AuthRequest, res) => {
       .maybeSingle();
 
     const knownColumns = [
-      'name', 'first_name', 'last_name', 'owner_email', 'phone', 'whatsapp', 'address',
+      'name', 'first_name', 'last_name', 'owner_email', 'phone', 'whatsapp', 'address', 'maps_link',
       'contact_person', 'social_object', 'employees_count', 'product_description',
       'chatbot_name', 'use_emojis', 'emoji_mode', 'calendar_provider', 'calendar_link',
       'google_client_id', 'google_client_secret', 'google_refresh_token', 'google_direct_url', 'google_user_refresh_token',
       'microsoft_client_id', 'microsoft_client_secret', 'microsoft_refresh_token',
+      'telcosms_api_key', 'telcosms_sender_id',
       'handover_mode', 'ai_tone', 'ai_prompt'
     ];
 
@@ -172,6 +173,9 @@ router.post('/settings/org', requireAuth, async (req: AuthRequest, res) => {
       delete safeUpdate.microsoft_refresh_token;
       delete safeUpdate.calendar_provider;
       delete safeUpdate.calendar_link;
+      delete safeUpdate.telcosms_api_key;
+      delete safeUpdate.telcosms_sender_id;
+      delete safeUpdate.maps_link;
 
       const { error: fallbackErr } = await supabaseAdmin
         .from('organizations')
@@ -186,6 +190,46 @@ router.post('/settings/org', requireAuth, async (req: AuthRequest, res) => {
   } catch (err: any) {
     console.error('[SETTINGS] Erro ao guardar configurações:', err.message);
     res.status(500).json({ error: err.message || 'Erro ao salvar configurações' });
+  }
+});
+
+// ─── POST /api/settings/telcosms/test — Testar envio de SMS ─────────────────
+router.post('/settings/telcosms/test', requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const orgId = req.user?.orgId || req.user?.id;
+    const { apiKey, senderId, phone } = req.body;
+
+    const { TelcoSMSService } = await import('../services/telcosms.service');
+
+    let targetPhone = phone;
+    if (!targetPhone) {
+      const { data: org } = await supabaseAdmin
+        .from('organizations')
+        .select('phone, whatsapp')
+        .eq('id', orgId)
+        .maybeSingle();
+      targetPhone = org?.whatsapp || org?.phone;
+    }
+
+    if (!targetPhone) {
+      return res.status(400).json({ error: 'Nenhum número de telefone fornecido para o teste.' });
+    }
+
+    const result = await TelcoSMSService.sendSMS({
+      to: targetPhone,
+      message: 'Olá! Este é um SMS de teste da sua integração TelcoSMS com a plataforma Orion.',
+      apiKey,
+      senderId,
+      orgId
+    });
+
+    if (!result.success) {
+      return res.status(400).json({ error: result.error || 'Falha ao enviar SMS de teste.' });
+    }
+
+    res.json({ message: 'SMS de teste enviado com sucesso!', details: result.details });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
   }
 });
 

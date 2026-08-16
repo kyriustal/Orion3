@@ -345,4 +345,107 @@ export class EmailService {
       console.error(`[EmailService] ❌ Erro ao enviar alerta (${type}):`, err.message);
     }
   }
+
+  /**
+   * Envia email de confirmação de agendamento diretamente para o cliente com o nome da empresa e link do Google Maps.
+   */
+  static async sendBookingConfirmationToCustomer(params: {
+    customerEmail: string;
+    customerName: string;
+    date: string;
+    time: string;
+    subject: string;
+    companyName: string;
+    companyPhone?: string;
+    companyAddress?: string;
+    mapsLink?: string;
+  }): Promise<boolean> {
+    const { customerEmail, customerName, date, time, subject, companyName, companyPhone, companyAddress, mapsLink } = params;
+
+    const host = process.env.SMTP_HOST;
+    const port = parseInt(process.env.SMTP_PORT || '587', 10);
+    const user = process.env.SMTP_USER;
+    const pass = process.env.SMTP_PASS;
+    const from = process.env.SMTP_FROM || `${companyName} <no-reply@orion.com>`;
+
+    if (!user || !pass) {
+      console.warn(`[EmailService] ⚠️ SMTP não configurado. Simulação de email de confirmação para ${customerEmail}`);
+      return true;
+    }
+
+    try {
+      const transporter = nodemailer.createTransport({
+        host,
+        port,
+        secure: port === 465,
+        auth: { user, pass },
+      });
+
+      const mapsLinkHtml = mapsLink
+        ? `<div style="margin-top: 15px; padding: 12px 16px; background-color: #eff6ff; border-radius: 8px; border: 1px solid #bfdbfe;">
+             📍 <strong>Como chegar:</strong> 
+             <a href="${mapsLink}" target="_blank" style="color: #1d4ed8; text-decoration: underline; font-weight: 600; margin-left: 6px;">
+               Localizar no Google Maps
+             </a>
+           </div>`
+        : '';
+
+      const htmlContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <style>
+          body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f3f4f6; margin: 0; padding: 0; }
+          .container { max-width: 600px; margin: 40px auto; background: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
+          .header { background: linear-gradient(135deg, #10b981 0%, #059669 100%); padding: 35px 20px; text-align: center; color: #ffffff; }
+          .header h1 { margin: 0; font-size: 24px; font-weight: 700; }
+          .content { padding: 30px; color: #1f2937; }
+          .card { background-color: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 20px; margin: 20px 0; }
+          .row { margin-bottom: 10px; font-size: 15px; }
+          .label { font-weight: 600; color: #4b5563; }
+          .footer { background-color: #f9fafb; padding: 20px; text-align: center; font-size: 13px; color: #9ca3af; border-top: 1px solid #e5e7eb; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>Marcação Confirmada!</h1>
+            <p style="margin: 8px 0 0 0; opacity: 0.95;">${companyName}</p>
+          </div>
+          <div class="content">
+            <p>Olá <strong>${customerName}</strong>,</p>
+            <p>A sua marcação com a <strong>${companyName}</strong> foi confirmada com sucesso!</p>
+            <div class="card">
+              <div class="row"><span class="label">📅 Data:</span> ${date}</div>
+              <div class="row"><span class="label">⏰ Hora:</span> ${time}</div>
+              <div class="row"><span class="label">📋 Assunto:</span> ${subject}</div>
+              ${companyPhone ? `<div class="row"><span class="label">📞 Telefone de Contacto:</span> ${companyPhone}</div>` : ''}
+              ${companyAddress ? `<div class="row"><span class="label">🏢 Endereço:</span> ${companyAddress}</div>` : ''}
+              ${mapsLinkHtml}
+            </div>
+            <p style="font-size: 14px; color: #6b7280;">Também receberá um convite na sua agenda Google com os detalhes da sessão.</p>
+          </div>
+          <div class="footer">
+            <p>&copy; ${new Date().getFullYear()} ${companyName}. Todos os direitos reservados.</p>
+          </div>
+        </div>
+      </body>
+      </html>
+      `;
+
+      await transporter.sendMail({
+        from,
+        to: customerEmail,
+        subject: `✅ Confirmação de Agendamento - ${companyName} (${date} às ${time})`,
+        html: htmlContent,
+      });
+
+      console.log(`[EmailService] ✅ Email de confirmação enviado para o cliente ${customerEmail} (Empresa: ${companyName})`);
+      return true;
+    } catch (err: any) {
+      console.error(`[EmailService] ❌ Erro ao enviar email de confirmação para ${customerEmail}:`, err.message);
+      return false;
+    }
+  }
 }
