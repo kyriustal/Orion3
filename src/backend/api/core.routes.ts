@@ -214,19 +214,37 @@ router.post('/settings/org', requireAuth, async (req: AuthRequest, res) => {
       ? Array.from(new Set([...Object.keys(existingOrg), ...knownColumns]))
       : knownColumns;
 
-    const filteredUpdate: any = { id: orgId };
+    const filteredUpdate: any = {};
     for (const key of Object.keys(body)) {
       if (validColumns.includes(key) && key !== 'id') {
         filteredUpdate[key] = body[key];
       }
     }
 
-    // 2. Executar upsert para criar se não existir ou atualizar se existir
     console.log(`[SETTINGS] A guardar dados da organização ${orgId}:`, Object.keys(filteredUpdate));
 
-    let { error } = await supabaseAdmin
-      .from('organizations')
-      .upsert(filteredUpdate, { onConflict: 'id' });
+    let error: any = null;
+
+    if (existingOrg) {
+      const updateRes = await supabaseAdmin
+        .from('organizations')
+        .update(filteredUpdate)
+        .eq('id', orgId);
+      error = updateRes.error;
+    } else {
+      const defaultName = req.user?.name || req.user?.email?.split('@')[0] || 'Minha Empresa';
+      const newOrgData = {
+        id: orgId,
+        name: filteredUpdate.name || defaultName,
+        first_name: filteredUpdate.first_name || defaultName,
+        owner_email: filteredUpdate.owner_email || req.user?.email || '',
+        ...filteredUpdate,
+      };
+      const insertRes = await supabaseAdmin
+        .from('organizations')
+        .insert(newOrgData);
+      error = insertRes.error;
+    }
 
     // Se o Supabase falhar por causa de colunas que não existem no Schema atual da BD do utilizador
     if (error && (error.message?.includes('column') || error.code === 'PGRST204')) {
@@ -246,11 +264,26 @@ router.post('/settings/org', requireAuth, async (req: AuthRequest, res) => {
       delete safeUpdate.telcosms_sender_id;
       delete safeUpdate.maps_link;
 
-      const { error: fallbackErr } = await supabaseAdmin
-        .from('organizations')
-        .upsert(safeUpdate, { onConflict: 'id' });
-
-      if (fallbackErr) throw fallbackErr;
+      if (existingOrg) {
+        const { error: fallbackErr } = await supabaseAdmin
+          .from('organizations')
+          .update(safeUpdate)
+          .eq('id', orgId);
+        if (fallbackErr) throw fallbackErr;
+      } else {
+        const defaultName = req.user?.name || req.user?.email?.split('@')[0] || 'Minha Empresa';
+        const safeInsert = {
+          id: orgId,
+          name: safeUpdate.name || defaultName,
+          first_name: safeUpdate.first_name || defaultName,
+          owner_email: safeUpdate.owner_email || req.user?.email || '',
+          ...safeUpdate,
+        };
+        const { error: fallbackErr } = await supabaseAdmin
+          .from('organizations')
+          .insert(safeInsert);
+        if (fallbackErr) throw fallbackErr;
+      }
     } else if (error) {
       throw error;
     }

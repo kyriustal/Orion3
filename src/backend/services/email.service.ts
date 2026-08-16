@@ -366,7 +366,9 @@ export class EmailService {
     const port = parseInt(process.env.SMTP_PORT || '587', 10);
     const user = process.env.SMTP_USER;
     const pass = process.env.SMTP_PASS;
-    const from = process.env.SMTP_FROM || `${companyName} <no-reply@orion.com>`;
+    // Remetente usa sempre o nome da empresa registada como nome de exibição
+    const smtpUser = user || 'no-reply@orion.com';
+    const from = `${companyName} <${smtpUser}>`;
 
     if (!user || !pass) {
       console.warn(`[EmailService] ⚠️ SMTP não configurado. Simulação de email de confirmação para ${customerEmail}`);
