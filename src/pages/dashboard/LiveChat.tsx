@@ -217,12 +217,21 @@ export default function LiveChat() {
 
   const filteredChats = useMemo(() => {
     if (!chatSearchQuery.trim()) return chats;
-    const q = chatSearchQuery.toLowerCase().trim();
-    return chats.filter(chat =>
-      chat.phone.toLowerCase().includes(q) ||
-      chat.name.toLowerCase().includes(q) ||
-      (chat.lastMessage && chat.lastMessage.toLowerCase().includes(q))
-    );
+    const raw = chatSearchQuery.trim();
+    // Normalizar query: remover espaços, +, traços para comparar telefones
+    const qNorm = raw.replace(/[\s+\-().]/g, '').toLowerCase();
+    const qLower = raw.toLowerCase();
+    return chats.filter(chat => {
+      // Normalizar o telefone armazenado da mesma forma
+      const phoneNorm = (chat.phone || '').replace(/[\s+\-().]/g, '').toLowerCase();
+      const nameLower = (chat.name || '').toLowerCase();
+      const lastMsgLower = (chat.lastMessage || '').toLowerCase();
+      return (
+        phoneNorm.includes(qNorm) ||
+        nameLower.includes(qLower) ||
+        lastMsgLower.includes(qLower)
+      );
+    });
   }, [chats, chatSearchQuery]);
 
   const matchingMessageIndices = useMemo(() => {
@@ -1205,15 +1214,23 @@ export default function LiveChat() {
                   <Camera className="w-5 h-5" />
                 </Button>
 
-                <Input 
-                  value={message} 
-                  onChange={e => setMessage(e.target.value)} 
-                  onKeyDown={e => e.key === "Enter" && handleSend()} 
-                  placeholder={selectedFile ? "Adicione uma legenda ao ficheiro..." : "Escreva como agente humano..."} 
-                  className="flex-1" 
+                <textarea
+                  value={message}
+                  onChange={e => setMessage(e.target.value)}
+                  onKeyDown={e => {
+                    // Ctrl+Enter ou Shift+Enter envia; Enter simples cria parágrafo
+                    if (e.key === "Enter" && (e.ctrlKey || e.shiftKey)) {
+                      e.preventDefault();
+                      handleSend();
+                    }
+                  }}
+                  placeholder={selectedFile ? "Adicione uma legenda ao ficheiro..." : "Escreva como agente humano... (Enter = nova linha | Ctrl+Enter = enviar)"}
+                  rows={1}
+                  className="flex-1 resize-none min-h-[40px] max-h-[120px] overflow-y-auto rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 leading-relaxed"
+                  style={{ fieldSizing: 'content' } as React.CSSProperties}
                 />
 
-                <Button onClick={handleSend} disabled={!message.trim() && !selectedFile} className="shrink-0 bg-emerald-600 hover:bg-emerald-700 gap-2">
+                <Button onClick={handleSend} disabled={!message.trim() && !selectedFile} className="shrink-0 bg-emerald-600 hover:bg-emerald-700 gap-2 self-end">
                   {isSendingFile ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
                   Enviar
                 </Button>

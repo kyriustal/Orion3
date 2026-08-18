@@ -269,14 +269,31 @@ Quando o cliente quiser agendar um compromisso, marcação, reunião, consulta o
    - 📅 4. Dia / Data exata (ex: 2026-08-20)
    - ⏰ 5. Horário / Hora exata (ex: 10:00 ou 15:30)
 
-2. Dinâmica de Conversação:
-   - Se faltar qualquer um destes 5 dados, pergunte amigavelmente e de forma fluida APENAS pelos dados em falta. NÃO confirme o agendamento enquanto faltar algum dado.
+2. ██████████ REGRA ABSOLUTA E INEGOCIÁVEL SOBRE DATA E HORA ██████████
+   - A DATA e a HORA do agendamento são SEMPRE E EXCLUSIVAMENTE as que o CLIENTE definiu ou confirmou explicitamente na conversa.
+   - É ESTRITAMENTE PROIBIDO alterar, adiantar, adiar, ajustar ou sugerir uma data ou hora diferente da que o cliente disse, SALVO SE o cliente mostrar incerteza explícita (ex: "não sei que dia", "quando tiver disponibilidade", "você sugira").
+   - Se o cliente disser "dia 18 de Agosto às 12H", você DEVE usar OBRIGATORIAMENTE: "date":"2026-08-18","time":"12:00" no token. NÃO USE outra data. NÃO USE outra hora.
+   - Se o cliente disser "amanhã às 14H" e hoje é 18 de Agosto, use "date":"2026-08-19","time":"14:00".
+   - Se o cliente confirmar disponibilidade para uma data/hora específica, essa confirmação É DEFINITIVA. Não pergunte novamente nem altere.
+   - VIOLAÇÃO GRAVE: Marcar às 13H quando o cliente disse 12H, ou marcar dia 21 quando o cliente disse dia 18, é um erro gravíssimo que NÃO DEVE acontecer jamais.
+   - ATENÇÃO: Leia o histórico completo da conversa antes de confirmar o agendamento para garantir que a data e hora registadas correspondem EXATAMENTE ao que o cliente confirmou.
+   ████████████████████████████████████████████████████████████████████
+
+3. Dinâmica de Conversação:
+   - Se faltar qualquer um dos 5 dados, pergunte amigavelmente e de forma fluida APENAS pelos dados em falta. NÃO confirme o agendamento enquanto faltar algum dado.
    - REGRA OBRIGATÓRIA E INEGOCIÁVEL: No momento exato em que você confirmar o agendamento ao cliente (quando tiver os dados completos: nome, assunto, pelo menos um contacto, data e hora), você DEVE OBRIGATORIAMENTE incluir no INÍCIO da sua resposta o token:
      [BOOKING_CONFIRMED:{"name":"<Nome do Cliente>","phone":"<Telefone>","email":"<email@dominio.com>","subject":"<Assunto>","date":"<YYYY-MM-DD>","time":"<HH:MM>"}]
-   - O campo "date" no token DEVE ser SEMPRE em formato ISO YYYY-MM-DD (ex: 2026-08-20) e a hora no formato HH:MM (ex: 10:00).
+   - O campo "date" no token DEVE ser SEMPRE em formato ISO YYYY-MM-DD (ex: 2026-08-18) e a hora no formato HH:MM (ex: 12:00).
+   - Verifique DUAS vezes antes de emitir o token: a data e hora no token DEVEM corresponder exatamente ao que o cliente disse na conversa.
    - Confirme com entusiasmo ao cliente que a sua marcação foi registada com sucesso e que receberá os alertas e lembretes de confirmação.
    - Caso o cliente apenas pergunte como agendar ou mencione que deseja marcar mas ainda faltam dados, inclua o token [AGENDAR] e solicite os dados necessários.
+
+4. QUANDO SUGERIR DATAS (APENAS NESTES CASOS):
+   - O cliente expressamente pede sugestão: "quando tem disponibilidade?", "sugira um horário", "qual o próximo slot livre?"
+   - O cliente demonstra incerteza total: "não sei que dia", "qualquer hora serve", "quando for melhor para vocês"
+   - NUNCA sugira datas se o cliente já especificou uma data ou confirmou uma disponibilidade.
 `;
+
 
   const proposalRule = '- PROPOSTAS COMERCIAIS DO CLIENTE: Se o cliente enviar uma proposta comercial (oferta de parceria, prestação de serviços, etc.), responda de forma diplomática e profissional, informe que irá encaminhar para a área competente, e inclua o token [PROPOSTA] no INÍCIO da sua resposta.';
 
@@ -831,6 +848,17 @@ export class AIService {
       if (isConfirmedInText) {
         console.log('[AIService] 🔍 Detetada confirmação de agendamento no texto! A validar dados para fallback...');
 
+        // IMPORTANTE: Para data e hora, priorizamos SEMPRE as mensagens do CLIENTE (sender === 'user')
+        // para não usar datas inventadas ou sugeridas pela própria IA.
+        const clientMessages = historyList
+          .filter(h => h.sender === 'user')
+          .map(h => h.text)
+          .filter(Boolean);
+        // Incluir mensagem atual do cliente
+        if (currentMsg) clientMessages.push(currentMsg);
+        const clientContext = clientMessages.join('\n');
+
+        // Contexto completo (incluindo resposta da IA) apenas para extrair nome, email, etc.
         const fullContext = [
           text,
           currentMsg,
@@ -852,49 +880,85 @@ export class AIService {
           phone = phoneMatch[0].replace(/[^\d+]/g, '');
         }
 
-        // Extrair Hora
+        // ── Extrair Hora — PRIORIDADE: contexto do CLIENTE ─────────────────────
         let time = '';
-        const timeMatch = fullContext.match(/(?:às|as|hora|horário|horario|ás)?\s*(\b[0-2]?[0-9])[:hH]([0-5][0-9])\b/i) ||
-                          fullContext.match(/(?:às|as)\s*(\b[0-2]?[0-9])\s*h(?:oras)?\b/i) ||
-                          fullContext.match(/\b([0-2]?[0-9])[:hH]([0-5][0-9])\b/i);
+        const timeRegex1 = /(?:às|as|hora|horário|horario|ás)?\s*(\b[0-2]?[0-9])[:hH]([0-5][0-9])\b/i;
+        const timeRegex2 = /(?:às|as)\s*(\b[0-2]?[0-9])\s*h(?:oras)?\b/i;
+        const timeRegex3 = /\b([0-2]?[0-9])[:hH]([0-5][0-9])\b/i;
+
+        const clientTimeMatch = clientContext.match(timeRegex1) || clientContext.match(timeRegex2) || clientContext.match(timeRegex3);
+        const anyTimeMatch    = fullContext.match(timeRegex1) || fullContext.match(timeRegex2) || fullContext.match(timeRegex3);
+        const timeMatch = clientTimeMatch || anyTimeMatch;
 
         if (timeMatch) {
           const hh = timeMatch[1].padStart(2, '0');
           const mm = timeMatch[2] ? timeMatch[2] : '00';
           time = `${hh}:${mm}`;
+          if (clientTimeMatch) {
+            console.log(`[AIService] ✅ Hora retirada das mensagens do cliente: ${time}`);
+          } else {
+            console.warn(`[AIService] ⚠️ Hora retirada do contexto geral (IA pode ter sugerido): ${time}`);
+          }
         }
 
-        // Extrair Data
+        // ── Extrair Data — PRIORIDADE: contexto do CLIENTE ─────────────────────
         let date = '';
-        const isoDateMatch = fullContext.match(/\b(202[4-9])-([0-1][0-9])-([0-3][0-9])\b/);
-        const ptSlashDateMatch = fullContext.match(/\b([0-3]?[0-9])[\/\-]([0-1]?[0-9])(?:[\/\-](202[4-9]))?\b/);
 
-        if (isoDateMatch) {
-          date = isoDateMatch[0];
-        } else if (ptSlashDateMatch) {
-          const day = ptSlashDateMatch[1].padStart(2, '0');
-          const month = ptSlashDateMatch[2].padStart(2, '0');
-          const year = ptSlashDateMatch[3] || new Date().getFullYear().toString();
+        const monthsMap: Record<string, string> = {
+          'janeiro': '01', 'fevereiro': '02', 'março': '03', 'marco': '03',
+          'abril': '04', 'maio': '05', 'junho': '06', 'julho': '07',
+          'agosto': '08', 'setembro': '09', 'outubro': '10', 'novembro': '11', 'dezembro': '12'
+        };
+
+        const isoDateRegex  = /\b(202[4-9])-([0-1][0-9])-([0-3][0-9])\b/;
+        const slashDateRegex = /\b([0-3]?[0-9])[\/\-]([0-1]?[0-9])(?:[\/\-](202[4-9]))?\b/;
+        const ptDateRegex   = /\b([0-3]?[0-9])\s+de\s+(janeiro|fevereiro|março|marco|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)(?:\s+de\s+(202[4-9]))?\b/i;
+
+        const clientDateIso   = clientContext.match(isoDateRegex);
+        const clientDateSlash = clientContext.match(slashDateRegex);
+        const clientDatePt    = clientContext.match(ptDateRegex);
+
+        if (clientDateIso) {
+          date = clientDateIso[0];
+          console.log(`[AIService] ✅ Data ISO retirada das mensagens do cliente: ${date}`);
+        } else if (clientDatePt) {
+          const day   = clientDatePt[1].padStart(2, '0');
+          const month = monthsMap[clientDatePt[2].toLowerCase()] || '01';
+          const year  = clientDatePt[3] || new Date().getFullYear().toString();
           date = `${year}-${month}-${day}`;
+          console.log(`[AIService] ✅ Data PT retirada das mensagens do cliente: ${date}`);
+        } else if (clientDateSlash) {
+          const day   = clientDateSlash[1].padStart(2, '0');
+          const month = clientDateSlash[2].padStart(2, '0');
+          const year  = clientDateSlash[3] || new Date().getFullYear().toString();
+          date = `${year}-${month}-${day}`;
+          console.log(`[AIService] ✅ Data slash retirada das mensagens do cliente: ${date}`);
+        } else if (/hoje/i.test(clientContext)) {
+          const now = new Date();
+          date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+        } else if (/amanhã|amanha/i.test(clientContext)) {
+          const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000);
+          date = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, '0')}-${String(tomorrow.getDate()).padStart(2, '0')}`;
         } else {
-          const monthsMap: Record<string, string> = {
-            'janeiro': '01', 'fevereiro': '02', 'março': '03', 'marco': '03',
-            'abril': '04', 'maio': '05', 'junho': '06', 'julho': '07',
-            'agosto': '08', 'setembro': '09', 'outubro': '10', 'novembro': '11', 'dezembro': '12'
-          };
-
-          const datePtMatch = fullContext.match(/\b([0-3]?[0-9])\s+de\s+(janeiro|fevereiro|março|marco|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)(?:\s+de\s+(202[4-9]))?\b/i);
-          if (datePtMatch) {
-            const day = datePtMatch[1].padStart(2, '0');
-            const month = monthsMap[datePtMatch[2].toLowerCase()] || '01';
-            const year = datePtMatch[3] || new Date().getFullYear().toString();
+          // Fallback de último recurso: procurar em todo o contexto (pode incluir sugestão da IA — logar aviso)
+          const anyDateIso   = fullContext.match(isoDateRegex);
+          const anyDatePt    = fullContext.match(ptDateRegex);
+          const anyDateSlash = fullContext.match(slashDateRegex);
+          if (anyDateIso) {
+            date = anyDateIso[0];
+            console.warn(`[AIService] ⚠️ Data retirada do contexto geral (pode ser sugestão da IA): ${date}`);
+          } else if (anyDatePt) {
+            const day   = anyDatePt[1].padStart(2, '0');
+            const month = monthsMap[anyDatePt[2].toLowerCase()] || '01';
+            const year  = anyDatePt[3] || new Date().getFullYear().toString();
             date = `${year}-${month}-${day}`;
-          } else if (/hoje/i.test(currentMsg) || /hoje/i.test(text)) {
-            const now = new Date();
-            date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-          } else if (/amanhã|amanha/i.test(currentMsg) || /amanhã|amanha/i.test(text)) {
-            const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000);
-            date = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, '0')}-${String(tomorrow.getDate()).padStart(2, '0')}`;
+            console.warn(`[AIService] ⚠️ Data PT retirada do contexto geral: ${date}`);
+          } else if (anyDateSlash) {
+            const day   = anyDateSlash[1].padStart(2, '0');
+            const month = anyDateSlash[2].padStart(2, '0');
+            const year  = anyDateSlash[3] || new Date().getFullYear().toString();
+            date = `${year}-${month}-${day}`;
+            console.warn(`[AIService] ⚠️ Data slash retirada do contexto geral: ${date}`);
           }
         }
 
@@ -919,6 +983,7 @@ export class AIService {
 
       return undefined;
     }
+
 
     // 2. Construir System Prompt
     const fullKnowledge = `${org?.product_description || ''}\n\n${externalKnowledge}\n\n${availableAssets}`.trim();
