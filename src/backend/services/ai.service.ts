@@ -33,7 +33,7 @@ export interface GenerateOptions {
 export interface BookingData {
   name: string;
   phone?: string;
-  email: string;
+  email?: string;
   subject: string;
   date: string; // YYYY-MM-DD
   time: string; // HH:MM
@@ -227,7 +227,7 @@ REGRAS:
     if (companyAddress) infoLines.push(`- Endereço / Localização física: ${companyAddress}`);
     if (mapsLink) {
       infoLines.push(`- Link do Google Maps: ${mapsLink}`);
-      infoLines.push(`- REGRA OBRIGATÓRIA DE LOCALIZAÇÃO: Quando o cliente pedir a localização, morada, mapa ou como chegar, forneça a morada física e envie SEMPRE o link exatamente no formato clicável: [Localizar no Google Maps](${mapsLink}).`);
+      infoLines.push(`- REGRA OBRIGATÓRIA E INEGOCIÁVEL DE LOCALIZAÇÃO: NUNCA envie a URL crua, longa ou feia do Google Maps. Forneça o endereço físico e envie SEMPRE E EXCLUSIVAMENTE o link clicável no formato: [Localizar no Google Maps](${mapsLink}). É estritamente proibido exibir o link longo.`);
     }
     companyContactInfo = `\n═══ CONTACTO E LOCALIZAÇÃO OFICIAL DA EMPRESA ═══\n${infoLines.join('\n')}\n`;
   }
@@ -261,26 +261,27 @@ REGRAS:
   const bookingRule = `
 ═══ FLUXO OBRIGATÓRIO DE AGENDAMENTO (WHATSAPP) ═══
 Quando o cliente quiser agendar um compromisso, marcação, reunião, consulta ou serviço:
-1. Você deve recolher os dados essenciais (se o nome ou email do cliente já for conhecido da conversa anterior ou do perfil, NÃO volte a perguntar, use o já conhecido!):
-   - 👤 Nome do cliente
-   - 📱 Telefone do cliente (se não for explicitado, será usado o número do WhatsApp)
-   - ✉️ E-mail do cliente (essencial para envio do convite automático da agenda e confirmação)
-   - 📋 Assunto a tratar (motivo específico ou tipo de serviço pretendido)
-   - 📅 Data e Hora desejada (ex: 2026-08-20 às 15:00)
+1. DADOS OBRIGATÓRIOS (REGRA INEGOCIÁVEL - NÃO CONFIRMAR SEM TODOS ESTES DADOS):
+   Você DEVE recolher e confirmar impreterivelmente estes 5 dados:
+   - 👤 1. Nome do cliente (pergunte se ainda não souber)
+   - 📋 2. Assunto a tratar (motivo específico ou serviço pretendido)
+   - 📱/✉️ 3. Pelo menos um contacto válido: Telefone (WhatsApp) OU E-mail
+   - 📅 4. Dia / Data exata (ex: 2026-08-20)
+   - ⏰ 5. Horário / Hora exata (ex: 10:00 ou 15:30)
 
 2. Dinâmica de Conversação:
-   - Se faltar qualquer um destes dados (nome, email, assunto, data/hora), pergunte amigavelmente e de forma fluida apenas pelos dados em falta.
-   - REGRA OBRIGATÓRIA E INEGOCIÁVEL: No momento em que você confirmar o agendamento ao cliente (quando tiver os dados ou quando o cliente fornecer/confirmar a data, hora, email e assunto), você DEVE OBRIGATORIAMENTE incluir no INÍCIO da sua resposta o token:
+   - Se faltar qualquer um destes 5 dados, pergunte amigavelmente e de forma fluida APENAS pelos dados em falta. NÃO confirme o agendamento enquanto faltar algum dado.
+   - REGRA OBRIGATÓRIA E INEGOCIÁVEL: No momento exato em que você confirmar o agendamento ao cliente (quando tiver os dados completos: nome, assunto, pelo menos um contacto, data e hora), você DEVE OBRIGATORIAMENTE incluir no INÍCIO da sua resposta o token:
      [BOOKING_CONFIRMED:{"name":"<Nome do Cliente>","phone":"<Telefone>","email":"<email@dominio.com>","subject":"<Assunto>","date":"<YYYY-MM-DD>","time":"<HH:MM>"}]
-   - Se o telefone não for especificado no texto, preencha o que tiver ou omita o campo phone.
    - O campo "date" no token DEVE ser SEMPRE em formato ISO YYYY-MM-DD (ex: 2026-08-20) e a hora no formato HH:MM (ex: 10:00).
-   - Confirme com entusiasmo ao cliente que a sua marcação foi agendada com sucesso, que o convite foi enviado para o seu e-mail e que receberá um SMS de confirmação.
-   - Caso o cliente apenas pergunte como agendar mas ainda não forneceu os dados, inclua o token [AGENDAR] e solicite os dados necessários.
+   - Confirme com entusiasmo ao cliente que a sua marcação foi registada com sucesso e que receberá os alertas e lembretes de confirmação.
+   - Caso o cliente apenas pergunte como agendar ou mencione que deseja marcar mas ainda faltam dados, inclua o token [AGENDAR] e solicite os dados necessários.
 `;
 
   const proposalRule = '- PROPOSTAS COMERCIAIS DO CLIENTE: Se o cliente enviar uma proposta comercial (oferta de parceria, prestação de serviços, etc.), responda de forma diplomática e profissional, informe que irá encaminhar para a área competente, e inclua o token [PROPOSTA] no INÍCIO da sua resposta.';
 
   const contactRule = '- Se o cliente partilhar espontaneamente informações de contacto (nome completo, email, número de telefone, morada ou empresa), inclua no INÍCIO da sua resposta o token compacto [CONTATO:{"name":"<nome>","email":"<email>","phone":"<tel>"}] preenchendo APENAS os campos informados. Exemplo: [CONTATO:{"name":"Ana Silva","phone":"+244912345678"}].';
+
 
   // Construção do contexto rico do anúncio (Meta Ads / Instagram / CTWA)
   let referralContext = '';
@@ -764,7 +765,7 @@ export class AIService {
       return raw;
     }
 
-    // Auxiliar robusto para extração de BookingData (com suporte a fallback de texto natural)
+    // Auxiliar robusto para extração de BookingData (com validação estrita dos 5 dados obrigatórios)
     function parseBookingData(
       text: string,
       historyList: ChatMessage[] = [],
@@ -789,18 +790,32 @@ export class AIService {
           console.log('[AIService] BOOKING_CONFIRMED JSON extraido:', jsonStr);
           try {
             const b = JSON.parse(jsonStr);
-            const name = (b.name || cProfile?.name || 'Cliente').trim();
+            const name = (b.name || cProfile?.name || '').trim();
             const phone = (b.phone || cProfile?.phone || '').trim();
             const email = (b.email || cProfile?.email || '').trim();
-            const subject = (b.subject || 'Consulta / Atendimento').trim();
+            const subject = (b.subject || '').trim() || 'Consulta / Atendimento';
             let date = (b.date || '').trim();
             let time = (b.time || '').trim();
 
-            if (date && time && email.includes('@')) {
-              if (time.length === 5 && !time.includes(':')) {
-                time = `${time.substring(0, 2)}:${time.substring(2)}`;
-              }
-              return { name, phone: phone || undefined, email, subject, date, time };
+            const hasValidContact = (email && email.includes('@')) || (phone && phone.replace(/[^\d+]/g, '').length >= 8);
+            const hasValidDate = /^\d{4}-\d{2}-\d{2}$/.test(date);
+
+            if (time.length === 5 && !time.includes(':')) {
+              time = `${time.substring(0, 2)}:${time.substring(2)}`;
+            }
+            const hasValidTime = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9](:[0-5][0-9])?$/.test(time);
+
+            if (name && name.length >= 2 && subject && hasValidContact && hasValidDate && hasValidTime) {
+              return {
+                name,
+                phone: phone || undefined,
+                email: email.includes('@') ? email : undefined,
+                subject,
+                date,
+                time: time.substring(0, 5),
+              };
+            } else {
+              console.warn('[AIService] ⚠️ BOOKING_CONFIRMED ignorado por faltar dados obrigatórios:', { name: !!name, subject: !!subject, hasValidContact, hasValidDate, hasValidTime });
             }
           } catch (pe: any) {
             console.error('[AIService] BOOKING_CONFIRMED parse error:', pe.message, '| JSON:', jsonStr);
@@ -814,7 +829,7 @@ export class AIService {
         /confirmad[oa]|agendad[oa]|marcad[oa]|realizad[oa]|sucesso|reservad[oa]|marcado\s+para|agendado\s+para/i.test(text);
 
       if (isConfirmedInText) {
-        console.log('[AIService] 🔍 Detetada confirmação de agendamento no texto! A recuperar dados com fallback inteligente...');
+        console.log('[AIService] 🔍 Detetada confirmação de agendamento no texto! A validar dados para fallback...');
 
         const fullContext = [
           text,
@@ -829,7 +844,7 @@ export class AIService {
         const emailMatch = fullContext.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
         const email = emailMatch ? emailMatch[1].trim() : (cProfile?.email || '');
 
-        // Extrair Telefone (Angola 9 dígitos ou internacional)
+        // Extrair Telefone
         let phone = cProfile?.phone || '';
         const phoneMatch = fullContext.match(/(?:\+244\s*)?(9\d{2}[\s.-]?\d{3}[\s.-]?\d{3})/i) ||
                            fullContext.match(/(?:\+|00)\d{9,15}/);
@@ -837,7 +852,7 @@ export class AIService {
           phone = phoneMatch[0].replace(/[^\d+]/g, '');
         }
 
-        // Extrair Hora (ex: "10h00", "10:00", "15h30", "às 10h", "10:00", "10h")
+        // Extrair Hora
         let time = '';
         const timeMatch = fullContext.match(/(?:às|as|hora|horário|horario|ás)?\s*(\b[0-2]?[0-9])[:hH]([0-5][0-9])\b/i) ||
                           fullContext.match(/(?:às|as)\s*(\b[0-2]?[0-9])\s*h(?:oras)?\b/i) ||
@@ -891,14 +906,14 @@ export class AIService {
           subject = subjectMatch[1] ? subjectMatch[1].trim() : subjectMatch[0].trim();
         }
 
-        // Nome
-        const name = cProfile?.name || 'Cliente';
+        const name = (cProfile?.name || '').trim();
+        const hasValidContact = (email && email.includes('@')) || (phone && phone.replace(/[^\d+]/g, '').length >= 8);
 
-        if (email && email.includes('@') && date && time) {
+        if (name && hasValidContact && date && time && subject) {
           console.log(`[AIService] ✅ Agendamento recuperado com sucesso via fallback:`, { name, phone, email, subject, date, time });
-          return { name, phone: phone || undefined, email, subject, date, time };
+          return { name, phone: phone || undefined, email: email.includes('@') ? email : undefined, subject, date, time };
         } else {
-          console.warn(`[AIService] ⚠️ Confirmação no texto detetada mas faltam dados para fallback:`, { hasEmail: !!email, hasDate: !!date, hasTime: !!time });
+          console.warn(`[AIService] ⚠️ Confirmação no texto detetada mas faltam dados obrigatórios para agendamento:`, { hasName: !!name, hasContact: hasValidContact, hasDate: !!date, hasTime: !!time });
         }
       }
 
@@ -920,6 +935,14 @@ export class AIService {
 
     const contents = buildContents(history, enrichedMessage, media, extractedImages);
     let lastError = '';
+
+    // Helper para garantir que links do Google Maps nunca apareçam crus e feios
+    function sanitizeGoogleMapsLinks(text: string): string {
+      if (!text) return text;
+      return text.replace(/(?<!\]\()https?:\/\/(?:www\.)?(?:google\.[a-z.]+\/maps[^\s\)]+|maps\.google\.[a-z.]+[^\s\)]+|goo\.gl\/maps[^\s\)]+|maps\.app\.goo\.gl[^\s\)]+)/gi, (match) => {
+        return `[Localizar no Google Maps](${match})`;
+      });
+    }
 
     // ─────────────────────────────────────────────────────────────────────────
     // MOTOR 1 — DeepSeek (MOTOR PRINCIPAL PARA TEXTO)
@@ -983,8 +1006,9 @@ export class AIService {
             .replace(/\[TRANSFERIR_HUMANO\]|\[AGENDAR\]|\[PROPOSTA\]|\[CONFIRMAR_INFORMAÇÃO\]|\[CONTATO:\{[^}]+\}\]|\[BOOKING_CONFIRMED:\{[\s\S]*?\}\]/g, '')
             .trim();
 
-          console.log(`[AIService] ✅ Resposta via DeepSeek [PRINCIPAL] (${cleanReply.length} chars). BookingData:`, bookingData ? 'Detectado' : 'Não');
-          return { reply: cleanReply || cleanedText, transfer, booking: booking || !!bookingData, bookingData, proposal, contactData, confirm };
+          const finalReply = sanitizeGoogleMapsLinks(cleanReply || cleanedText);
+          console.log(`[AIService] ✅ Resposta via DeepSeek [PRINCIPAL] (${finalReply.length} chars). BookingData:`, bookingData ? 'Detectado' : 'Não');
+          return { reply: finalReply, transfer, booking: booking || !!bookingData, bookingData, proposal, contactData, confirm };
 
         } catch (dsErr: any) {
           const httpStatus = dsErr.response?.status ?? 'N/A';
@@ -1048,8 +1072,9 @@ export class AIService {
             .replace(/\[TRANSFERIR_HUMANO\]|\[AGENDAR\]|\[PROPOSTA\]|\[CONFIRMAR_INFORMAÇÃO\]|\[CONTATO:\{[^}]+\}\]|\[BOOKING_CONFIRMED:\{[\s\S]*?\}\]/g, '')
             .trim();
 
+          const finalReply = sanitizeGoogleMapsLinks(cleanReply || cleanText);
           console.log(`[AIService] ✅ Resposta via Gemini [FALLBACK] chave ${keyIdx}. BookingData:`, bookingData ? 'Detectado' : 'Não');
-          return { reply: cleanReply || cleanText, transfer, booking: booking || !!bookingData, bookingData, proposal, contactData, confirm };
+          return { reply: finalReply, transfer, booking: booking || !!bookingData, bookingData, proposal, contactData, confirm };
 
         } catch (err: any) {
           const status = err.response?.status ?? 'N/A';

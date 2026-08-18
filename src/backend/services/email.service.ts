@@ -450,4 +450,135 @@ export class EmailService {
       return false;
     }
   }
+
+  /**
+   * Envia e-mails de lembrete programados para o cliente (7 dias antes, 72h antes e no dia marcado às 07:00).
+   */
+  static async sendBookingReminderToCustomer(params: {
+    customerEmail: string;
+    customerName: string;
+    date: string;
+    time: string;
+    subject: string;
+    reminderStage: '7_days_before' | '3_days_before' | 'day_of_7am';
+    companyName: string;
+    companyPhone?: string;
+    companyAddress?: string;
+    mapsLink?: string;
+  }): Promise<boolean> {
+    const { customerEmail, customerName, date, time, subject, reminderStage, companyName, companyPhone, companyAddress, mapsLink } = params;
+
+    const host = process.env.SMTP_HOST;
+    const port = parseInt(process.env.SMTP_PORT || '587', 10);
+    const user = process.env.SMTP_USER;
+    const pass = process.env.SMTP_PASS;
+    const smtpUser = user || 'no-reply@orion.com';
+    const from = `${companyName} <${smtpUser}>`;
+
+    if (!user || !pass) {
+      console.warn(`[EmailService] ⚠️ SMTP não configurado. Simulação de lembrete (${reminderStage}) para ${customerEmail}`);
+      return true;
+    }
+
+    try {
+      const transporter = nodemailer.createTransport({
+        host,
+        port,
+        secure: port === 465,
+        auth: { user, pass },
+      });
+
+      const mapsLinkHtml = mapsLink
+        ? `<div style="margin-top: 15px; padding: 12px 16px; background-color: #eff6ff; border-radius: 8px; border: 1px solid #bfdbfe;">
+             📍 <strong>Como chegar:</strong> 
+             <a href="${mapsLink}" target="_blank" style="color: #1d4ed8; text-decoration: underline; font-weight: 600; margin-left: 6px;">
+               Localizar no Google Maps
+             </a>
+           </div>`
+        : '';
+
+      const stageInfo = reminderStage === '7_days_before'
+        ? {
+            title: 'Lembrete: A sua marcação é na próxima semana!',
+            subTitle: 'Faltam 7 dias para o seu agendamento',
+            badge: '1 SEMANA ANTES',
+            color: '#3b82f6',
+            mailSubject: `🔔 Lembrete: A sua marcação com ${companyName} é em 7 dias (${date} às ${time})`
+          }
+        : reminderStage === '3_days_before'
+        ? {
+            title: 'Lembrete: Faltam 72 Horas para o seu agendamento!',
+            subTitle: 'A sua marcação está próxima',
+            badge: '72 HORAS ANTES',
+            color: '#8b5cf6',
+            mailSubject: `⏰ Lembrete: Faltam 3 dias para a sua marcação com ${companyName} (${date} às ${time})`
+          }
+        : {
+            title: 'Bom dia! O seu agendamento é hoje!',
+            subTitle: `Esperamos por si hoje às ${time}`,
+            badge: 'HOJE',
+            color: '#10b981',
+            mailSubject: `☀️ Hoje! Lembrete do seu agendamento com ${companyName} às ${time}`
+          };
+
+      const htmlContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <style>
+          body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f3f4f6; margin: 0; padding: 0; }
+          .container { max-width: 600px; margin: 40px auto; background: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
+          .header { background: linear-gradient(135deg, ${stageInfo.color} 0%, #1e293b 100%); padding: 35px 20px; text-align: center; color: #ffffff; }
+          .header h1 { margin: 0; font-size: 22px; font-weight: 700; }
+          .content { padding: 30px; color: #1f2937; }
+          .badge { display: inline-block; background-color: rgba(255,255,255,0.2); padding: 4px 12px; border-radius: 9999px; font-size: 11px; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 8px; }
+          .card { background-color: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 20px; margin: 20px 0; }
+          .row { margin-bottom: 10px; font-size: 15px; }
+          .label { font-weight: 600; color: #4b5563; }
+          .footer { background-color: #f9fafb; padding: 20px; text-align: center; font-size: 13px; color: #9ca3af; border-top: 1px solid #e5e7eb; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <span class="badge">${stageInfo.badge}</span>
+            <h1>${stageInfo.title}</h1>
+            <p style="margin: 8px 0 0 0; opacity: 0.95;">${companyName}</p>
+          </div>
+          <div class="content">
+            <p>Olá <strong>${customerName}</strong>,</p>
+            <p>Este é um lembrete amigável sobre o seu compromisso agendado com a <strong>${companyName}</strong>:</p>
+            <div class="card">
+              <div class="row"><span class="label">📅 Data:</span> ${date}</div>
+              <div class="row"><span class="label">⏰ Hora:</span> ${time}</div>
+              <div class="row"><span class="label">📋 Assunto:</span> ${subject}</div>
+              ${companyPhone ? `<div class="row"><span class="label">📞 Contacto:</span> ${companyPhone}</div>` : ''}
+              ${companyAddress ? `<div class="row"><span class="label">🏢 Endereço:</span> ${companyAddress}</div>` : ''}
+              ${mapsLinkHtml}
+            </div>
+            <p style="font-size: 14px; color: #6b7280;">Caso necessite reagendar ou tenha alguma dúvida, responda a esta mensagem ou contacte a nossa equipa.</p>
+          </div>
+          <div class="footer">
+            <p>&copy; ${new Date().getFullYear()} ${companyName}. Todos os direitos reservados.</p>
+          </div>
+        </div>
+      </body>
+      </html>
+      `;
+
+      await transporter.sendMail({
+        from,
+        to: customerEmail,
+        subject: stageInfo.mailSubject,
+        html: htmlContent,
+      });
+
+      console.log(`[EmailService] ✅ Email de lembrete (${reminderStage}) enviado para ${customerEmail}`);
+      return true;
+    } catch (err: any) {
+      console.error(`[EmailService] ❌ Erro ao enviar email de lembrete (${reminderStage}) para ${customerEmail}:`, err.message);
+      return false;
+    }
+  }
 }

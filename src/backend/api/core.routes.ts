@@ -2,9 +2,7 @@ import { Router, Response } from 'express';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import { supabaseAdmin } from '../config/supabase';
 import { AIService } from '../services/ai.service';
-import { createGoogleCalendarEvent } from '../services/calendar.service';
-import { TelcoSMSService } from '../services/telcosms.service';
-import { EmailService } from '../services/email.service';
+import { BookingService } from '../services/booking.service';
 
 const router = Router();
 
@@ -32,70 +30,27 @@ router.post('/agent/simulate', requireAuth, async (req: AuthRequest, res: Respon
       botName: org?.chatbot_name || 'Assistente',
     });
 
-    // Se o agendamento foi confirmado na simulação, disparar integrações automáticas
+    // Se o agendamento foi confirmado na simulação, processar via BookingService
     if (result.bookingData) {
       const bData = result.bookingData;
-      console.log(`[SIMULATE-BOOKING] 📅 Agendamento confirmado via Simulador para ${bData.name} (${bData.date} às ${bData.time}) | Email: ${bData.email} | Tel: ${bData.phone || 'N/A'}`);
+      console.log(`[SIMULATE-BOOKING] 📅 Agendamento detectado via Simulador para ${bData.name} (${bData.date} às ${bData.time})`);
 
-      const companyName = org?.name?.trim() || 'Nossa Empresa';
-      const companyPhone = org?.phone?.trim() || org?.whatsapp?.trim() || '';
-      const companyAddress = org?.address?.trim() || '';
-      const mapsLink = org?.maps_link?.trim() || '';
-      const customerPhone = bData.phone ? bData.phone.replace(/[^\d+]/g, '') : '';
-
-      // 1. Google Calendar
-      createGoogleCalendarEvent(orgId, {
-        summary: `${bData.subject} - ${bData.name}`,
-        appointmentDate: bData.date,
-        appointmentTime: bData.time,
-        location: companyAddress || mapsLink || undefined,
-        customerName: bData.name,
-        customerEmail: bData.email,
-        customerPhone: customerPhone,
-        description: `Agendado via Simulador Orion\nEmpresa: ${companyName}\nAssunto: ${bData.subject}\nCliente: ${bData.name}\nEmail: ${bData.email}\nTelefone: ${customerPhone}`,
+      BookingService.processBooking(orgId, {
+        name: bData.name,
+        subject: bData.subject,
+        phone: bData.phone,
+        email: bData.email,
+        date: bData.date,
+        time: bData.time,
+      }, { channelOrigin: 'Painel de Simulação' })
+      .then(bRes => {
+        if (bRes.success) {
+          console.log(`[SIMULATE-BOOKING] ✅ Agendamento processado pelo BookingService! Lembretes: ${bRes.alertsScheduled}`);
+        } else {
+          console.warn(`[SIMULATE-BOOKING] ⚠️ Agendamento rejeitado: ${bRes.error}`);
+        }
       })
-      .then(res => {
-        if (res.success) console.log(`[SIMULATE-BOOKING] ✅ Google Calendar evento criado: ${res.eventId}`);
-        else console.warn(`[SIMULATE-BOOKING] ℹ️ Google Calendar: ${res.error}`);
-      })
-      .catch(err => console.error('[SIMULATE-BOOKING] ❌ Erro Google Calendar:', err.message));
-
-      // 2. TelcoSMS (se houver telefone de destinatário)
-      if (customerPhone && customerPhone.length >= 8) {
-        let smsMessage = `Olá ${bData.name}, a sua marcação para o dia ${bData.date} às ${bData.time} foi confirmada com sucesso!`;
-        if (mapsLink) smsMessage += ` Localizar no Google Maps: ${mapsLink}`;
-        smsMessage += ` Obrigado, ${companyName}.`;
-
-        TelcoSMSService.sendSMS({
-          orgId,
-          to: customerPhone,
-          message: smsMessage,
-          apiKey: org?.telcosms_api_key || process.env.TELCOSMS_API_KEY,
-          senderId: org?.telcosms_sender_id || process.env.TELCOSMS_SENDER_ID,
-        })
-        .then(res => {
-          if (res.success) console.log(`[SIMULATE-BOOKING] ✅ TelcoSMS enviado para ${customerPhone}`);
-          else console.warn(`[SIMULATE-BOOKING] ℹ️ TelcoSMS: ${res.error}`);
-        })
-        .catch(err => console.error('[SIMULATE-BOOKING] ❌ Erro TelcoSMS:', err.message));
-      }
-
-      // 3. Email
-      if (bData.email && bData.email.includes('@')) {
-        EmailService.sendBookingConfirmationToCustomer({
-          customerEmail: bData.email,
-          customerName: bData.name,
-          date: bData.date,
-          time: bData.time,
-          subject: bData.subject,
-          companyName,
-          companyPhone,
-          companyAddress,
-          mapsLink,
-        })
-        .then(() => console.log(`[SIMULATE-BOOKING] ✅ E-mail enviado com sucesso para ${bData.email}`))
-        .catch(err => console.error('[SIMULATE-BOOKING] ❌ Erro Email:', err.message));
-      }
+      .catch(err => console.error('[SIMULATE-BOOKING] ❌ Erro BookingService:', err.message));
     }
 
     res.json(result);

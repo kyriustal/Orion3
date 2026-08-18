@@ -224,31 +224,39 @@ export default function DashboardLayout() {
   });
 
   return (
-    <div className="flex h-screen bg-zinc-50 flex-col md:flex-row w-full max-w-full overflow-x-hidden">
+    <div className="flex h-[100dvh] bg-zinc-50 flex-col md:flex-row w-full max-w-full overflow-x-hidden">
 
-      {/* Mobile Header */}
-      <div className="md:hidden flex items-center justify-between p-4 bg-white border-b border-zinc-200 z-40 relative">
-        <Link to="/dashboard" className="flex items-center w-1/2">
-          <img src="/Orion.png" alt="Orion Logo" className="w-full h-auto max-h-12 object-contain" />
+      {/* Mobile Header (Sticky & Absolute Margins) */}
+      <header className="md:hidden sticky top-0 z-40 flex items-center justify-between px-4 py-3 bg-white/95 backdrop-blur-md border-b border-zinc-200 w-full shrink-0 shadow-xs">
+        <Link to="/dashboard" className="flex items-center w-36 max-w-[50%]">
+          <img src="/Orion.png" alt="Orion Logo" className="w-full h-auto max-h-10 object-contain" />
         </Link>
-        <button onClick={() => setIsMobileMenuOpen(true)} className="p-2 -mr-2">
+        <button
+          onClick={() => setIsMobileMenuOpen(true)}
+          className="p-2 -mr-1 rounded-lg text-zinc-700 hover:bg-zinc-100 active:bg-zinc-200 transition-colors"
+          aria-label="Abrir menu de navegação"
+        >
           <Menu className="w-6 h-6 text-zinc-900" />
         </button>
-      </div>
+      </header>
 
-      {/* Fullscreen Mobile Menu */}
+      {/* Fullscreen Mobile Navigation Menu */}
       {isMobileMenuOpen && (
-        <div className="fixed inset-0 z-50 bg-white text-zinc-900 flex flex-col animate-in fade-in duration-200">
-          <div className="flex items-center justify-between p-4 border-b border-zinc-100">
-            <div className="flex items-center w-1/2">
-              <img src="/Orion.png" alt="Orion Logo" className="w-full h-auto max-h-12 object-contain" />
+        <div className="fixed inset-0 z-50 bg-white text-zinc-900 flex flex-col animate-in fade-in duration-200 w-full h-[100dvh]">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-100 shrink-0">
+            <div className="flex items-center w-36 max-w-[50%]">
+              <img src="/Orion.png" alt="Orion Logo" className="w-full h-auto max-h-10 object-contain" />
             </div>
-            <button onClick={() => setIsMobileMenuOpen(false)} className="p-2 -mr-2 text-zinc-500 hover:text-zinc-900">
+            <button
+              onClick={() => setIsMobileMenuOpen(false)}
+              className="p-2 -mr-1 rounded-lg text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 active:bg-zinc-200 transition-colors"
+              aria-label="Fechar menu"
+            >
               <X className="w-6 h-6" />
             </button>
           </div>
 
-          <nav className="flex-1 overflow-y-auto p-4 space-y-2">
+          <nav className="flex-1 overflow-y-auto px-4 py-3 space-y-1.5">
             {filteredNavItems.map((item) => {
               const isActive = location.pathname === item.path || (item.path !== '/dashboard' && location.pathname.startsWith(item.path));
               return (
@@ -256,31 +264,36 @@ export default function DashboardLayout() {
                   key={item.name}
                   to={item.path}
                   onClick={() => setIsMobileMenuOpen(false)}
-                  className={`flex items-center gap-4 px-4 py-3 rounded-lg text-base font-medium transition-colors ${isActive
-                    ? 'bg-emerald-50 text-emerald-600'
+                  className={`flex items-center gap-3.5 px-4 py-3 rounded-xl text-base font-medium transition-colors ${isActive
+                    ? 'bg-emerald-50 text-emerald-600 font-semibold'
                     : 'text-zinc-600 hover:bg-zinc-50 hover:text-zinc-900'
                     }`}
                 >
-                  <item.icon className={`w-6 h-6 ${isActive ? 'text-emerald-600' : 'text-zinc-400'}`} />
-                  {item.name}
+                  <item.icon className={`w-5 h-5 shrink-0 ${isActive ? 'text-emerald-600' : 'text-zinc-400'}`} />
+                  <span className="truncate">{item.name}</span>
+                  {item.isNew && (
+                    <span className="ml-auto bg-emerald-500 text-white text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider">
+                      Novo
+                    </span>
+                  )}
                 </Link>
               );
             })}
           </nav>
 
-          <div className="p-4 border-t border-zinc-100">
-            <div className="flex items-center gap-3 mb-4 px-2">
-              <UserCircle className="w-10 h-10 text-zinc-400" />
+          <div className="p-4 border-t border-zinc-100 shrink-0 bg-zinc-50/50">
+            <div className="flex items-center gap-3 mb-3 px-2">
+              <UserCircle className="w-9 h-9 text-zinc-400 shrink-0" />
               <div className="flex-1 min-w-0">
-                <p className="text-base font-medium text-zinc-900 truncate">{user.name}</p>
-                <p className="text-sm text-zinc-500 truncate">{user.email}</p>
+                <p className="text-sm font-medium text-zinc-900 truncate">{user.name}</p>
+                <p className="text-xs text-zinc-500 truncate">{user.email}</p>
               </div>
             </div>
             <button
               onClick={() => { localStorage.removeItem('token'); window.location.href = '/login'; }}
-              className="flex items-center gap-3 w-full px-4 py-3 rounded-lg text-base font-medium text-red-400 hover:bg-red-500/10 transition-colors"
+              className="flex items-center gap-3 w-full px-4 py-2.5 rounded-lg text-sm font-medium text-red-600 hover:bg-red-50 active:bg-red-100 transition-colors"
             >
-              <LogOut className="w-6 h-6" />
+              <LogOut className="w-5 h-5 shrink-0" />
               Sair da Conta
             </button>
           </div>
@@ -366,7 +379,7 @@ export default function DashboardLayout() {
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 overflow-y-auto overflow-x-hidden p-4 md:p-8 w-full max-w-full">
+      <main className="flex-1 overflow-y-auto overflow-x-hidden px-3.5 py-4 sm:px-6 sm:py-6 md:p-8 w-full max-w-full min-h-0">
         <PageTransition>
           <Outlet />
         </PageTransition>

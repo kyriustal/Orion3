@@ -131,12 +131,12 @@ export async function testGoogleCalendarConnection(
 }
 
 /**
- * Cria um agendamento no Google Calendar principal
+ * Cria um agendamento no Google Calendar principal evitando duplicações
  */
 export async function createGoogleCalendarEvent(
   orgId: string,
   input: GoogleCalendarEventInput
-): Promise<{ success: boolean; eventId?: string; htmlLink?: string; error?: string }> {
+): Promise<{ success: boolean; eventId?: string; htmlLink?: string; error?: string; alreadyExisted?: boolean }> {
   const { accessToken, error } = await getGoogleAccessToken(orgId);
   if (!accessToken) {
     console.warn('[CALENDAR SERVICE] Agendamento não sincronizado com Google Calendar:', error);
@@ -146,7 +146,20 @@ export async function createGoogleCalendarEvent(
   try {
     const duration = input.durationMinutes || 60;
     const timeFormatted = input.appointmentTime.length === 5 ? `${input.appointmentTime}:00` : input.appointmentTime;
-    const startDateTime = new Date(`${input.appointmentDate}T${timeFormatted}`);
+    
+    // Tratamento seguro de datas sem distorção de fuso horário
+    // input.appointmentDate: YYYY-MM-DD, input.appointmentTime: HH:mm[:ss]
+    const dateParts = input.appointmentDate.split('-').map(Number);
+    const timeParts = timeFormatted.split(':').map(Number);
+    
+    if (dateParts.length !== 3 || isNaN(dateParts[0]) || isNaN(dateParts[1]) || isNaN(dateParts[2])) {
+      return { success: false, error: 'Data do agendamento inválida (formato esperado YYYY-MM-DD).' };
+    }
+    if (timeParts.length < 2 || isNaN(timeParts[0]) || isNaN(timeParts[1])) {
+      return { success: false, error: 'Hora do agendamento inválida (formato esperado HH:MM).' };
+    }
+
+    const startDateTime = new Date(dateParts[0], dateParts[1] - 1, dateParts[2], timeParts[0], timeParts[1], timeParts[2] || 0);
 
     if (isNaN(startDateTime.getTime())) {
       return { success: false, error: 'Data ou hora do agendamento inválida.' };
@@ -154,6 +167,49 @@ export async function createGoogleCalendarEvent(
 
     const endDateTime = new Date(startDateTime.getTime() + duration * 60 * 1000);
 
+    // ── 1. Deduplicação Ativa no Google Calendar ─────────────────────────────
+    // Verificar se já existe um evento na faixa de tempo (+/- 15 minutos) com o mesmo cliente ou resumo
+    try {
+      const windowMin = new Date(startDateTime.getTime() - 15 * 60 * 1000).toISOString();
+      const windowMax = new Date(endDateTime.getTime() + 15 * 60 * 1000).toISOString();
+
+      const existingRes = await axios.get('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        params: {
+          timeMin: windowMin,
+          timeMax: windowMax,
+          singleEvents: true,
+        },
+        timeout: 8000,
+      });
+
+      const existingEvents = existingRes.data?.items || [];
+      const duplicate = existingEvents.find((evt: any) => {
+        const summaryMatch = evt.summary && input.summary && evt.summary.toLowerCase().trim() === input.summary.toLowerCase().trim();
+        const clientInDesc = input.customerName && evt.description && evt.description.toLowerCase().includes(input.customerName.toLowerCase().trim());
+        const phoneInDesc = input.customerPhone && evt.description && evt.description.includes(input.customerPhone.trim());
+        const emailInDesc = input.customerEmail && (
+          (evt.description && evt.description.toLowerCase().includes(input.customerEmail.toLowerCase().trim())) ||
+          (evt.attendees && evt.attendees.some((a: any) => a.email?.toLowerCase() === input.customerEmail?.toLowerCase()))
+        );
+
+        return summaryMatch || (clientInDesc && (phoneInDesc || emailInDesc)) || (phoneInDesc && emailInDesc);
+      });
+
+      if (duplicate) {
+        console.log(`[CALENDAR SERVICE] ℹ️ Evento duplicado evitado! Reutilizando evento existente: ${duplicate.id}`);
+        return {
+          success: true,
+          eventId: duplicate.id,
+          htmlLink: duplicate.htmlLink,
+          alreadyExisted: true,
+        };
+      }
+    } catch (checkErr: any) {
+      console.warn('[CALENDAR SERVICE] Aviso ao verificar duplicatas no Google Calendar (prosseguindo com criação):', checkErr.message);
+    }
+
+    // ── 2. Montar Detalhes do Evento ──────────────────────────────────────────
     const descriptionParts: string[] = [];
     if (input.description) descriptionParts.push(input.description);
     if (input.customerName) descriptionParts.push(`Cliente: ${input.customerName}`);
@@ -202,6 +258,7 @@ export async function createGoogleCalendarEvent(
       success: true,
       eventId: eventRes.data.id,
       htmlLink: eventRes.data.htmlLink,
+      alreadyExisted: false,
     };
   } catch (err: any) {
     const errorDetails = err.response?.data?.error?.message || err.message;

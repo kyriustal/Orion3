@@ -9,6 +9,7 @@ import { EmailService } from '../services/email.service';
 import { PushService } from '../services/push.service';
 import { createGoogleCalendarEvent } from '../services/calendar.service';
 import { TelcoSMSService } from '../services/telcosms.service';
+import { BookingService } from '../services/booking.service';
 import { getIo } from '../socket';
 import axios from 'axios';
 import fs from 'fs';
@@ -666,139 +667,44 @@ async function triggerAIResponse(params: {
       }
     }
 
-    // ── Automação Pós-Confirmação de Agendamento (Google Calendar + TelcoSMS + Email) ──
+    // ── Automação Pós-Confirmação de Agendamento (BookingService: Google Calendar + Deduplicação + Alertas 4 Etapas) ──
     if (aiResult.bookingData) {
       const bData = aiResult.bookingData;
-      console.log(`[BOOKING-AUTO] 📅 Agendamento confirmado via WhatsApp para ${bData.name} (${bData.date} às ${bData.time}) | Email: ${bData.email} | Tel: ${bData.phone || fromNumber}`);
+      console.log(`[BOOKING-AUTO] 📅 Agendamento detectado via WhatsApp para ${bData.name} (${bData.date} às ${bData.time})`);
 
-      // Obter dados da organização (nome, telefone, endereço, maps_link, credenciais TelcoSMS)
-      let orgData: any = null;
-      try {
-        const { data } = await supabaseAdmin
-          .from('organizations')
-          .select('name, phone, whatsapp, address, maps_link, telcosms_api_key, telcosms_sender_id')
-          .eq('id', orgId)
-          .maybeSingle();
-        orgData = data;
-      } catch (err: any) {
-        console.warn('[BOOKING-AUTO] Aviso ao carregar dados da empresa:', err.message);
-      }
-
-      const companyName = orgData?.name?.trim() || 'Nossa Empresa';
-      const companyPhone = orgData?.phone?.trim() || orgData?.whatsapp?.trim() || '';
-      const companyAddress = orgData?.address?.trim() || '';
-      const mapsLink = orgData?.maps_link?.trim() || '';
       const customerPhone = (bData.phone && bData.phone.replace(/[^\d+]/g, '').length >= 8) 
         ? bData.phone.replace(/[^\d+]/g, '') 
         : fromNumber;
 
-      // 1. Google Calendar — Criação do evento na agenda
-      try {
-        console.log(`[BOOKING-AUTO] 📆 A sincronizar com o Google Calendar da organização (${orgId})...`);
-        const descLines = [
-          `Agendamento confirmado via Orion WhatsApp Chatbot`,
-          `Empresa: ${companyName}`,
-          `Assunto: ${bData.subject}`,
-          `Cliente: ${bData.name}`,
-          `Telefone: ${customerPhone}`,
-          `Email: ${bData.email}`,
-        ];
-        if (companyAddress) descLines.push(`Endereço: ${companyAddress}`);
-        if (companyPhone) descLines.push(`Telefone da Empresa: ${companyPhone}`);
-        if (mapsLink) descLines.push(`Localização: [Localizar no Google Maps](${mapsLink})`);
-
-        const calResult = await createGoogleCalendarEvent(orgId, {
-          summary: `${bData.subject} - ${bData.name}`,
-          appointmentDate: bData.date,
-          appointmentTime: bData.time,
-          location: companyAddress || mapsLink || undefined,
-          customerName: bData.name,
-          customerEmail: bData.email,
-          customerPhone: customerPhone,
-          description: descLines.join('\n'),
-        });
-
-        if (calResult.success) {
-          console.log(`[BOOKING-AUTO] ✅ Evento criado no Google Calendar com sucesso! Event ID: ${calResult.eventId}`);
+      // 1. Processar agendamento centralizado (Validação, DB, Google Calendar, Alertas Instantâneo + 7d + 72h + Dia 07h)
+      BookingService.processBooking(orgId, {
+        name: bData.name,
+        subject: bData.subject,
+        phone: customerPhone,
+        email: bData.email,
+        date: bData.date,
+        time: bData.time,
+      }, { channelOrigin: 'WhatsApp Chatbot' })
+      .then(res => {
+        if (res.success) {
+          console.log(`[BOOKING-AUTO] ✅ Agendamento processado! Lembretes programados: ${res.alertsScheduled}`);
         } else {
-          console.warn(`[BOOKING-AUTO] ℹ️ Google Calendar: ${calResult.error}`);
+          console.warn(`[BOOKING-AUTO] ⚠️ Agendamento não concluído: ${res.error}`);
         }
-      } catch (calErr: any) {
-        console.error('[BOOKING-AUTO] ❌ Erro ao integrar Google Calendar (não bloqueante):', calErr.message);
-      }
+      })
+      .catch(err => console.error('[BOOKING-AUTO] ❌ Erro ao processar agendamento:', err.message));
 
-      // 2. Disparo de SMS (TelcoSMS)
+      // 2. Atualizar contacto na base de dados
       try {
-        console.log(`[BOOKING-AUTO] 📱 A enviar SMS via TelcoSMS para ${customerPhone}...`);
-        let smsMessage = `Olá ${bData.name}, a sua marcação para o dia ${bData.date} às ${bData.time} foi confirmada com sucesso!`;
-        if (mapsLink) {
-          smsMessage += ` Localizar no Google Maps: ${mapsLink}`;
-        }
-        smsMessage += ` Obrigado, ${companyName}.`;
-
-        const smsResult = await TelcoSMSService.sendSMS({
-          orgId,
-          to: customerPhone,
-          message: smsMessage,
-          apiKey: orgData?.telcosms_api_key || process.env.TELCOSMS_API_KEY,
-          senderId: orgData?.telcosms_sender_id || process.env.TELCOSMS_SENDER_ID,
-        });
-
-        if (smsResult.success) {
-          console.log(`[BOOKING-AUTO] ✅ SMS enviado com sucesso via TelcoSMS para ${customerPhone}`);
-        } else {
-          console.warn(`[BOOKING-AUTO] ℹ️ TelcoSMS Aviso: ${smsResult.error}`);
-        }
-      } catch (smsErr: any) {
-        console.error('[BOOKING-AUTO] ❌ Erro no disparo TelcoSMS (não bloqueante):', smsErr.message);
-      }
-
-      // 3. Envio de Email de Confirmação para o Cliente
-      if (bData.email && bData.email.includes('@')) {
-        console.log(`[BOOKING-AUTO] ✉️ A enviar e-mail de confirmação para o cliente (${bData.email})...`);
-        EmailService.sendBookingConfirmationToCustomer({
-          customerEmail: bData.email,
-          customerName: bData.name,
-          date: bData.date,
-          time: bData.time,
-          subject: bData.subject,
-          companyName,
-          companyPhone,
-          companyAddress,
-          mapsLink,
-        })
-        .then(() => console.log(`[BOOKING-AUTO] ✅ E-mail de confirmação enviado com sucesso para ${bData.email}`))
-        .catch(e => console.error('[BOOKING-AUTO] ❌ Erro ao enviar email de confirmação para cliente:', e.message));
-      } else {
-        console.warn(`[BOOKING-AUTO] ⚠️ E-mail inválido ou ausente (${bData.email}), envio de e-mail cancelado.`);
-      }
-
-      // 4. Gravar na tabela de agendamentos e contactos
-      try {
-        const [firstName, ...rest] = (bData.name || '').trim().split(/\s+/);
-        const lastName = rest.join(' ') || '';
-
-        await supabaseAdmin.from('bookings').insert({
-          org_id: orgId,
-          first_name: firstName || bData.name,
-          last_name: lastName || null,
-          email: bData.email,
-          phone: customerPhone,
-          service: bData.subject,
-          appointment_date: bData.date,
-          appointment_time: bData.time,
-        });
-
         await supabaseAdmin.from('contacts').upsert({
           org_id: orgId,
           name: bData.name,
-          email: bData.email,
+          email: bData.email || undefined,
           phone: customerPhone,
           updated_at: new Date().toISOString(),
         }, { onConflict: 'org_id,phone' });
-        console.log(`[BOOKING-AUTO] ✅ Agendamento e contacto guardados na base de dados (Supabase).`);
-      } catch (dbErr: any) {
-        console.warn('[BOOKING-AUTO] Aviso ao gravar booking/contacto na BD:', dbErr.message);
+      } catch (cErr: any) {
+        console.warn('[BOOKING-AUTO] Aviso ao atualizar contacto:', cErr.message);
       }
     }
 

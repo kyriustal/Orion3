@@ -856,7 +856,7 @@ export default function LiveChat() {
   };
 
   return (
-    <div className="flex h-[calc(100vh-8rem)] gap-4">
+    <div className="flex h-[calc(100dvh-6.5rem)] md:h-[calc(100vh-8rem)] gap-4 w-full max-w-full min-h-0">
       {/* Lista de Conversas */}
       <Card className={`w-full lg:w-80 flex flex-col shrink-0 ${!showMobileList ? "hidden lg:flex" : "flex"}`}>
         <CardHeader className="p-4 border-b border-zinc-100 space-y-3">

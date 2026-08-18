@@ -174,4 +174,43 @@ export class TelcoSMSService {
       };
     }
   }
+
+  /**
+   * Envia SMS de lembrete programado (7 dias antes, 72h antes ou no dia marcado às 07:00).
+   */
+  static async sendBookingReminderSMS(params: {
+    orgId: string;
+    to: string;
+    customerName: string;
+    date: string;
+    time: string;
+    subject: string;
+    reminderStage: '7_days_before' | '3_days_before' | 'day_of_7am';
+    companyName: string;
+    mapsLink?: string;
+  }): Promise<SendSMSResult> {
+    const { orgId, to, customerName, date, time, subject, reminderStage, companyName, mapsLink } = params;
+
+    let stagePrefix = '';
+    if (reminderStage === '7_days_before') {
+      stagePrefix = `Lembrete: A sua marcação para ${subject} com ${companyName} é na próxima semana, dia ${date} às ${time}.`;
+    } else if (reminderStage === '3_days_before') {
+      stagePrefix = `Lembrete: Faltam 72h para a sua marcação de ${subject} com ${companyName}, dia ${date} às ${time}.`;
+    } else {
+      stagePrefix = `Bom dia ${customerName}! Lembramos que a sua marcação de ${subject} com ${companyName} é hoje, dia ${date} às ${time}.`;
+    }
+
+    let message = `Olá ${customerName}! ${stagePrefix}`;
+    if (mapsLink) {
+      message += ` Localizar no Google Maps: ${mapsLink}`;
+    }
+    message += ` Obrigado, ${companyName}.`;
+
+    return this.sendSMS({
+      orgId,
+      to,
+      message,
+    });
+  }
 }
+

@@ -106,4 +106,9 @@ httpServer.listen(PORT, () => {
   import('./workers/followup.worker').catch(err =>
     console.error('[FOLLOWUP-BOOT] Erro ao iniciar worker:', err.message)
   );
+
+  // Iniciar worker de lembretes e alertas automáticos de agendamentos (4 estágios)
+  import('./workers/reminder.worker').catch(err =>
+    console.error('[REMINDER-BOOT] Erro ao iniciar worker de lembretes:', err.message)
+  );
 });
