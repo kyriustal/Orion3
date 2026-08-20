@@ -59,6 +59,7 @@ import followupRoutes from './api/followup.routes';
 import teamRoutes from './api/team.routes';
 import pushRoutes from './api/push.routes';
 import calendarRoutes from './api/calendar.routes';
+import businessHoursRoutes from './api/business_hours.routes';
 
 app.use('/api/auth',        authRoutes);
 app.use('/api/knowledge',   knowledgeRoutes);
@@ -76,6 +77,7 @@ app.use('/api/billing',     billingRoutes);
 app.use('/api/team',             teamRoutes);
 app.use('/api/push',             pushRoutes);
 app.use('/api/settings/calendar', calendarRoutes);
+app.use('/api',                  businessHoursRoutes);
 app.use('/api',                  followupRoutes);
 app.use('/api',                  coreRoutes);
 

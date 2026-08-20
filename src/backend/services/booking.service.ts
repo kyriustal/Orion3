@@ -119,6 +119,67 @@ export class BookingService {
   }
 
   /**
+   * Valida se a data e hora do agendamento estão dentro do horário de atividade da empresa.
+   */
+  static async checkWithinBusinessHours(orgId: string, dateStr: string, timeStr: string): Promise<{ isValid: boolean; reason?: string }> {
+    try {
+      const [year, month, day] = dateStr.split('-').map(Number);
+      const dateObj = new Date(year, month - 1, day);
+      const dayOfWeek = dateObj.getDay(); // 0 = Domingo, 1 = Segunda, etc.
+
+      // Procurar horários configurados no banco
+      const { data: schedule, error } = await supabaseAdmin
+        .from('business_hours')
+        .select('is_open, open_time, close_time')
+        .eq('org_id', orgId)
+        .eq('day_of_week', dayOfWeek)
+        .maybeSingle();
+
+      if (error && error.code !== 'PGRST116') {
+        console.warn('[BookingService] Erro ao buscar business_hours:', error.message);
+      }
+
+      // Horários padrão se não estiverem configurados no banco de dados
+      const defaultSchedule = {
+        0: { is_open: false, open_time: '08:00', close_time: '12:00' }, // Domingo
+        1: { is_open: true,  open_time: '08:00', close_time: '18:00' }, // Segunda
+        2: { is_open: true,  open_time: '08:00', close_time: '18:00' }, // Terça
+        3: { is_open: true,  open_time: '08:00', close_time: '18:00' }, // Quarta
+        4: { is_open: true,  open_time: '08:00', close_time: '18:00' }, // Quinta
+        5: { is_open: true,  open_time: '08:00', close_time: '18:00' }, // Sexta
+        6: { is_open: true,  open_time: '08:00', close_time: '13:00' }, // Sábado
+      }[dayOfWeek as 0|1|2|3|4|5|6];
+
+      const is_open = schedule ? schedule.is_open : defaultSchedule.is_open;
+      const open_time = schedule?.open_time || defaultSchedule.open_time;
+      const close_time = schedule?.close_time || defaultSchedule.close_time;
+
+      const dayNames = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
+      const dayName = dayNames[dayOfWeek];
+
+      if (!is_open) {
+        return { isValid: false, reason: `A empresa está fechada ao ${dayName}.` };
+      }
+
+      const cleanTime = timeStr.substring(0, 5);
+      const cleanOpen = open_time.substring(0, 5);
+      const cleanClose = close_time.substring(0, 5);
+
+      if (cleanTime < cleanOpen || cleanTime > cleanClose) {
+        return {
+          isValid: false,
+          reason: `Horário de agendamento (${cleanTime}) fora do expediente de ${dayName} (${cleanOpen} às ${cleanClose}).`
+        };
+      }
+
+      return { isValid: true };
+    } catch (err: any) {
+      console.warn('[BookingService] Erro na validação de horário comercial (fallback para válido):', err.message);
+      return { isValid: true };
+    }
+  }
+
+  /**
    * Gera uma hora aleatória no horário comercial (entre 08:00 e 17:00) para envio nos dias anteriores
    */
   private static getRandomBusinessHour(targetDate: Date): Date {
@@ -155,6 +216,18 @@ export class BookingService {
     }
 
     const { name, subject, phone, email, date, time } = validation.cleanData;
+
+    // Validar horário de expediente
+    const bhCheck = await this.checkWithinBusinessHours(orgId, date, time);
+    if (!bhCheck.isValid) {
+      console.warn(`[BookingService] ⚠️ Rejeitando agendamento fora do expediente: ${bhCheck.reason}`);
+      return {
+        success: false,
+        alertsScheduled: 0,
+        error: bhCheck.reason,
+      };
+    }
+
     console.log(`[BookingService] 📅 Processando agendamento para ${name} | Data: ${date} ${time} | Assunto: ${subject} | Org: ${orgId}`);
 
     // Obter dados da organização para o remetente, telefone e localização

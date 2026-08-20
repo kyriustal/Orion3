@@ -194,7 +194,8 @@ function buildSystemPrompt(
   referral?: any,
   timeSinceLastMessageHours?: number,
   urlContext?: string,
-  customerProfile?: CustomerProfile
+  customerProfile?: CustomerProfile,
+  businessHoursText?: string
 ): string {
   if (mode === 'support') {
     return `Você é o assistente virtual de suporte da **Orion** — plataforma SaaS angolana de automação de atendimento ao cliente via WhatsApp com Inteligência Artificial.
@@ -231,6 +232,10 @@ REGRAS:
     }
     companyContactInfo = `\n═══ CONTACTO E LOCALIZAÇÃO OFICIAL DA EMPRESA ═══\n${infoLines.join('\n')}\n`;
   }
+
+  const businessHoursSection = businessHoursText
+    ? `\n═══ HORÁRIO DE ATENDIMENTO E DIAS DE FUNCIONAMENTO DA EMPRESA ═══\n${businessHoursText}\n`
+    : `\n═══ HORÁRIO DE ATENDIMENTO E DIAS DE FUNCIONAMENTO DA EMPRESA ═══\n- Segunda a Sexta: 08:00 às 18:00\n- Sábado: 08:00 às 13:00\n- Domingo: FECHADO\n`;
 
   const emojiRules: Record<string, string> = {
     none:     'NÃO use emojis em nenhuma circunstância. Seja puramente textual e formal.',
@@ -269,9 +274,18 @@ Quando o cliente quiser agendar um compromisso, marcação, reunião, consulta o
    - 📅 4. Dia / Data exata (ex: 2026-08-20)
    - ⏰ 5. Horário / Hora exata (ex: 10:00 ou 15:30)
 
-2. ██████████ REGRA ABSOLUTA E INEGOCIÁVEL SOBRE DATA E HORA ██████████
+2. ██████████ REGRA ABSOLUTA E INEGOCIÁVEL: RESPEITO AO HORÁRIO DE ATIVIDADE ██████████
+   - A IA NUNCA DEVE agendar nem confirmar marcações fora do horário de funcionamento ou em dias em que a empresa está FECHADA.
+   - Se o cliente solicitar uma marcação para um dia em que a empresa NÃO abre (ex: Domingo ou dias fechados) ou fora do horário (ex: antes da abertura ou após o fecho):
+     * NÃO gere o token [BOOKING_CONFIRMED:...].
+     * Explique educadamente o horário oficial de funcionamento da empresa.
+     * Sugira opções de dias ou horários válidos e disponíveis dentro do expediente.
+   - A DATA e a HORA do agendamento confirmadas devem respeitar estritamente o expediente da empresa.
+   ████████████████████████████████████████████████████████████████████
+
+3. ██████████ REGRA ABSOLUTA E INEGOCIÁVEL SOBRE DATA E HORA ██████████
    - A DATA e a HORA do agendamento são SEMPRE E EXCLUSIVAMENTE as que o CLIENTE definiu ou confirmou explicitamente na conversa.
-   - É ESTRITAMENTE PROIBIDO alterar, adiantar, adiar, ajustar ou sugerir uma data ou hora diferente da que o cliente disse, SALVO SE o cliente mostrar incerteza explícita (ex: "não sei que dia", "quando tiver disponibilidade", "você sugira").
+   - É ESTRITAMENTE PROIBIDO alterar, adiantar, adiar, ajustar ou sugerir uma data ou hora diferente da que o cliente disse, SALVO SE o cliente pedir sugestão ou se a data solicitada for fora do horário de funcionamento.
    - Se o cliente disser "dia 18 de Agosto às 12H", você DEVE usar OBRIGATORIAMENTE: "date":"2026-08-18","time":"12:00" no token. NÃO USE outra data. NÃO USE outra hora.
    - Se o cliente disser "amanhã às 14H" e hoje é 18 de Agosto, use "date":"2026-08-19","time":"14:00".
    - Se o cliente confirmar disponibilidade para uma data/hora específica, essa confirmação É DEFINITIVA. Não pergunte novamente nem altere.
@@ -279,26 +293,25 @@ Quando o cliente quiser agendar um compromisso, marcação, reunião, consulta o
    - ATENÇÃO: Leia o histórico completo da conversa antes de confirmar o agendamento para garantir que a data e hora registadas correspondem EXATAMENTE ao que o cliente confirmou.
    ████████████████████████████████████████████████████████████████████
 
-3. Dinâmica de Conversação:
+4. Dinâmica de Conversação:
    - Se faltar qualquer um dos 5 dados, pergunte amigavelmente e de forma fluida APENAS pelos dados em falta. NÃO confirme o agendamento enquanto faltar algum dado.
-   - REGRA OBRIGATÓRIA E INEGOCIÁVEL: No momento exato em que você confirmar o agendamento ao cliente (quando tiver os dados completos: nome, assunto, pelo menos um contacto, data e hora), você DEVE OBRIGATORIAMENTE incluir no INÍCIO da sua resposta o token:
+   - REGRA OBRIGATÓRIA E INEGOCIÁVEL: No momento exato em que você confirmar o agendamento ao cliente (quando tiver os dados completos: nome, assunto, pelo menos um contacto, data e hora válidas dentro do expediente), você DEVE OBRIGATORIAMENTE incluir no INÍCIO da sua resposta o token:
      [BOOKING_CONFIRMED:{"name":"<Nome do Cliente>","phone":"<Telefone>","email":"<email@dominio.com>","subject":"<Assunto>","date":"<YYYY-MM-DD>","time":"<HH:MM>"}]
    - O campo "date" no token DEVE ser SEMPRE em formato ISO YYYY-MM-DD (ex: 2026-08-18) e a hora no formato HH:MM (ex: 12:00).
-   - Verifique DUAS vezes antes de emitir o token: a data e hora no token DEVEM corresponder exatamente ao que o cliente disse na conversa.
+   - Verifique DUAS vezes antes de emitir o token: a data e hora no token DEVEM corresponder exatamente ao que o cliente disse na conversa e estar dentro do horário de atividade.
    - Confirme com entusiasmo ao cliente que a sua marcação foi registada com sucesso e que receberá os alertas e lembretes de confirmação.
    - Caso o cliente apenas pergunte como agendar ou mencione que deseja marcar mas ainda faltam dados, inclua o token [AGENDAR] e solicite os dados necessários.
 
-4. QUANDO SUGERIR DATAS (APENAS NESTES CASOS):
+5. QUANDO SUGERIR DATAS (APENAS NESTES CASOS):
    - O cliente expressamente pede sugestão: "quando tem disponibilidade?", "sugira um horário", "qual o próximo slot livre?"
    - O cliente demonstra incerteza total: "não sei que dia", "qualquer hora serve", "quando for melhor para vocês"
-   - NUNCA sugira datas se o cliente já especificou uma data ou confirmou uma disponibilidade.
+   - O cliente escolheu um dia ou horário fora do expediente da empresa.
+   - NUNCA sugira datas se o cliente já especificou uma data válida dentro do expediente.
 `;
-
 
   const proposalRule = '- PROPOSTAS COMERCIAIS DO CLIENTE: Se o cliente enviar uma proposta comercial (oferta de parceria, prestação de serviços, etc.), responda de forma diplomática e profissional, informe que irá encaminhar para a área competente, e inclua o token [PROPOSTA] no INÍCIO da sua resposta.';
 
   const contactRule = '- Se o cliente partilhar espontaneamente informações de contacto (nome completo, email, número de telefone, morada ou empresa), inclua no INÍCIO da sua resposta o token compacto [CONTATO:{"name":"<nome>","email":"<email>","phone":"<tel>"}] preenchendo APENAS os campos informados. Exemplo: [CONTATO:{"name":"Ana Silva","phone":"+244912345678"}].';
-
 
   // Construção do contexto rico do anúncio (Meta Ads / Instagram / CTWA)
   let referralContext = '';
@@ -353,6 +366,7 @@ INSTRUÇÕES CRÍTICAS PARA ATENDIMENTO DE LEADS DE ANÚNCIOS:
   return `Você é ${botName}, assistente virtual oficial da empresa "${companyName}".
 ${customerMemorySection}
 ${companyContactInfo}
+${businessHoursSection}
 ${sector ? `Sector de actividade: ${sector}.` : ''}
 
 ═══ SUA PERSONALIDADE E COMPORTAMENTO (DEFINIDOS PELO USUÁRIO NO PAINEL) ═══
@@ -384,13 +398,18 @@ ${referralContext}
 ${urlContextSection}
 ${selectedToneInstructions}
 
+═══ REGRAS ESTRITAS SOBRE ARQUIVOS E DOCUMENTOS (ASSETS) ═══
+- Você SÓ PODE enviar ou referenciar ficheiros, catálogos, orçamentos em PDF ou documentos que estejam EXPLICITAMENTE CADASTRADOS na secção "ARQUIVOS QUE VOCÊ PODE ENVIAR AO CLIENTE" com o seu respectivo ID.
+- É TERMINANTEMENTE PROIBIDO inventar ficheiros fictícios, nomes de PDF imaginários ou enviar códigos [SEND_FILE: ...] com IDs inexistentes ou inventados.
+- Se o cliente pedir um ficheiro, catálogo ou documento que NÃO existe na lista de arquivos disponíveis da base de dados, NUNCA envie códigos [SEND_FILE]. Responda educadamente esclarecendo que vai solicitar à equipa responsável ou explique as informações em texto.
+
 ═══ REGRAS DE COMPORTAMENTO OBRIGATÓRIAS ═══
 - DÚVIDAS FORA DA BASE DE DADOS: Se o cliente solicitar informações que NÃO existam na sua base de conhecimento, responda de forma muito simpática dizendo que irá confirmar com a equipa técnica e inclua o token [CONFIRMAR_INFORMAÇÃO] no final da sua resposta.
 - PROIBIDO VAZAR RACIOCÍNIO: A resposta deve conter EXCLUSIVAMENTE a mensagem final em português que será lida pelo cliente. Nunca inclua blocos em inglês ou marcas de pensamento interno.
 - SEPARAÇÃO OBRIGATÓRIA: Informações de contexto de links e anúncios são dados do sistema para seu conhecimento. Use-os para responder ao cliente de forma certeira e natural.
 - PRIMEIRA MENSAGEM (SAUDAÇÃO): Deve ser uma saudação super simpática e calorosa.
 - FORMATAÇÃO: Realce termos importantes em **negrito**. Mantenha a pontuação limpa, sem tags desnecessárias.
-- ENVIO DE ARQUIVOS: Sempre que o cliente pedir arquivos ou catálogos listados na secção de arquivos, inclua o token [SEND_FILE: ID].
+- ENVIO DE ARQUIVOS: Sempre que o cliente pedir arquivos ou catálogos listados na secção de arquivos oficiais, inclua o token [SEND_FILE: ID].
 
 REGRAS OBRIGATÓRIAS:
 - Responda SEMPRE em português (angolano/europeu).
@@ -705,10 +724,11 @@ export class AIService {
 
     const urlSystemContext = urlContextBlocks.length > 0 ? urlContextBlocks.join('\n\n') : undefined;
 
-    // 1. Carregar perfil da organização, Base de Conhecimento e Assets
+        // 1. Carregar perfil da organização, Base de Conhecimento e Assets
     let org: OrgProfile | null = null;
     let externalKnowledge = '';
     let availableAssets = '';
+    let businessHoursText = '';
 
     if (orgId && mode !== 'support') {
       const { data: orgData } = await supabaseAdmin
@@ -745,6 +765,40 @@ export class AIService {
         availableAssets = '\n═══ ARQUIVOS QUE VOCÊ PODE ENVIAR AO CLIENTE ═══\n' +
           assets.map(a => `- ID: ${a.id} | Descrição: ${a.description} | Arquivo: ${a.filename}`).join('\n') +
           '\nPara enviar um arquivo, inclua exatamente o código [SEND_FILE: ID] na sua resposta.';
+      }
+
+      // Horários de Atividade da Empresa
+      let businessHoursText = '';
+      try {
+        const { data: bHours } = await supabaseAdmin
+          .from('business_hours')
+          .select('day_of_week, is_open, open_time, close_time')
+          .eq('org_id', orgId)
+          .order('day_of_week', { ascending: true });
+
+        const dayNames = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
+        if (bHours && bHours.length > 0) {
+          const scheduleLines = bHours.map(bh => {
+            const name = dayNames[bh.day_of_week] || `Dia ${bh.day_of_week}`;
+            if (!bh.is_open) return `- ${name}: FECHADO (Não há atendimento presencial nem marcações)`;
+            const open = bh.open_time ? bh.open_time.substring(0, 5) : '08:00';
+            const close = bh.close_time ? bh.close_time.substring(0, 5) : '18:00';
+            return `- ${name}: Aberto das ${open} às ${close}`;
+          });
+          businessHoursText = scheduleLines.join('\n');
+        } else {
+          businessHoursText = [
+            '- Segunda-feira: Aberto das 08:00 às 18:00',
+            '- Terça-feira: Aberto das 08:00 às 18:00',
+            '- Quarta-feira: Aberto das 08:00 às 18:00',
+            '- Quinta-feira: Aberto das 08:00 às 18:00',
+            '- Sexta-feira: Aberto das 08:00 às 18:00',
+            '- Sábado: Aberto das 08:00 às 13:00',
+            '- Domingo: FECHADO (Não há atendimento presencial nem marcações)'
+          ].join('\n');
+        }
+      } catch (bhErr: any) {
+        console.warn('[AIService] Aviso ao buscar business_hours:', bhErr.message);
       }
 
       // Pesquisa externa para dados que exijam atualização
