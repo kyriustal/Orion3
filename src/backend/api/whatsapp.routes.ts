@@ -586,14 +586,17 @@ async function triggerAIResponse(params: {
         if (!cleanSender.startsWith('+') && !/^\d+$/.test(cleanSender)) {
           detectedName = cleanSender;
           // AWAIT para garantir que o nome fica guardado antes de prosseguir
-          await supabaseAdmin.from('contacts').upsert({
-            org_id: orgId,
-            phone: fromNumber,
-            name: cleanSender,
-            updated_at: new Date().toISOString(),
-          }, { onConflict: 'org_id,phone' }).then(() => {
+          try {
+            await supabaseAdmin.from('contacts').upsert({
+              org_id: orgId,
+              phone: fromNumber,
+              name: cleanSender,
+              updated_at: new Date().toISOString(),
+            }, { onConflict: 'org_id,phone' });
             console.log(`[MEMÓRIA] ✅ Nome "${cleanSender}" do perfil WhatsApp guardado para ${fromNumber}`);
-          }).catch((e: any) => console.warn('[MEMÓRIA] Aviso ao guardar nome WhatsApp:', e.message));
+          } catch (e: any) {
+            console.warn('[MEMÓRIA] Aviso ao guardar nome WhatsApp:', e.message);
+          }
         }
       }
 
@@ -623,14 +626,17 @@ async function triggerAIResponse(params: {
         if (extracted) {
           detectedName = extracted;
           // Guardar na tabela contacts para nunca mais esquecer
-          await supabaseAdmin.from('contacts').upsert({
-            org_id: orgId,
-            phone: fromNumber,
-            name: extracted,
-            updated_at: new Date().toISOString(),
-          }, { onConflict: 'org_id,phone' }).then(() => {
+          try {
+            await supabaseAdmin.from('contacts').upsert({
+              org_id: orgId,
+              phone: fromNumber,
+              name: extracted,
+              updated_at: new Date().toISOString(),
+            }, { onConflict: 'org_id,phone' });
             console.log(`[MEMÓRIA] ✅ Nome "${extracted}" guardado permanentemente para ${fromNumber}`);
-          }).catch((e: any) => console.warn('[MEMÓRIA] Aviso ao guardar nome extraído:', e.message));
+          } catch (e: any) {
+            console.warn('[MEMÓRIA] Aviso ao guardar nome extraído:', e.message);
+          }
         }
       }
 
@@ -667,13 +673,16 @@ async function triggerAIResponse(params: {
     // Se a IA detectou um novo nome nos dados de contacto ou booking, gravar permanentemente
     const newDetectedName = aiResult.contactData?.name || aiResult.bookingData?.name;
     if (newDetectedName && newDetectedName.trim().length > 1 && (!customerProfile?.name || customerProfile.name !== newDetectedName)) {
-      supabaseAdmin.from('contacts').upsert({
-        org_id: orgId,
-        phone: fromNumber,
-        name: newDetectedName.trim(),
-        email: aiResult.contactData?.email || aiResult.bookingData?.email || customerProfile?.email,
-        updated_at: new Date().toISOString(),
-      }, { onConflict: 'org_id,phone' }).then(() => {
+      // Fire-and-forget (não bloqueia o envio da resposta ao cliente)
+      Promise.resolve(
+        supabaseAdmin.from('contacts').upsert({
+          org_id: orgId,
+          phone: fromNumber,
+          name: newDetectedName.trim(),
+          email: aiResult.contactData?.email || aiResult.bookingData?.email || customerProfile?.email,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'org_id,phone' })
+      ).then(() => {
         console.log(`[MEMÓRIA] ✅ Novo nome "${newDetectedName}" capturado pela IA e guardado para ${fromNumber}`);
       }).catch(() => {});
     }
