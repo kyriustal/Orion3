@@ -120,7 +120,7 @@ export function getUniqueDeepseekApiKeys(): string[] {
 }
 
 /**
- * Executa uma requisição POST para a API do Gemini com rotação de chaves e retentativas.
+ * Executa uma requisição POST para a API do Gemini com rotação de chaves, múltiplos modelos e retentativas.
  */
 export async function postGeminiWithRetry(
   endpointPath: string,
@@ -131,6 +131,9 @@ export async function postGeminiWithRetry(
   if (keys.length === 0) {
     throw new Error('[GeminiRetry] Nenhuma GEMINI_API_KEY configurada.');
   }
+
+  const candidateModels = [GEMINI_MODEL, 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'];
+  const uniqueCandidateModels = Array.from(new Set(candidateModels));
 
   let lastError = '';
   const now = Date.now();
@@ -143,28 +146,44 @@ export async function postGeminiWithRetry(
 
   for (let idx = 0; idx < sortedKeys.length; idx++) {
     const apiKey = sortedKeys[idx];
-    const url = `${GEMINI_BASE}/${endpointPath}?key=${apiKey}`;
     const masked = apiKey.substring(0, 8) + '...' + apiKey.substring(apiKey.length - 4);
 
-    try {
-      const response = await axios.post(url, payload, {
-        headers: { 'Content-Type': 'application/json' },
-        timeout,
-      });
-      return response.data;
-    } catch (err: any) {
-      const status = err.response?.status ?? 'N/A';
-      const errMsg = err.response?.data?.error?.message || err.message;
-      lastError = `Chave (${masked}) HTTP ${status}: ${errMsg}`;
-      if (status === 429) {
-        geminiKeyCooldowns.set(apiKey, Date.now() + 25_000);
+    // Se o endpointPath for um generateContent específico, testar modelos com fallback
+    const isGenerateContent = endpointPath.includes(':generateContent');
+    const modelsToTry = isGenerateContent ? uniqueCandidateModels : [endpointPath];
+
+    for (const model of modelsToTry) {
+      const currentPath = isGenerateContent ? `${model}:generateContent` : endpointPath;
+      const url = `${GEMINI_BASE}/${currentPath}?key=${apiKey}`;
+
+      try {
+        const response = await axios.post(url, payload, {
+          headers: { 'Content-Type': 'application/json' },
+          timeout,
+        });
+        return response.data;
+      } catch (err: any) {
+        const status = err.response?.status ?? 'N/A';
+        const errMsg = err.response?.data?.error?.message || err.message;
+        lastError = `Chave (${masked}) Modelo (${model}) HTTP ${status}: ${errMsg}`;
+
+        if (status === 429) {
+          geminiKeyCooldowns.set(apiKey, Date.now() + 25_000);
+          break; // Tentar próxima chave
+        } else if (status === 403) {
+          geminiKeyCooldowns.set(apiKey, Date.now() + 3_600_000); // 1h cooldown para chaves bloqueadas
+          break; // Tentar próxima chave
+        } else if (status === 404) {
+          // Modelo não disponível para esta versão de API, tentar próximo modelo desta chave
+          continue;
+        }
+
+        console.warn(`[GeminiRetry] Falha na chave (${masked}) [${model}]:`, lastError);
       }
-      console.warn(`[GeminiRetry] Falha na chave (${masked}):`, lastError);
-      continue;
     }
   }
 
-  throw new Error(`[GeminiRetry] Todas as chaves do Gemini falharam. Último erro: ${lastError}`);
+  throw new Error(`[GeminiRetry] Todas as chaves e modelos do Gemini falharam. Último erro: ${lastError}`);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -344,30 +363,46 @@ INSTRUÇÕES CRÍTICAS PARA ATENDIMENTO DE LEADS DE ANÚNCIOS:
 
   let returnGreetingRule = '';
   if (timeSinceLastMessageHours !== undefined && timeSinceLastMessageHours >= 1) {
-    returnGreetingRule = `- O cliente esteve inativo por mais de 1 hora. Se a nova mensagem dele for uma saudação (ex: "Olá", "Bom dia"), dê uma saudação calorosa e breve, pergunte como pode ajudar e retome o assunto de forma cativante.`;
+    returnGreetingRule = `- O cliente esteve inativo por mais de 1 hora. Se a nova mensagem dele for uma saudação (ex: "Olá", "Bom dia"), dê uma saudação calorosa e breve, retome o assunto de forma cativante dizendo o seu nome e chamando o cliente pelo nome.`;
   }
 
-  // Secção de memória do cliente
+  // Secção de memória permanente do cliente e contexto
   let customerMemorySection = '';
-  if (customerProfile && (customerProfile.name || customerProfile.email || customerProfile.isReturning)) {
-    const lines: string[] = [];
-    const firstName = customerProfile.name ? customerProfile.name.trim().split(/\s+/)[0] : '';
-    if (firstName) lines.push(`- Nome do cliente: ${firstName}`);
-    if (customerProfile.email) lines.push(`- Email do cliente: ${customerProfile.email}`);
-    if (customerProfile.isReturning) {
-      lines.push(`- Cliente recorrente: Sim (já manteve conversas anteriores com a empresa)`);
-      lines.push(`- INSTRUÇÕES CRÍTICAS: Trate o cliente pelo primeiro nome ("${firstName}"). Não o trate como novo cliente.`);
-    } else if (firstName) {
-      lines.push(`- Trate o cliente pelo primeiro nome ("${firstName}").`);
-    }
-    customerMemorySection = `\n═══ MEMÓRIA DO CLIENTE (DADOS CONHECIDOS) ═══\n${lines.join('\n')}\n`;
+  const firstName = customerProfile?.name ? customerProfile.name.trim().split(/\s+/)[0] : '';
+  const fullName = customerProfile?.name ? customerProfile.name.trim() : '';
+
+  const memoryLines: string[] = [];
+  if (fullName) {
+    memoryLines.push(`- Nome Completo do Cliente: "${fullName}" (Primeiro Nome: "${firstName}")`);
+    memoryLines.push(`- ⚠️ REGRA ABSOLUTA E INEGOCIÁVEL SOBRE O NOME DO CLIENTE: O nome do cliente NUNCA DEVE ser esquecido. Chame o cliente pelo seu primeiro nome ("${firstName}") de forma calorosa. NUNCA pergunte "Qual é o seu nome?", "Como se chama?" ou peça identificação, pois você JÁ SABE o nome dele.`);
   }
+  if (customerProfile?.email) {
+    memoryLines.push(`- Email do cliente: ${customerProfile.email}`);
+  }
+  if (customerProfile?.phone) {
+    memoryLines.push(`- Telefone/WhatsApp do cliente: ${customerProfile.phone}`);
+  }
+  if (customerProfile?.isReturning || (timeSinceLastMessageHours !== undefined && timeSinceLastMessageHours > 0)) {
+    memoryLines.push(`- Histórico: Cliente existente / recorrente.`);
+    memoryLines.push(`- ⚠️ REGRA ABSOLUTA E INEGOCIÁVEL SOBRE O CONTEXTO DAS ÚLTIMAS CONVERSAS: Você NUNCA DEVE esquecer o contexto das conversas anteriores deste cliente (ex: serviços de interesse, orçamentos informados, dúvidas, fotos ou detalhes já enviados, estado de agendamento). Leia todo o histórico anterior com máxima atenção. Proibido agir como se fosse a primeira conversa ou reiniciar o atendimento.`);
+  }
+
+  customerMemorySection = memoryLines.length > 0
+    ? `\n═══ MEMÓRIA PERMANENTE DO CLIENTE E CONTEXTO DAS CONVERSAS ═══\n${memoryLines.join('\n')}\n`
+    : '';
 
   return `Você é ${botName}, assistente virtual oficial da empresa "${companyName}".
 ${customerMemorySection}
 ${companyContactInfo}
 ${businessHoursSection}
 ${sector ? `Sector de actividade: ${sector}.` : ''}
+
+═══ REGRA ABSOLUTA E INEGOCIÁVEL: APRESENTAÇÃO DO SEU NOME (${botName}) ═══
+- INDEPENDENTE DA ORIGEM DO CLIENTE (seja vindo de um anúncio patrocinado de Meta Ads/WhatsApp Ads, seja vindo de uma conversa livre ou direta):
+  * Em saudações, na primeira mensagem ou ao iniciar o diálogo, você DEVE SEMPRE DIZER O SEU NOME oficial ("${botName}").
+  * Exemplo de saudação padrão: "Olá! Sou a/o ${botName}, assistente da ${companyName}..."
+  * Se já souber o nome do cliente (${firstName || 'Nome'}), saúde-o pelo nome: "Olá, ${firstName || ''}! Sou a/o ${botName} da ${companyName}..."
+  * NUNCA omita o seu nome ao se apresentar.
 
 ═══ SUA PERSONALIDADE E COMPORTAMENTO (DEFINIDOS PELO USUÁRIO NO PAINEL) ═══
 ${org?.ai_prompt ? org.ai_prompt : 'Você deve agir como um assistente extremamente simpático, cordial, prestativo, persuasivo e carismático.'}
@@ -403,11 +438,17 @@ ${selectedToneInstructions}
 - É TERMINANTEMENTE PROIBIDO inventar ficheiros fictícios, nomes de PDF imaginários ou enviar códigos [SEND_FILE: ...] com IDs inexistentes ou inventados.
 - Se o cliente pedir um ficheiro, catálogo ou documento que NÃO existe na lista de arquivos disponíveis da base de dados, NUNCA envie códigos [SEND_FILE]. Responda educadamente esclarecendo que vai solicitar à equipa responsável ou explique as informações em texto.
 
+═══ LEITURA DE ÁUDIOS, DOCUMENTOS E IMAGENS ENVIADOS PELO CLIENTE ═══
+- O Gemini multimodal lê e transcreve com precisão os áudios, ficheiros PDF/Word e imagens que o cliente envia.
+- Você (escritor e consultor) DEVE SEMPRE responder com base nas informações extraídas desses ficheiros e áudios:
+  * Se o cliente enviou um áudio: responda com precisão ao que ele disse ou perguntou no áudio.
+  * Se o cliente enviou um documento (ex: PDF, Word, tabela, orçamento): confirme que leu o documento, resuma os pontos essenciais e responda detalhadamente às questões do cliente.
+
 ═══ REGRAS DE COMPORTAMENTO OBRIGATÓRIAS ═══
 - DÚVIDAS FORA DA BASE DE DADOS: Se o cliente solicitar informações que NÃO existam na sua base de conhecimento, responda de forma muito simpática dizendo que irá confirmar com a equipa técnica e inclua o token [CONFIRMAR_INFORMAÇÃO] no final da sua resposta.
 - PROIBIDO VAZAR RACIOCÍNIO: A resposta deve conter EXCLUSIVAMENTE a mensagem final em português que será lida pelo cliente. Nunca inclua blocos em inglês ou marcas de pensamento interno.
 - SEPARAÇÃO OBRIGATÓRIA: Informações de contexto de links e anúncios são dados do sistema para seu conhecimento. Use-os para responder ao cliente de forma certeira e natural.
-- PRIMEIRA MENSAGEM (SAUDAÇÃO): Deve ser uma saudação super simpática e calorosa.
+- PRIMEIRA MENSAGEM (SAUDAÇÃO): Deve ser uma saudação super simpática, calorosa e com o seu nome ("${botName}").
 - FORMATAÇÃO: Realce termos importantes em **negrito**. Mantenha a pontuação limpa, sem tags desnecessárias.
 - ENVIO DE ARQUIVOS: Sempre que o cliente pedir arquivos ou catálogos listados na secção de arquivos oficiais, inclua o token [SEND_FILE: ID].
 
@@ -571,6 +612,46 @@ async function performWebSearch(query: string): Promise<string> {
 export class AIService {
 
   /**
+   * Lê e extrai texto de qualquer documento ou PDF usando o Gemini multimodal.
+   */
+  static async readDocumentWithGemini(base64: string, mimeType: string): Promise<string> {
+    try {
+      console.log(`[AIService] 📄 Lendo documento (${mimeType}) diretamente com Gemini Multimodal...`);
+      const normalizedMime = mimeType.includes('pdf') ? 'application/pdf' : mimeType.startsWith('text/') ? 'text/plain' : mimeType;
+      const responseData = await postGeminiWithRetry(`${GEMINI_MODEL}:generateContent`, {
+        contents: [{
+          parts: [
+            {
+              inlineData: {
+                mimeType: normalizedMime,
+                data: base64,
+              }
+            },
+            {
+              text: 'Leia e extraia integralmente todas as informações deste documento (textos, tabelas, dados, orçamentos, cláusulas, valores ou termos). Retorne o conteúdo transcrito de forma limpa e estruturada em português.'
+            }
+          ]
+        }],
+        generationConfig: {
+          temperature: 0.1,
+          maxOutputTokens: 2048,
+        }
+      }, 25000);
+
+      const text = responseData?.candidates?.[0]?.content?.parts
+        ?.filter((p: any) => !p.thought)
+        ?.map((p: any) => p.text ?? '')
+        ?.join('')
+        ?.trim() || '';
+
+      return text;
+    } catch (err: any) {
+      console.error('[AIService] Falha ao ler documento com Gemini:', err.message);
+      return '';
+    }
+  }
+
+  /**
    * Descreve ou transcreve uma imagem usando o Gemini multimodal com rotação de chaves.
    */
   static async describeImageWithGemini(base64: string, mimeType: string): Promise<string> {
@@ -586,13 +667,13 @@ export class AIService {
               }
             },
             {
-              text: 'Descreva esta imagem detalhadamente em português, identificando qualquer texto escrito, documentos, informações relevantes, ofertas ou produtos. Retorne apenas a descrição direta para servir de contexto à conversa.'
+              text: 'Descreva esta imagem detalhadamente em português, identificando qualquer texto escrito (OCR), documentos, recibos, números, tabelas, informações relevantes, ofertas ou produtos. Retorne apenas a descrição direta e completa para servir de contexto à conversa.'
             }
           ]
         }],
         generationConfig: {
           temperature: 0.2,
-          maxOutputTokens: 800,
+          maxOutputTokens: 1000,
         }
       }, 15000);
 
@@ -605,6 +686,46 @@ export class AIService {
       return text;
     } catch (err: any) {
       console.error('[AIService] Falha ao descrever imagem com Gemini:', err.message);
+      return '';
+    }
+  }
+
+  /**
+   * Analisa e descreve um arquivo de vídeo usando o Gemini multimodal.
+   */
+  static async describeVideoWithGemini(base64: string, mimeType: string): Promise<string> {
+    try {
+      console.log(`[AIService] 🎥 Analisando vídeo (${mimeType}) com Gemini Multimodal...`);
+      const normalizedMime = mimeType.startsWith('video/') ? mimeType : 'video/mp4';
+      const responseData = await postGeminiWithRetry(`${GEMINI_MODEL}:generateContent`, {
+        contents: [{
+          parts: [
+            {
+              inlineData: {
+                mimeType: normalizedMime,
+                data: base64,
+              }
+            },
+            {
+              text: 'Descreva este vídeo detalhadamente em português: o que está a acontecer, pessoas, produtos, falas, textos visíveis ou mensagens importantes. Retorne apenas a descrição objetiva e clara para servir de contexto à conversa.'
+            }
+          ]
+        }],
+        generationConfig: {
+          temperature: 0.2,
+          maxOutputTokens: 1000,
+        }
+      }, 30000);
+
+      const text = responseData?.candidates?.[0]?.content?.parts
+        ?.filter((p: any) => !p.thought)
+        ?.map((p: any) => p.text ?? '')
+        ?.join('')
+        ?.trim() || '';
+
+      return text;
+    } catch (err: any) {
+      console.error('[AIService] Falha ao analisar vídeo com Gemini:', err.message);
       return '';
     }
   }
@@ -661,17 +782,24 @@ export class AIService {
       urlContextBlocks = results.filter(Boolean) as string[];
     }
 
-    // ── Pré-processamento multimodal via Gemini (Áudio, Imagem, Documento) ──
+    // ── Pré-processamento multimodal via Gemini (Áudio, Imagem, Documento, Vídeo) ──
     let enrichedMessage = message;
     let mediaForAI: { base64: string; mimeType: string } | undefined = media;
 
-    if (mediaForAI) {
-      if (mediaForAI.mimeType.startsWith('audio/')) {
+    // Verificar se o webhook já enriqueceu a mensagem (evitar double-processing e gastar quota Gemini a dobrar)
+    const alreadyEnriched = /^\[(?:Imagem enviada|Vídeo enviado|Documento|Mensagem de Áudio|Audio enviado)/i.test(message) ||
+      /\[(?:Imagem enviada|Vídeo enviado|Documento|Mensagem de Áudio)/i.test(message.substring(0, 200));
+
+    if (mediaForAI && !alreadyEnriched) {
+      const mime = (mediaForAI.mimeType || '').toLowerCase();
+
+      if (mime.startsWith('audio/')) {
         console.log(`[AIService] 🎙️ [Gemini Multimodal] Transcrevendo áudio...`);
         try {
           const stt = await AudioService.speechToTextFromBase64(mediaForAI.base64, mediaForAI.mimeType);
           if (stt?.text) {
-            enrichedMessage = `${enrichedMessage}\n\n[Áudio transcrito]:\n${stt.text}`.trim();
+            const userLead = message && !message.startsWith('(Mensagem') && !message.startsWith('[Mensagem') ? `${message}\n\n` : '';
+            enrichedMessage = `${userLead}[Mensagem de Áudio enviada pelo cliente — transcrição]:\n"${stt.text}"`.trim();
           }
         } catch (e: any) {
           console.error('[AIService] ❌ Falha ao transcrever áudio:', e.message);
@@ -679,34 +807,63 @@ export class AIService {
         mediaForAI = undefined;
 
       } else if (
-        mediaForAI.mimeType.includes('pdf') ||
-        mediaForAI.mimeType.includes('word') ||
-        mediaForAI.mimeType.includes('docx') ||
-        mediaForAI.mimeType.startsWith('text/')
+        mime.includes('pdf') ||
+        mime.includes('word') ||
+        mime.includes('docx') ||
+        mime.includes('document') ||
+        mime.includes('sheet') ||
+        mime.includes('excel') ||
+        mime.includes('presentation') ||
+        mime.includes('powerpoint') ||
+        mime.startsWith('text/') ||
+        mime === 'application/octet-stream'
       ) {
         console.log(`[AIService] 📄 [Gemini Multimodal] Extraindo documento...`);
         try {
-          const docText = await DocumentService.extractTextFromBase64(mediaForAI.base64, mediaForAI.mimeType);
+          let docText = await DocumentService.extractTextFromBase64(mediaForAI.base64, mediaForAI.mimeType);
+          if (!docText || docText.trim().length === 0) {
+            console.log(`[AIService] 📄 Fallback para Gemini Multimodal ao ler documento...`);
+            docText = await AIService.readDocumentWithGemini(mediaForAI.base64, mediaForAI.mimeType);
+          }
           if (docText) {
-            enrichedMessage = `${enrichedMessage}\n\n[Documento anexo]:\n${docText}`.trim();
+            const cleanDoc = docText.trim().substring(0, 10000);
+            const userLead = message && !message.startsWith('(Documento') && !message.startsWith('[Documento') && !message.startsWith('(Ficheiro') ? `${message}\n\n` : '';
+            enrichedMessage = `${userLead}[Documento / Ficheiro enviado pelo cliente — conteúdo lido]:\n${cleanDoc}`.trim();
           }
         } catch (e: any) {
           console.error('[AIService] ❌ Falha ao extrair documento:', e.message);
         }
         mediaForAI = undefined;
 
-      } else if (mediaForAI.mimeType.startsWith('image/')) {
+      } else if (mime.startsWith('image/')) {
         console.log(`[AIService] 🖼️ [Gemini Multimodal] Descrevendo imagem...`);
         try {
           const description = await AIService.describeImageWithGemini(mediaForAI.base64, mediaForAI.mimeType);
           if (description) {
-            enrichedMessage = `${enrichedMessage}\n\n[Imagem anexa — descrição]:\n${description}`.trim();
+            const userLead = message && !message.startsWith('(Imagem') && !message.startsWith('[Imagem') ? `${message}\n\n` : '';
+            enrichedMessage = `${userLead}[Imagem enviada pelo cliente — descrição visual e texto]:\n${description}`.trim();
           }
         } catch (e: any) {
           console.error('[AIService] ❌ Falha ao descrever imagem:', e.message);
         }
         mediaForAI = undefined;
+
+      } else if (mime.startsWith('video/')) {
+        console.log(`[AIService] 🎥 [Gemini Multimodal] Analisando vídeo...`);
+        try {
+          const description = await AIService.describeVideoWithGemini(mediaForAI.base64, mediaForAI.mimeType);
+          if (description) {
+            const userLead = message && !message.startsWith('(Vídeo') && !message.startsWith('[Vídeo') && !message.startsWith('(Ficheiro') ? `${message}\n\n` : '';
+            enrichedMessage = `${userLead}[Vídeo enviado pelo cliente — descrição visual e falas]:\n${description}`.trim();
+          }
+        } catch (e: any) {
+          console.error('[AIService] ❌ Falha ao descrever vídeo:', e.message);
+        }
+        mediaForAI = undefined;
       }
+    } else if (mediaForAI && alreadyEnriched) {
+      console.log(`[AIService] ⚡ Mensagem já enriquecida pelo webhook. A saltar processamento multimodal duplicado.`);
+      mediaForAI = undefined;
     }
 
     // Descrever imagens de páginas/anúncios extraídas
@@ -758,13 +915,19 @@ export class AIService {
 
       const { data: assets } = await supabaseAdmin
         .from('public_assets')
-        .select('id, filename, description')
+        .select('id, filename, description, file_url')
         .eq('org_id', orgId);
 
-      if (assets && assets.length > 0) {
+      // Apenas listar assets que têm URL válida (ficheiro realmente disponível na BD)
+      const validAssets = (assets || []).filter(a => a.file_url && a.file_url.trim().length > 0);
+
+      if (validAssets.length > 0) {
         availableAssets = '\n═══ ARQUIVOS QUE VOCÊ PODE ENVIAR AO CLIENTE ═══\n' +
-          assets.map(a => `- ID: ${a.id} | Descrição: ${a.description} | Arquivo: ${a.filename}`).join('\n') +
-          '\nPara enviar um arquivo, inclua exatamente o código [SEND_FILE: ID] na sua resposta.';
+          validAssets.map(a => `- ID: ${a.id} | Descrição: ${a.description} | Arquivo: ${a.filename}`).join('\n') +
+          '\nPara enviar um arquivo, inclua exatamente o código [SEND_FILE: ID] na sua resposta.\n' +
+          '⚠️ ATENÇÃO: NUNCA invente IDs de ficheiros nem use [SEND_FILE] com IDs que não estejam listados acima.';
+      } else {
+        availableAssets = '\n[NOTA INTERNA]: Não existem ficheiros/catálogos disponíveis na base de dados para enviar ao cliente. NÃO use [SEND_FILE] em nenhuma circunstância.';
       }
 
       // Horários de Atividade da Empresa
@@ -1049,10 +1212,13 @@ export class AIService {
       referral,
       timeSinceLastMessageHours,
       urlSystemContext,
-      customerProfile
+      customerProfile,
+      businessHoursText  // ← FIX: era construído mas nunca passado ao prompt
     );
 
-    const contents = buildContents(history, enrichedMessage, media, extractedImages);
+    // mediaForAI é undefined após processamento multimodal (image/video/audio/doc foram convertidos para texto em enrichedMessage)
+    // Passamos mediaForAI (não o media original) para evitar re-envio de dados binários brutos ao Gemini fallback
+    const contents = buildContents(history, enrichedMessage, mediaForAI, extractedImages);
     let lastError = '';
 
     // Helper para garantir que links do Google Maps nunca apareçam crus e feios

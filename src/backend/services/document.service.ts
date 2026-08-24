@@ -64,34 +64,57 @@ export class DocumentService {
   ): Promise<string | null> {
     try {
       const buffer = Buffer.from(base64, 'base64');
+      const normalizedMime = (mimeType || '').toLowerCase();
 
       // ── PDF ─────────────────────────────────────────────
-      if (mimeType === 'application/pdf' || mimeType.includes('pdf')) {
-        const data = await pdfParse(buffer);
-        const text = data.text?.trim();
-        if (!text) return null;
-        return text.substring(0, 15_000);
+      if (normalizedMime === 'application/pdf' || normalizedMime.includes('pdf')) {
+        try {
+          const data = await pdfParse(buffer);
+          const text = data.text?.trim();
+          if (text && text.length >= 15) {
+            return text.substring(0, 20_000);
+          }
+        } catch (pdfErr: any) {
+          console.warn('[DocumentService] PDF parse local falhou (provavelmente digitalizado):', pdfErr.message);
+        }
+        return null;
       }
 
       // ── DOCX / Word ──────────────────────────────────────
       if (
-        mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
-        mimeType === 'application/msword' ||
-        mimeType.includes('word') ||
-        mimeType.includes('docx')
+        normalizedMime === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+        normalizedMime === 'application/msword' ||
+        normalizedMime.includes('word') ||
+        normalizedMime.includes('docx')
       ) {
-        const result = await mammoth.extractRawText({ buffer });
-        const text = result.value?.trim();
-        if (!text) return null;
-        return text.substring(0, 15_000);
+        try {
+          const result = await mammoth.extractRawText({ buffer });
+          const text = result.value?.trim();
+          if (text && text.length >= 10) {
+            return text.substring(0, 20_000);
+          }
+        } catch (wordErr: any) {
+          console.warn('[DocumentService] DOCX parse local falhou:', wordErr.message);
+        }
+        return null;
       }
 
-      // ── Texto simples ────────────────────────────────────
-      if (mimeType.startsWith('text/')) {
-        return buffer.toString('utf-8').substring(0, 15_000);
+      // ── Texto simples, CSV, JSON, XML, Markdown, RTF ────
+      if (
+        normalizedMime.startsWith('text/') ||
+        normalizedMime.includes('json') ||
+        normalizedMime.includes('xml') ||
+        normalizedMime.includes('csv') ||
+        normalizedMime.includes('markdown') ||
+        normalizedMime.includes('rtf')
+      ) {
+        const text = buffer.toString('utf-8').trim();
+        if (text && text.length > 0) {
+          return text.substring(0, 20_000);
+        }
       }
 
-      console.warn(`[DocumentService] Tipo de ficheiro não suportado: ${mimeType}`);
+      console.warn(`[DocumentService] Tipo de ficheiro requer análise multimodal: ${mimeType}`);
       return null;
 
     } catch (err: any) {

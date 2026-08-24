@@ -4,6 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter }
 import { Button } from "@/src/components/ui/button";
 import { Input } from "@/src/components/ui/input";
 import { Label } from "@/src/components/ui/label";
+import { Switch } from "@/src/components/ui/switch";
 import { Save, Loader2, Key, User, Building2, Bot, ShieldCheck, Mail, Calendar, ExternalLink, CheckCircle2, XCircle, Clock, RefreshCw, Unlink, MessageSquare, Eye, EyeOff, Smartphone, Send } from "lucide-react";
 import { toast } from "sonner";
 
@@ -48,6 +49,21 @@ export default function Settings() {
 
   const [pwd, setPwd] = useState({ current: "", new: "", confirm: "" });
   const [isChangingPwd, setIsChangingPwd] = useState(false);
+
+  // ─── Horários de Funcionamento ────────────────────────────────────────────────
+  const DAY_NAMES = ["Domingo", "Segunda-feira", "Terça-feira", "Quarta-feira", "Quinta-feira", "Sexta-feira", "Sábado"];
+  const DEFAULT_HOURS = [
+    { day_of_week: 0, is_open: false, open_time: "08:00", close_time: "12:00" },
+    { day_of_week: 1, is_open: true,  open_time: "08:00", close_time: "18:00" },
+    { day_of_week: 2, is_open: true,  open_time: "08:00", close_time: "18:00" },
+    { day_of_week: 3, is_open: true,  open_time: "08:00", close_time: "18:00" },
+    { day_of_week: 4, is_open: true,  open_time: "08:00", close_time: "18:00" },
+    { day_of_week: 5, is_open: true,  open_time: "08:00", close_time: "18:00" },
+    { day_of_week: 6, is_open: true,  open_time: "08:00", close_time: "13:00" },
+  ];
+  const [businessHours, setBusinessHours] = useState<{ day_of_week: number; is_open: boolean; open_time: string; close_time: string }[]>(DEFAULT_HOURS);
+  const [isSavingHours, setIsSavingHours] = useState(false);
+  const [isLoadingHours, setIsLoadingHours] = useState(false);
 
   // Detectar redirect de OAuth e mostrar feedback
   useEffect(() => {
@@ -98,6 +114,7 @@ export default function Settings() {
   // Carregar definições ao montar
   useEffect(() => {
     fetchSettings();
+    fetchBusinessHours();
   }, []);
 
   const fetchSettings = async () => {
@@ -136,6 +153,54 @@ export default function Settings() {
       toast.error(error.message);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  // ─── Carregar horários de funcionamento ─────────────────────────────────────
+  const fetchBusinessHours = async () => {
+    setIsLoadingHours(true);
+    try {
+      const res = await fetch("/api/settings/business-hours", {
+        headers: { "Authorization": `Bearer ${localStorage.getItem("token")}` }
+      });
+      if (!res.ok) throw new Error("Erro ao carregar horários");
+      const data = await res.json();
+      if (Array.isArray(data) && data.length === 7) {
+        setBusinessHours(data.map((d: any) => ({
+          day_of_week: d.day_of_week,
+          is_open:    !!d.is_open,
+          open_time:  d.open_time  ? d.open_time.substring(0, 5)  : "08:00",
+          close_time: d.close_time ? d.close_time.substring(0, 5) : "18:00",
+        })));
+      }
+    } catch (err: any) {
+      console.warn("Aviso ao carregar horários:", err.message);
+    } finally {
+      setIsLoadingHours(false);
+    }
+  };
+
+  // ─── Guardar horários de funcionamento ──────────────────────────────────────
+  const saveBusinessHours = async () => {
+    setIsSavingHours(true);
+    try {
+      const res = await fetch("/api/settings/business-hours", {
+        method:  "PUT",
+        headers: {
+          "Content-Type":  "application/json",
+          "Authorization": `Bearer ${localStorage.getItem("token")}`
+        },
+        body: JSON.stringify({ days: businessHours })
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.error || "Erro ao guardar horários");
+      }
+      toast.success("Horários de funcionamento atualizados!");
+    } catch (err: any) {
+      toast.error(err.message);
+    } finally {
+      setIsSavingHours(false);
     }
   };
 
@@ -383,6 +448,7 @@ export default function Settings() {
         )}
 
         {activeTab === "company" && (
+          <div className="space-y-6">
           <Card className="shadow-sm border-zinc-200 max-w-2xl">
             <CardHeader>
               <CardTitle>Dados do Negócio</CardTitle>
@@ -492,6 +558,123 @@ export default function Settings() {
               </div>
             </CardContent>
           </Card>
+
+          {/* Tabela de Horários de Funcionamento */}
+          <Card className="shadow-sm border-zinc-200 max-w-2xl">
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="flex items-center gap-2">
+                    <Clock className="w-4 h-4 text-emerald-600" />
+                    Horários de Funcionamento
+                  </CardTitle>
+                  <CardDescription className="mt-1">
+                    Configure os dias e horaários em que a sua empresa está aberta. A IA nunca fará agendamentos fora deste expediente.
+                  </CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-1">
+              {isLoadingHours ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="w-5 h-5 animate-spin text-emerald-600" />
+                </div>
+              ) : (
+                <div className="rounded-lg border border-zinc-200 overflow-hidden">
+                  {/* Cabeçalho */}
+                  <div className="grid grid-cols-[140px_80px_1fr_1fr] gap-2 px-3 py-2 bg-zinc-50 border-b border-zinc-200">
+                    <span className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wide">Dia</span>
+                    <span className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wide">Aberto</span>
+                    <span className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wide">Abertura</span>
+                    <span className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wide">Fecho</span>
+                  </div>
+
+                  {/* Linhas por dia */}
+                  {businessHours.map((day, idx) => (
+                    <div
+                      key={day.day_of_week}
+                      className={`grid grid-cols-[140px_80px_1fr_1fr] gap-2 items-center px-3 py-2 ${
+                        idx < businessHours.length - 1 ? "border-b border-zinc-100" : ""
+                      } ${!day.is_open ? "bg-zinc-50/60" : ""}`}
+                    >
+                      {/* Nome do dia */}
+                      <span className={`text-sm font-medium ${
+                        day.is_open ? "text-zinc-800" : "text-zinc-400"
+                      }`}>
+                        {DAY_NAMES[day.day_of_week]}
+                      </span>
+
+                      {/* Toggle Aberto/Fechado */}
+                      <div className="flex items-center">
+                        <Switch
+                          id={`bh-open-${day.day_of_week}`}
+                          checked={day.is_open}
+                          onCheckedChange={(checked) => {
+                            const updated = [...businessHours];
+                            updated[idx] = { ...updated[idx], is_open: checked };
+                            setBusinessHours(updated);
+                          }}
+                          className={day.is_open ? "[&>div]:bg-emerald-600" : ""}
+                        />
+                      </div>
+
+                      {/* Hora de abertura */}
+                      <Input
+                        id={`bh-open-time-${day.day_of_week}`}
+                        type="time"
+                        value={day.open_time}
+                        disabled={!day.is_open}
+                        onChange={(e) => {
+                          const updated = [...businessHours];
+                          updated[idx] = { ...updated[idx], open_time: e.target.value };
+                          setBusinessHours(updated);
+                        }}
+                        className={`h-8 text-sm ${
+                          !day.is_open ? "opacity-40 cursor-not-allowed" : ""
+                        }`}
+                      />
+
+                      {/* Hora de fecho */}
+                      <Input
+                        id={`bh-close-time-${day.day_of_week}`}
+                        type="time"
+                        value={day.close_time}
+                        disabled={!day.is_open}
+                        onChange={(e) => {
+                          const updated = [...businessHours];
+                          updated[idx] = { ...updated[idx], close_time: e.target.value };
+                          setBusinessHours(updated);
+                        }}
+                        className={`h-8 text-sm ${
+                          !day.is_open ? "opacity-40 cursor-not-allowed" : ""
+                        }`}
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <p className="text-[11px] text-zinc-400 pt-1">
+                ⚠️ A IA usará estes horários para não confirmar marcações em dias ou horas fora do expediente.
+              </p>
+            </CardContent>
+            <CardFooter className="pt-0">
+              <Button
+                onClick={saveBusinessHours}
+                disabled={isSavingHours}
+                className="bg-emerald-600 hover:bg-emerald-700 h-9 px-6"
+                id="btn-save-business-hours"
+              >
+                {isSavingHours ? (
+                  <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                ) : (
+                  <Save className="w-4 h-4 mr-2" />
+                )}
+                Guardar Horários
+              </Button>
+            </CardFooter>
+          </Card>
+          </div>
         )}
 
         {activeTab === "ai" && (

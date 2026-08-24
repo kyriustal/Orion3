@@ -3,6 +3,7 @@ import { supabaseAdmin } from '../config/supabase';
 import { AIService } from '../services/ai.service';
 import { InstagramService } from '../services/instagram.service';
 import { requireAuth, AuthRequest } from '../middleware/auth';
+import { FollowupService } from '../services/followup.service';
 import { getIo } from '../socket';
 import { AudioService } from '../services/audio.service';
 import axios from 'axios';
@@ -270,6 +271,9 @@ router.post('/webhook', async (req, res) => {
         metadata:       igMediaMetadata,
       });
 
+      // Cancelar follow-ups pendentes (cliente voltou a responder)
+      FollowupService.cancelPendingForPhone(orgId, senderId).catch(() => {});
+
       // 4b. Emitir evento para o Live Chat
       try {
         getIo().to(`org:${orgId}`).emit('new_message', {
@@ -339,6 +343,17 @@ router.post('/webhook', async (req, res) => {
           text:           aiReply,
           metadata:       { platform: 'instagram' },
         });
+
+        // Ativar protocolo de follow-up se a resposta da IA termina com pergunta
+        const trimmedIgReply = aiReply.trimEnd();
+        if ((trimmedIgReply.endsWith('?') || trimmedIgReply.endsWith('?!')) && !transfer && !aiResult.booking) {
+          FollowupService.scheduleSmartFollowup({
+            orgId,
+            phone:    senderId,
+            platform: 'instagram',
+            botReply: aiReply,
+          }).catch(() => {});
+        }
 
         console.log(`[INSTAGRAM] Resposta enviada para ${senderId}. Transfer: ${transfer}`);
       }

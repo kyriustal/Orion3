@@ -10,6 +10,7 @@ import { PushService } from '../services/push.service';
 import { createGoogleCalendarEvent } from '../services/calendar.service';
 import { TelcoSMSService } from '../services/telcosms.service';
 import { BookingService } from '../services/booking.service';
+import { FollowupService } from '../services/followup.service';
 import { getIo } from '../socket';
 import axios from 'axios';
 import fs from 'fs';
@@ -479,21 +480,27 @@ router.post('/config', requireAuth, async (req: AuthRequest, res) => {
   }
 });
 
-// ─── GET /api/whatsapp/webhook — Verificação Meta ─────────────────────────────
-router.get('/webhook', (req, res) => {
-  const VERIFY_TOKEN = process.env.META_VERIFY_TOKEN || 'orion_webhook_token';
-  const mode      = req.query['hub.mode'];
-  const token     = req.query['hub.verify_token'];
-  const challenge = req.query['hub.challenge'];
-
-  if (mode === 'subscribe' && token === VERIFY_TOKEN) {
-    console.log('[WEBHOOK] Verificado com sucesso pela Meta.');
-    res.status(200).send(challenge);
-  } else {
-    console.warn('[WEBHOOK] Falha na verificação. Token inválido.');
-    res.sendStatus(403);
+// ─── Helper: Deteção de Nome do Cliente em Mensagens de Texto ─────────────────
+function extractCustomerNameFromText(text: string): string | null {
+  if (!text) return null;
+  const patterns = [
+    /(?:o meu nome é|meu nome é|o meu nome e|meu nome e|me chamo|chamo-me|me chamo de|chamo me|eu me chamo|pode me chamar de|pode chamar-me de|chame-me de|trate-me por|sou o|sou a|eu sou o|eu sou a|aqui é o|aqui é a|aqui é|aqui fala o|aqui fala a|aqui quem fala é o|aqui quem fala é a|fala o|fala a|fala com o|fala com a)\s+([A-ZÀ-Úa-zà-ú]{2,}(?:\s+[A-ZÀ-Úa-zà-ú]{2,})?)/i,
+    /^(?:olá|ola|bom dia|boa tarde|boa noite|oi|hey|saudações)[,!\s]+(?:sou\s+(?:o|a)\s+|me\s+chamo\s+|eu\s+sou\s+(?:o|a)\s+|aqui\s+é\s+(?:o|a)\s+)?([A-ZÀ-Úa-zà-ú]{2,}(?:\s+[A-ZÀ-Úa-zà-ú]{2,})?)$/i,
+    /(?:o meu contacto é|o meu nome:\s*|meu nome:\s*|nome:\s*|cliente:\s*)([A-ZÀ-Úa-zà-ú]{2,}(?:\s+[A-ZÀ-Úa-zà-ú]{2,})?)/i,
+    /(?:pode tratar-me por|trata-me por|trate-me por)\s+([A-ZÀ-Úa-zà-ú]{2,})/i
+  ];
+  for (const pat of patterns) {
+    const match = text.match(pat);
+    if (match && match[1]) {
+      const candidate = match[1].trim();
+      const lower = candidate.toLowerCase();
+      if (!/^(cliente|amigo|amiga|senhor|senhora|doutor|doutora|você|voce|sim|não|nao|orion|assistente|ajuda|atendente|humano|favor|tarde|noite|dia|hoje|amanhã|ola|olá|bom|boa|obrigado|obrigada|preço|valor|serviço)$/i.test(lower)) {
+        return candidate.charAt(0).toUpperCase() + candidate.slice(1);
+      }
+    }
   }
-});
+  return null;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Função principal de resposta da IA
@@ -506,6 +513,7 @@ async function triggerAIResponse(params: {
   botName: string;
   message: string;
   incomingMessageId: string;
+  senderName?: string;
   media?: { base64: string; mimeType: string };
   referral?: any;
   isAudio?: boolean;
@@ -514,13 +522,14 @@ async function triggerAIResponse(params: {
 }) {
   const {
     orgId, fromNumber, phoneNumberId, accessToken, botName,
-    message, incomingMessageId, media, referral, isAudio, isVoiceAllowed,
+    message, incomingMessageId, senderName, media, referral, isAudio, isVoiceAllowed,
     detectedLanguage = 'pt',
   } = params;
 
-  // Verificar se a IA está pausada (coexistência com humano)
+  // Verificar se o atendimento por IA está pausado para este cliente (humano no controlo)
   const historyKey = `${orgId}:${fromNumber}`;
-  if (aiPauses.has(historyKey) && aiPauses.get(historyKey)! > Date.now()) {
+  const pausedUntil = aiPauses.get(historyKey);
+  if (pausedUntil && Date.now() < pausedUntil) {
     console.log(`[IA] Pausada para ${fromNumber}. Mensagem recebida mas não respondida (humano no controlo).`);
     return;
   }
@@ -531,20 +540,18 @@ async function triggerAIResponse(params: {
       await WhatsAppService.sendTypingIndicator(phoneNumberId, incomingMessageId, accessToken);
     } catch (_) { /* silencioso */ }
 
-    // Buscar histórico das últimas 24h (máx 50 mensagens)
-    const last24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    // Buscar histórico completo recente (últimas 60 mensagens)
     const { data: dbHistory } = await supabaseAdmin
       .from('conversation_history')
       .select('sender, text, created_at')
       .eq('org_id', orgId)
       .eq('customer_phone', fromNumber)
-      .gte('created_at', last24h)
       .order('created_at', { ascending: false })
-      .limit(50);
+      .limit(60);
 
     let timeSinceLastMessageHours = 0;
     if (dbHistory && dbHistory.length > 1) {
-      // dbHistory[0] is the message we just inserted. dbHistory[1] is the previous one.
+      // dbHistory[0] é a mensagem recém-inserida. dbHistory[1] é a anterior.
       const currentMsgTime = new Date(dbHistory[0].created_at).getTime();
       const prevMsgTime = new Date(dbHistory[1].created_at).getTime();
       timeSinceLastMessageHours = (currentMsgTime - prevMsgTime) / (1000 * 60 * 60);
@@ -555,7 +562,7 @@ async function triggerAIResponse(params: {
     const pastDbHistory = dbHistory ? dbHistory.slice(1) : [];
     const history = pastDbHistory.reverse().map(h => ({ sender: h.sender, text: h.text }));
 
-    // ── Carregar perfil do cliente (memória de longo prazo) ─────────────────────
+    // ── Carregar perfil do cliente (memória permanente de nome e contexto) ───────
     let customerProfile: CustomerProfile | undefined;
     try {
       // 1. Buscar dados do contacto já capturados (nome, email)
@@ -566,30 +573,81 @@ async function triggerAIResponse(params: {
         .eq('phone', fromNumber)
         .maybeSingle();
 
-      // 2. Verificar se é cliente recorrente (histórico anterior às últimas 24h)
-      const { count: oldHistoryCount } = await supabaseAdmin
-        .from('conversation_history')
-        .select('id', { count: 'exact', head: true })
-        .eq('org_id', orgId)
-        .eq('customer_phone', fromNumber)
-        .lt('created_at', last24h);
+      let detectedName = existingContact?.name;
 
-      const isReturning = (oldHistoryCount ?? 0) > 0;
-
-      if (existingContact || isReturning) {
-        customerProfile = {
-          name:        existingContact?.name  || undefined,
-          email:       existingContact?.email || undefined,
-          phone:       fromNumber,
-          isReturning,
-        };
-        console.log(`[MEMÓRIA] Cliente ${fromNumber}: nome="${customerProfile.name || 'desconhecido'}", recorrente=${isReturning}`);
+      // Descartar nomes inválidos que sejam apenas números ou termos genéricos
+      if (detectedName && (detectedName.startsWith('+') || /^\d+$/.test(detectedName) || /^(cliente|desconhecido|amigo)$/i.test(detectedName))) {
+        detectedName = undefined;
       }
+
+      // 2. Se ainda não há nome no contacto, tentar usar o nome do perfil do WhatsApp
+      if (!detectedName && senderName && senderName.trim().length > 1) {
+        const cleanSender = senderName.trim();
+        if (!cleanSender.startsWith('+') && !/^\d+$/.test(cleanSender)) {
+          detectedName = cleanSender;
+          // AWAIT para garantir que o nome fica guardado antes de prosseguir
+          await supabaseAdmin.from('contacts').upsert({
+            org_id: orgId,
+            phone: fromNumber,
+            name: cleanSender,
+            updated_at: new Date().toISOString(),
+          }, { onConflict: 'org_id,phone' }).then(() => {
+            console.log(`[MEMÓRIA] ✅ Nome "${cleanSender}" do perfil WhatsApp guardado para ${fromNumber}`);
+          }).catch((e: any) => console.warn('[MEMÓRIA] Aviso ao guardar nome WhatsApp:', e.message));
+        }
+      }
+
+      // 3. Se ainda não há nome, tentar recuperar de tokens [CONTATO:{...}] gravados pelo bot no histórico
+      if (!detectedName) {
+        for (const h of pastDbHistory) {
+          if (h.sender === 'bot' && h.text) {
+            const contactMatch = h.text.match(/\[CONTATO:(\{[^}]+\})\]/);
+            if (contactMatch) {
+              try {
+                const parsed = JSON.parse(contactMatch[1]);
+                if (parsed.name && parsed.name.trim().length > 1) {
+                  detectedName = parsed.name.trim();
+                  console.log(`[MEMÓRIA] 🔍 Nome "${detectedName}" recuperado de token [CONTATO] no histórico`);
+                  break;
+                }
+              } catch (_) {}
+            }
+          }
+        }
+      }
+
+      // 4. Se ainda não há nome, tentar extrair da mensagem atual ou do histórico de texto
+      if (!detectedName) {
+        const fullConversationText = [message, ...pastDbHistory.map(h => h.text)].join('\n');
+        const extracted = extractCustomerNameFromText(fullConversationText);
+        if (extracted) {
+          detectedName = extracted;
+          // Guardar na tabela contacts para nunca mais esquecer
+          await supabaseAdmin.from('contacts').upsert({
+            org_id: orgId,
+            phone: fromNumber,
+            name: extracted,
+            updated_at: new Date().toISOString(),
+          }, { onConflict: 'org_id,phone' }).then(() => {
+            console.log(`[MEMÓRIA] ✅ Nome "${extracted}" guardado permanentemente para ${fromNumber}`);
+          }).catch((e: any) => console.warn('[MEMÓRIA] Aviso ao guardar nome extraído:', e.message));
+        }
+      }
+
+      const isReturning = (dbHistory && dbHistory.length > 2) || (timeSinceLastMessageHours > 2);
+
+      customerProfile = {
+        name:        detectedName || undefined,
+        email:       existingContact?.email || undefined,
+        phone:       fromNumber,
+        isReturning,
+      };
+      console.log(`[MEMÓRIA] Cliente ${fromNumber}: nome="${customerProfile.name || 'desconhecido'}", recorrente=${isReturning}, inativo_horas=${timeSinceLastMessageHours.toFixed(1)}`);
     } catch (memErr: any) {
       console.warn('[MEMÓRIA] Erro ao carregar perfil do cliente (não crítico):', memErr.message);
     }
 
-    // Gerar resposta com IA (Gemini 2.5 Flash + Thinking)
+    // Gerar resposta com IA (Gemini para visão/áudio/documentos + DeepSeek para resposta textual)
     const aiResult = await AIService.generateResponse({
       message,
       orgId,
@@ -604,6 +662,20 @@ async function triggerAIResponse(params: {
 
     if (!aiResult?.reply) {
       throw new Error('Resposta da IA vazia.');
+    }
+
+    // Se a IA detectou um novo nome nos dados de contacto ou booking, gravar permanentemente
+    const newDetectedName = aiResult.contactData?.name || aiResult.bookingData?.name;
+    if (newDetectedName && newDetectedName.trim().length > 1 && (!customerProfile?.name || customerProfile.name !== newDetectedName)) {
+      supabaseAdmin.from('contacts').upsert({
+        org_id: orgId,
+        phone: fromNumber,
+        name: newDetectedName.trim(),
+        email: aiResult.contactData?.email || aiResult.bookingData?.email || customerProfile?.email,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'org_id,phone' }).then(() => {
+        console.log(`[MEMÓRIA] ✅ Novo nome "${newDetectedName}" capturado pela IA e guardado para ${fromNumber}`);
+      }).catch(() => {});
     }
 
     // ── Disparar notificações de Booking, Handover, Proposal ou Confirmation ──
@@ -883,6 +955,23 @@ async function triggerAIResponse(params: {
       console.log(`[IA] Transferência para humano solicitada para ${fromNumber}. IA pausada por 30 min.`);
     }
 
+    // Ativar protocolo de follow-up se a resposta da IA termina com pergunta
+    const trimmedReply = ptReplyText.trimEnd();
+    const endsWithQuestion = trimmedReply.endsWith('?') || trimmedReply.endsWith('?!');
+    if (endsWithQuestion && !aiResult.transfer && !aiResult.booking) {
+      // Buscar nome do cliente para personalizar follow-up
+      const clientName = (customerProfile?.name || '').trim().split(/\s+/)[0] || '';
+
+      FollowupService.scheduleSmartFollowup({
+        orgId,
+        phone:        fromNumber,
+        platform:     'whatsapp',
+        customerName: clientName,
+        botReply:     ptReplyText,
+        lastMessageId: sentMsgId || undefined,
+      }).catch(err => console.warn('[FOLLOWUP] Aviso ao agendar smart follow-up:', err.message));
+    }
+
   } catch (err: any) {
     console.error(`[IA] ERRO no fluxo para ${fromNumber}:`, err.message);
 
@@ -909,6 +998,22 @@ async function triggerAIResponse(params: {
     } catch (_) { /* silencioso */ }
   }
 }
+
+// ─── GET /api/whatsapp/webhook — Verificação Meta ─────────────────────────────
+router.get('/webhook', (req, res) => {
+  const VERIFY_TOKEN = process.env.META_VERIFY_TOKEN || 'orion_webhook_token';
+  const mode      = req.query['hub.mode'];
+  const token     = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
+
+  if (mode === 'subscribe' && token === VERIFY_TOKEN) {
+    console.log('[WEBHOOK] Verificado com sucesso pela Meta.');
+    res.status(200).send(challenge);
+  } else {
+    console.warn('[WEBHOOK] Falha na verificação. Token inválido.');
+    res.sendStatus(403);
+  }
+});
 
 // ─── POST /api/whatsapp/webhook — Recepção de mensagens ──────────────────────
 router.post('/webhook', async (req, res) => {
@@ -948,6 +1053,9 @@ router.post('/webhook', async (req, res) => {
         } catch (_) {}
       }
     }
+
+    const contacts = value?.contacts;
+    const profileName = contacts?.[0]?.profile?.name;
 
     if (!messages || messages.length === 0) return;
 
@@ -998,7 +1106,7 @@ router.post('/webhook', async (req, res) => {
     const phoneNumberId = metadata?.phone_number_id;
     const referral     = incomingMsg.referral;
 
-    console.log(`[WEBHOOK] Nova mensagem de ${fromNumber} → phone_id ${phoneNumberId}`);
+    console.log(`[WEBHOOK] Nova mensagem de ${fromNumber} (${profileName || 'Sem nome'}) → phone_id ${phoneNumberId}`);
 
     // ── 4. Buscar configuração da organização ─────────────────────────────────
     const { data: configData, error: dbError } = await supabaseAdmin
@@ -1051,7 +1159,7 @@ router.post('/webhook', async (req, res) => {
     const currentPlan   = subData?.plan || 'trial';
     const isVoiceAllowed = true; // Habilitado universalmente conforme os requisitos de IA multimodal
 
-    // ── 6. Extrair conteúdo da mensagem ──────────────────────────────────────
+    // ── 6. Extrair conteúdo da mensagem e processar mídias com Gemini Multimodal ──
     let userText = '';
     let media: { base64: string; mimeType: string } | undefined;
     let isAudioMessage = false;
@@ -1096,14 +1204,17 @@ router.post('/webhook', async (req, res) => {
                   userText += `\n\n[SISTEMA INTERNO — NÃO MENCIONAR AO CLIENTE]: O cliente falou em "${detectedLanguage}". Responda EXCLUSIVAMENTE nessa língua. Não use português na resposta enviada ao cliente.`;
                 }
               } else {
-                userText = '(Mensagem de áudio não transcrita)';
+                userText = '(Mensagem de áudio recebida)';
               }
             } else {
-              userText = '(Áudio recebido — plano Pro necessário para transcrição)';
+              userText = '(Áudio recebido)';
             }
           } else if (incomingMsg.type === 'document') {
-            // Extracção de texto de documentos
-            const extractedText = await DocumentService.extractTextFromBase64(mediaData.base64, mediaData.mimeType);
+            // Extracção de texto de documentos via DocumentService e Gemini Multimodal
+            let extractedText = await DocumentService.extractTextFromBase64(mediaData.base64, mediaData.mimeType);
+            if (!extractedText || extractedText.trim().length === 0) {
+              extractedText = await AIService.readDocumentWithGemini(mediaData.base64, mediaData.mimeType);
+            }
             if (extractedText) {
               userText = `[Documento "${filename}"]:\n${extractedText.substring(0, 10_000)}`;
             } else {
@@ -1112,8 +1223,18 @@ router.post('/webhook', async (req, res) => {
             if (caption) userText = `${caption}\n\n${userText}`;
 
           } else if (incomingMsg.type === 'image') {
-            userText = caption || '(Imagem enviada)';
-            // media é passado para o AIService que usa multimodalidade
+            // Análise visual de imagem via Gemini Multimodal
+            const imgDesc = await AIService.describeImageWithGemini(mediaData.base64, mediaData.mimeType);
+            userText = imgDesc
+              ? `${caption ? caption + '\n\n' : ''}[Imagem enviada]:\n${imgDesc}`
+              : (caption || '(Imagem enviada)');
+
+          } else if (incomingMsg.type === 'video') {
+            // Análise de vídeo via Gemini Multimodal
+            const vidDesc = await AIService.describeVideoWithGemini(mediaData.base64, mediaData.mimeType);
+            userText = vidDesc
+              ? `${caption ? caption + '\n\n' : ''}[Vídeo enviado]:\n${vidDesc}`
+              : (caption || '(Vídeo enviado)');
 
           } else {
             userText = caption || `(Ficheiro de ${incomingMsg.type} enviado)`;
@@ -1170,6 +1291,11 @@ router.post('/webhook', async (req, res) => {
       metadata: clientMetadata,
     });
 
+    // Cancelar follow-ups pendentes (cliente voltou a responder)
+    FollowupService.cancelPendingForPhone(orgId, fromNumber).catch(err =>
+      console.warn('[FOLLOWUP] Aviso ao cancelar follow-ups:', err.message)
+    );
+
     // ── 8b. Emitir evento em tempo real para o Live Chat ──────────────────────
     try {
       getIo().to(`org:${orgId}`).emit('new_message', {
@@ -1198,6 +1324,7 @@ router.post('/webhook', async (req, res) => {
       botName: botName || 'Assistente',
       message: dbText,
       incomingMessageId: messageId,
+      senderName: profileName,
       media,
       referral,
       isAudio: isAudioMessage,

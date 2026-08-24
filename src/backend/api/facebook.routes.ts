@@ -5,6 +5,7 @@ import { FacebookService } from '../services/facebook.service';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import { EmailService } from '../services/email.service';
 import { PushService } from '../services/push.service';
+import { FollowupService } from '../services/followup.service';
 import { getIo } from '../socket';
 import { AudioService } from '../services/audio.service';
 import axios from 'axios';
@@ -218,6 +219,9 @@ router.post('/webhook', async (req, res) => {
         metadata: { platform: 'facebook', referral: referral || undefined },
       });
 
+      // Cancelar follow-ups pendentes (cliente voltou a responder)
+      FollowupService.cancelPendingForPhone(orgId, senderId).catch(() => {});
+
       // 4. Indicador de digitação
       await FacebookService.sendTypingIndicator(pageId, senderId, accessToken, 'typing_on');
 
@@ -307,6 +311,17 @@ router.post('/webhook', async (req, res) => {
         text: aiResult.reply,
         metadata: { platform: 'facebook' },
       });
+
+      // Ativar protocolo de follow-up se a resposta da IA termina com pergunta
+      const trimmedFbReply = aiResult.reply.trimEnd();
+      if ((trimmedFbReply.endsWith('?') || trimmedFbReply.endsWith('?!')) && !aiResult.transfer && !aiResult.booking) {
+        FollowupService.scheduleSmartFollowup({
+          orgId,
+          phone:    senderId,
+          platform: 'facebook',
+          botReply: aiResult.reply,
+        }).catch(() => {});
+      }
 
       console.log(`[FB WEBHOOK] Resposta enviada para ${senderId}.`);
     }

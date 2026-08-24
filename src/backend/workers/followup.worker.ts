@@ -1,11 +1,44 @@
 // src/backend/workers/followup.worker.ts
 // Worker que executa a cada minuto e dispara follow-ups agendados
+// Protocolo: Step 1 (12h) → mensagem fixa; Step 2+ (24h) → mensagem contextualizada por cenário
+// Intervalo de 5 segundos entre envios para números diferentes (evitar spam)
 
-import { FollowupService } from '../services/followup.service';
-import { AIService }       from '../services/ai.service';
+import { FollowupService, FOLLOWUP_MESSAGES, detectScenario, randomScheduledTime } from '../services/followup.service';
 import { WhatsAppService } from '../services/whatsapp.service';
 import { FacebookService } from '../services/facebook.service';
 import { supabaseAdmin }   from '../config/supabase';
+
+/** Helper: aguardar N milissegundos */
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/** Extrai o cenário salvo no context_snapshot ou tenta detetar pelo histórico */
+async function resolveScenario(item: any): Promise<number> {
+  try {
+    if (item.context_snapshot) {
+      const parsed = JSON.parse(item.context_snapshot);
+      if (typeof parsed.scenario === 'number') return parsed.scenario;
+    }
+    // Fallback: detetar pelo histórico
+    const history = await FollowupService.fetchContext(item.org_id, item.customer_phone);
+    return detectScenario(history);
+  } catch {
+    return 4; // Cenário padrão
+  }
+}
+
+/** Construir a mensagem certa para o step atual */
+async function buildFollowupMessage(item: any): Promise<string> {
+  const step     = item.followup_step ?? 1;
+  const name     = item.customer_name || '';
+  const scenario = await resolveScenario(item);
+
+  if (step === 1) {
+    return FOLLOWUP_MESSAGES.step1(name);
+  }
+  return FOLLOWUP_MESSAGES.step2(name, scenario);
+}
 
 async function runFollowups() {
   try {
@@ -29,12 +62,12 @@ async function runFollowups() {
           continue;
         }
 
-        // ── 2. Buscar configurações da organização (token de acesso) ─────────
-        let accessToken = '';
+        // ── 2. Buscar configurações da organização ─────────────────────────
+        let accessToken   = '';
         let phoneNumberId = '';
-        let pageId = '';
+        let pageId        = '';
 
-        if (item.platform === 'whatsapp') {
+        if (item.platform === 'whatsapp' || !item.platform) {
           const { data: waCfg } = await supabaseAdmin
             .from('whatsapp_config')
             .select('access_token, phone_number_id')
@@ -44,12 +77,13 @@ async function runFollowups() {
 
           if (!waCfg) {
             console.warn(`[FOLLOWUP] Nenhuma config WhatsApp para org ${item.org_id}. Ignorando.`);
+            await FollowupService.setStatus(item.id, 'cancelled');
             continue;
           }
           accessToken   = waCfg.access_token;
           phoneNumberId = waCfg.phone_number_id;
 
-        } else {
+        } else if (item.platform === 'facebook') {
           const { data: fbCfg } = await supabaseAdmin
             .from('facebook_config')
             .select('access_token, page_id')
@@ -59,73 +93,116 @@ async function runFollowups() {
 
           if (!fbCfg) {
             console.warn(`[FOLLOWUP] Nenhuma config Facebook para org ${item.org_id}. Ignorando.`);
+            await FollowupService.setStatus(item.id, 'cancelled');
             continue;
           }
           accessToken = fbCfg.access_token;
           pageId      = fbCfg.page_id;
+
+        } else if (item.platform === 'instagram') {
+          const { data: igCfg } = await supabaseAdmin
+            .from('instagram_config')
+            .select('access_token, ig_user_id')
+            .eq('org_id', item.org_id)
+            .eq('is_active', true)
+            .maybeSingle();
+
+          if (!igCfg) {
+            console.warn(`[FOLLOWUP] Nenhuma config Instagram para org ${item.org_id}. Ignorando.`);
+            await FollowupService.setStatus(item.id, 'cancelled');
+            continue;
+          }
+          accessToken = igCfg.access_token;
+          pageId      = igCfg.ig_user_id;
         }
 
-        // ── 3. Buscar nome do bot ─────────────────────────────────────────────
-        const { data: orgData } = await supabaseAdmin
-          .from('organizations')
-          .select('chatbot_name')
-          .eq('id', item.org_id)
-          .maybeSingle();
+        // ── 3. Construir mensagem do step atual ───────────────────────────
+        const message = await buildFollowupMessage(item);
+        const currentStep = item.followup_step ?? 1;
 
-        const botName = orgData?.chatbot_name || 'Assistente';
+        console.log(`[FOLLOWUP] Enviando step ${currentStep} para ${item.customer_phone} (${item.platform}): "${message.substring(0, 60)}..."`);
 
-        // ── 4. Buscar histórico (contexto da conversa) ────────────────────────
-        const history = await FollowupService.fetchContext(item.org_id, item.customer_phone);
-
-        // ── 5. Montar prompt de follow-up ─────────────────────────────────────
-        const lastUserMsg = history.filter(m => m.sender === 'user').pop()?.text ?? '';
-        const basePrompt  = item.custom_prompt
-          ? item.custom_prompt
-          : 'Olá! Vi que ainda não recebemos a sua resposta. Posso ajudar com alguma dúvida?';
-
-        const prompt = item.custom_prompt
-          ? basePrompt                            // prompt personalizado já serve como mensagem
-          : `${basePrompt}\n\n[Última mensagem do cliente]: ${lastUserMsg}`;
-
-        // ── 6. Gerar resposta com IA ──────────────────────────────────────────
-        console.log(`[FOLLOWUP] Gerando resposta IA para ${item.customer_phone} (${item.platform})...`);
-        const aiResult = await AIService.generateResponse({
-          message:  prompt,
-          orgId:    item.org_id,
-          history,
-          botName,
-          mode:     'simulation',
-        });
-
-        // ── 7. Enviar mensagem pelo canal correto ─────────────────────────────
-        if (item.platform === 'whatsapp') {
-          await WhatsAppService.sendTextMessage(
+        // ── 4. Enviar mensagem pelo canal correto ─────────────────────────
+        let sent = false;
+        if (item.platform === 'whatsapp' || !item.platform) {
+          const sentId = await WhatsAppService.sendTextMessage(
             phoneNumberId,
             item.customer_phone,
-            aiResult.reply,
+            message,
             accessToken
           );
-        } else {
+          sent = !!sentId;
+        } else if (item.platform === 'facebook' || item.platform === 'instagram') {
           await FacebookService.sendMessage(
             pageId,
             item.customer_phone,
-            aiResult.reply,
+            message,
             accessToken
           );
+          sent = true;
         }
 
-        // ── 8. Persistir resposta no histórico ────────────────────────────────
+        if (!sent) {
+          console.warn(`[FOLLOWUP] Falha ao enviar mensagem para ${item.customer_phone}. Mantendo pendente para próxima tentativa.`);
+          // Não cancelar — tentar novamente na próxima volta do worker
+          continue;
+        }
+
+        // ── 5. Persistir mensagem no histórico ────────────────────────────
         await supabaseAdmin.from('conversation_history').insert({
           org_id:         item.org_id,
           customer_phone: item.customer_phone,
           sender:         'bot',
-          text:           aiResult.reply,
-          metadata:       { platform: item.platform, followup_id: item.id, type: 'followup' },
+          text:           message,
+          metadata:       { platform: item.platform || 'whatsapp', followup_id: item.id, followup_step: currentStep, type: 'followup' },
         });
 
-        // ── 9. Marcar como enviado ────────────────────────────────────────────
+        // ── 6. Marcar como enviado ────────────────────────────────────────
         await FollowupService.setStatus(item.id, 'sent');
-        console.log(`[FOLLOWUP] ✅ Follow-up enviado para ${item.customer_phone} (${item.platform})`);
+        console.log(`[FOLLOWUP] ✅ Step ${currentStep} enviado para ${item.customer_phone}`);
+
+        // ── 7. Agendar próximo follow-up (se step < 5) ───────────────────
+        // Limite: 5 follow-ups máximos (12h → +24h → +24h → +48h → +72h)
+        const MAX_STEPS = 5;
+        if (currentStep < MAX_STEPS) {
+          const nextStep = currentStep + 1;
+
+          // Intervalos progressivos: step1→24h, step2→24h, step3→48h, step4→72h
+          const delayHours = nextStep <= 2 ? 24 : nextStep === 3 ? 48 : 72;
+          const nextScheduledAt = randomScheduledTime(delayHours);
+
+          // Obter cenário atual para preservar contexto
+          const scenario = await resolveScenario(item);
+          const contextSnapshot = JSON.stringify({
+            scenario,
+            lastBotReply: message.substring(0, 500)
+          });
+
+          const { error: nextErr } = await supabaseAdmin
+            .from('followup_schedules')
+            .insert({
+              org_id:           item.org_id,
+              customer_phone:   item.customer_phone,
+              platform:         item.platform || 'whatsapp',
+              scheduled_at:     nextScheduledAt.toISOString(),
+              status:           'pending',
+              followup_step:    nextStep,
+              context_snapshot: contextSnapshot,
+              customer_name:    item.customer_name,
+              last_message_id:  item.last_message_id,
+            });
+
+          if (nextErr) {
+            console.warn(`[FOLLOWUP] Aviso ao agendar próximo follow-up (step ${nextStep}) para ${item.customer_phone}:`, nextErr.message);
+          } else {
+            console.log(`[FOLLOWUP] 📅 Próximo follow-up (step ${nextStep}) agendado para ${item.customer_phone} em ${nextScheduledAt.toISOString()}`);
+          }
+        } else {
+          console.log(`[FOLLOWUP] ⏹ Limite de ${MAX_STEPS} follow-ups atingido para ${item.customer_phone}. Sequência encerrada.`);
+        }
+
+        // ── 8. Intervalo de 5 segundos entre envios de números diferentes ─
+        await sleep(5000);
 
       } catch (itemErr: any) {
         console.error(`[FOLLOWUP] Erro no item ${item.id}:`, itemErr.message);
@@ -140,6 +217,6 @@ async function runFollowups() {
 runFollowups();
 const workerInterval = setInterval(runFollowups, 60_000);
 
-console.log('[FOLLOWUP WORKER] ✅ Worker de follow-up iniciado (intervalo: 60s)');
+console.log('[FOLLOWUP WORKER] ✅ Worker de follow-up iniciado (protocolo 12h/24h/48h/72h, intervalo: 60s)');
 
 export { workerInterval };
