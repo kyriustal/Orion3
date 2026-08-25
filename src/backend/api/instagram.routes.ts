@@ -223,6 +223,13 @@ router.post('/webhook', async (req, res) => {
                   messageText = ''; // Passar media raw ao AIService para nova tentativa via Gemini
                   console.warn(`[INSTAGRAM WEBHOOK] STT falhou. A passar media raw ao AIService.`);
                 }
+              } else if (att.type === 'image') {
+                console.log(`[INSTAGRAM WEBHOOK] Analisando imagem recebida do Instagram via Gemini...`);
+                const imgDesc = await AIService.describeImageWithGemini(base64, mimeType as string);
+                if (imgDesc) {
+                  messageText = `[Imagem enviada pelo cliente — descrição visual e texto lido]:\n${imgDesc}`;
+                  media = undefined;
+                }
               }
             } catch (err: any) {
               console.error(`[INSTAGRAM WEBHOOK] Erro ao descarregar/processar anexo:`, err.message);
@@ -236,16 +243,14 @@ router.post('/webhook', async (req, res) => {
         console.log(`[INSTAGRAM WEBHOOK] 📣 Mensagem de anúncio detectada. Referral:`, JSON.stringify(referral).substring(0, 200));
       }
 
-      // 3. Buscar histórico das últimas 24h (max 50 mensagens)
-      const last24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      // 3. Buscar histórico recente completo (últimas 60 mensagens)
       const { data: dbHistory } = await supabaseAdmin
         .from('conversation_history')
         .select('sender, text')
         .eq('org_id', orgId)
         .eq('customer_phone', senderId)
-        .gte('created_at', last24h)
         .order('created_at', { ascending: false })
-        .limit(50);
+        .limit(60);
 
       const history = (dbHistory || []).reverse().map(h => ({
         sender: h.sender as 'user' | 'bot' | 'human',
@@ -280,7 +285,7 @@ router.post('/webhook', async (req, res) => {
           phone:     senderId,
           sender:    'user',
           text:      messageText,
-          time:      new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          time:      new Date().toLocaleTimeString('pt-PT', { timeZone: 'Africa/Luanda', hour: '2-digit', minute: '2-digit' }),
           timestamp: new Date().toISOString(),
           platform:  'instagram',
           metadata:  igMediaMetadata,

@@ -14,20 +14,40 @@ import { toast } from "sonner";
 type Message = { id: number; sender: "user" | "bot" | "human"; text: string; time: string; timestamp?: string; botName?: string; agentName?: string; metadata?: any; };
 type Chat = { id: string; phone: string; name: string; lastMessage: string; time: string; timestamp: string; platform?: string; unread?: number; needs_confirm?: boolean; };
 
+const ANGOLA_TZ = 'Africa/Luanda';
+
+const getAngolaDateKey = (d: Date): string => {
+  return new Intl.DateTimeFormat('pt-PT', {
+    timeZone: ANGOLA_TZ,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(d);
+};
+
 const formatSeparatorDate = (timestampStr?: string) => {
   if (!timestampStr) return "Hoje";
   const date = new Date(timestampStr);
   if (isNaN(date.getTime())) return "Hoje";
-  const today = new Date();
-  const yesterday = new Date();
-  yesterday.setDate(today.getDate() - 1);
 
-  if (date.toDateString() === today.toDateString()) {
+  const now = new Date();
+  const dateKey = getAngolaDateKey(date);
+  const todayKey = getAngolaDateKey(now);
+
+  const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  const yesterdayKey = getAngolaDateKey(yesterday);
+
+  if (dateKey === todayKey) {
     return "Hoje";
-  } else if (date.toDateString() === yesterday.toDateString()) {
+  } else if (dateKey === yesterdayKey) {
     return "Ontem";
   } else {
-    return date.toLocaleDateString('pt-PT', { day: 'numeric', month: 'long', year: 'numeric' });
+    return new Intl.DateTimeFormat('pt-PT', {
+      timeZone: ANGOLA_TZ,
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric'
+    }).format(date);
   }
 };
 
@@ -35,17 +55,43 @@ const formatChatPreviewDate = (timestampStr?: string, fallbackTime?: string) => 
   if (!timestampStr) return fallbackTime || "";
   const date = new Date(timestampStr);
   if (isNaN(date.getTime())) return fallbackTime || "";
-  const today = new Date();
-  const yesterday = new Date();
-  yesterday.setDate(today.getDate() - 1);
 
-  if (date.toDateString() === today.toDateString()) {
-    return date.toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' });
-  } else if (date.toDateString() === yesterday.toDateString()) {
+  const now = new Date();
+  const dateKey = getAngolaDateKey(date);
+  const todayKey = getAngolaDateKey(now);
+
+  const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  const yesterdayKey = getAngolaDateKey(yesterday);
+
+  if (dateKey === todayKey) {
+    return new Intl.DateTimeFormat('pt-PT', {
+      timeZone: ANGOLA_TZ,
+      hour: '2-digit',
+      minute: '2-digit'
+    }).format(date);
+  } else if (dateKey === yesterdayKey) {
     return "Ontem";
   } else {
-    return date.toLocaleDateString('pt-PT', { day: 'numeric', month: 'short' });
+    return new Intl.DateTimeFormat('pt-PT', {
+      timeZone: ANGOLA_TZ,
+      day: 'numeric',
+      month: 'short'
+    }).format(date);
   }
+};
+
+const formatMessageTime = (timestampStr?: string, fallbackTime?: string): string => {
+  if (timestampStr) {
+    const d = new Date(timestampStr);
+    if (!isNaN(d.getTime())) {
+      return new Intl.DateTimeFormat('pt-PT', {
+        timeZone: ANGOLA_TZ,
+        hour: '2-digit',
+        minute: '2-digit'
+      }).format(d);
+    }
+  }
+  return fallbackTime || "";
 };
 
 const formatTimer = (seconds: number) => {
@@ -915,7 +961,7 @@ export default function LiveChat() {
             </div>
           ) : filteredChats.map(chat => {
             const previewDate = formatChatPreviewDate(chat.timestamp, chat.time);
-            const isToday = chat.timestamp && new Date(chat.timestamp).toDateString() === new Date().toDateString();
+            const isToday = chat.timestamp ? getAngolaDateKey(new Date(chat.timestamp)) === getAngolaDateKey(new Date()) : true;
             return (
               <div
                 key={chat.id}
@@ -1043,7 +1089,7 @@ export default function LiveChat() {
             {messages.map((msg, i) => {
               const showSeparator = i === 0 || (
                 msg.timestamp && messages[i - 1]?.timestamp && 
-                new Date(msg.timestamp).toDateString() !== new Date(messages[i - 1].timestamp!).toDateString()
+                getAngolaDateKey(new Date(msg.timestamp)) !== getAngolaDateKey(new Date(messages[i - 1].timestamp!))
               );
 
               const isSearchTarget = matchingMessageIndices.length > 0 && matchingMessageIndices[searchResultIndex] === i;
@@ -1072,7 +1118,7 @@ export default function LiveChat() {
                       </div>
                       {renderMessageContent(msg.text, msg.metadata)}
                       <div className="flex items-center justify-end gap-1 mt-1 opacity-70">
-                        <span className="text-[10px]">{msg.time}</span>
+                        <span className="text-[10px]">{formatMessageTime(msg.timestamp, msg.time)}</span>
                         {msg.sender !== "user" && (
                           <span title={msg.metadata?.status === "read" ? "Lida / Visualizada" : msg.metadata?.status === "delivered" ? "Entregue" : "Enviada"}>
                             {msg.metadata?.status === "read" ? (

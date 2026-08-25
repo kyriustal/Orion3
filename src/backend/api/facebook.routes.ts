@@ -155,8 +155,15 @@ router.post('/webhook', async (req, res) => {
                 userText = '';
                 console.warn(`[FB WEBHOOK] STT falhou. A passar media raw ao AIService para nova tentativa via Gemini.`);
               }
+            } else if (att.type === 'image') {
+              console.log(`[FB WEBHOOK] Analisando imagem recebida do Facebook via Gemini...`);
+              const imgDesc = await AIService.describeImageWithGemini(base64, mimeType as string);
+              if (imgDesc) {
+                userText = `[Imagem enviada pelo cliente — descrição visual e texto lido]:\n${imgDesc}`;
+                media = undefined;
+              }
             } else if (!userText) {
-              userText = att.type === 'image' ? '(Imagem enviada)' : `(Anexo do tipo ${att.type})`;
+              userText = `(Anexo do tipo ${att.type})`;
             }
           } catch (err: any) {
             console.error(`[FB WEBHOOK] Erro ao descarregar/processar anexo:`, err.message);
@@ -197,16 +204,14 @@ router.post('/webhook', async (req, res) => {
 
       const botName = org?.chatbot_name || config.display_name || 'Assistente';
 
-      // 2. Buscar histórico (últimas 50 mensagens)
-      const last24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      // 2. Buscar histórico recente completo (últimas 60 mensagens)
       const { data: dbHistory } = await supabaseAdmin
         .from('conversation_history')
         .select('sender, text')
         .eq('org_id', orgId)
         .eq('customer_phone', senderId)
-        .gte('created_at', last24h)
         .order('created_at', { ascending: false })
-        .limit(50);
+        .limit(60);
 
       const history = (dbHistory || []).reverse().map(h => ({ sender: h.sender, text: h.text }));
 

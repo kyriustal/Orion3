@@ -129,7 +129,7 @@ router.get('/chats', requireAuth, async (req: AuthRequest, res) => {
       .select('customer_phone, text, created_at, sender, metadata')
       .eq('org_id', orgId)
       .order('created_at', { ascending: false })
-      .limit(5000);
+      .limit(10000);
 
     if (error) throw error;
 
@@ -163,7 +163,7 @@ router.get('/chats', requireAuth, async (req: AuthRequest, res) => {
           phone: item.customer_phone,
           name: nameDisplay,
           lastMessage: item.text,
-          time: new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          time: new Date(item.created_at).toLocaleTimeString('pt-PT', { timeZone: 'Africa/Luanda', hour: '2-digit', minute: '2-digit' }),
           timestamp: item.created_at,
           lastSender: item.sender,
           platform: platform,
@@ -194,7 +194,7 @@ router.get('/history/:phone', requireAuth, async (req: AuthRequest, res) => {
       .eq('org_id', orgId)
       .eq('customer_phone', phone)
       .order('created_at', { ascending: false })
-      .limit(1000);
+      .limit(5000);
 
     if (error) throw error;
 
@@ -202,7 +202,7 @@ router.get('/history/:phone', requireAuth, async (req: AuthRequest, res) => {
       id: m.id,
       sender: m.sender,
       text: m.text,
-      time: new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      time: new Date(m.created_at).toLocaleTimeString('pt-PT', { timeZone: 'Africa/Luanda', hour: '2-digit', minute: '2-digit' }),
       timestamp: m.created_at,
       botName: m.metadata?.botName || undefined,
       agentName: m.metadata?.agentName || undefined,
@@ -265,7 +265,7 @@ router.post('/send', requireAuth, async (req: AuthRequest, res) => {
         phone:     phone,
         sender:    'human',
         text:      message,
-        time:      new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        time:      new Date().toLocaleTimeString('pt-PT', { timeZone: 'Africa/Luanda', hour: '2-digit', minute: '2-digit' }),
         timestamp: new Date().toISOString(),
         platform:  'whatsapp',
         agentName: agentName,
@@ -380,7 +380,7 @@ router.post('/send-file', requireAuth, upload.single('file'), async (req: AuthRe
         phone:     phone,
         sender:    'human',
         text:      fileMsgText,
-        time:      new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        time:      new Date().toLocaleTimeString('pt-PT', { timeZone: 'Africa/Luanda', hour: '2-digit', minute: '2-digit' }),
         timestamp: new Date().toISOString(),
         platform:  'whatsapp',
         agentName: agentName,
@@ -411,7 +411,7 @@ router.post('/send-file', requireAuth, upload.single('file'), async (req: AuthRe
           phone:     phone,
           sender:    'human',
           text:      message.trim(),
-          time:      new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          time:      new Date().toLocaleTimeString('pt-PT', { timeZone: 'Africa/Luanda', hour: '2-digit', minute: '2-digit' }),
           timestamp: new Date().toISOString(),
           platform:  'whatsapp',
           agentName: agentName
@@ -849,7 +849,7 @@ async function triggerAIResponse(params: {
               sender:    'bot',
               text:      fileMsgText,
               botName:   botName,
-              time:      new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              time:      new Date().toLocaleTimeString('pt-PT', { timeZone: 'Africa/Luanda', hour: '2-digit', minute: '2-digit' }),
               timestamp: new Date().toISOString(),
               platform:  'whatsapp',
               metadata:  {
@@ -885,7 +885,7 @@ async function triggerAIResponse(params: {
         sender:    'bot',
         text:      ptReplyText,
         botName:   botName,
-        time:      new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        time:      new Date().toLocaleTimeString('pt-PT', { timeZone: 'Africa/Luanda', hour: '2-digit', minute: '2-digit' }),
         timestamp: new Date().toISOString(),
         platform:  'whatsapp',
         metadata:  botMetadata,
@@ -1235,7 +1235,7 @@ router.post('/webhook', async (req, res) => {
             // Análise visual de imagem via Gemini Multimodal
             const imgDesc = await AIService.describeImageWithGemini(mediaData.base64, mediaData.mimeType);
             userText = imgDesc
-              ? `${caption ? caption + '\n\n' : ''}[Imagem enviada]:\n${imgDesc}`
+              ? `${caption ? caption + '\n\n' : ''}[Imagem enviada pelo cliente — descrição visual e texto lido]:\n${imgDesc}`
               : (caption || '(Imagem enviada)');
 
           } else if (incomingMsg.type === 'video') {
@@ -1311,7 +1311,7 @@ router.post('/webhook', async (req, res) => {
         phone:     fromNumber,
         sender:    'user',
         text:      dbText,
-        time:      new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        time:      new Date().toLocaleTimeString('pt-PT', { timeZone: 'Africa/Luanda', hour: '2-digit', minute: '2-digit' }),
         timestamp: new Date().toISOString(),
         platform:  'whatsapp',
         metadata:  clientMetadata,

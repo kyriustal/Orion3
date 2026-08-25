@@ -126,7 +126,7 @@ export async function postGeminiWithRetry(
     throw new Error('[GeminiRetry] Nenhuma GEMINI_API_KEY configurada no .env.');
   }
 
-  const candidateModels = [GEMINI_MODEL, 'gemini-2.5-flash', 'gemini-flash-latest', 'gemini-2.5-flash-lite', 'gemini-2.5-pro'];
+  const candidateModels = [GEMINI_MODEL, 'gemini-flash-latest'];
   const uniqueCandidateModels = Array.from(new Set(candidateModels));
 
   let lastError = '';
@@ -433,8 +433,9 @@ ${selectedToneInstructions}
 - Se o cliente pedir um ficheiro, catálogo ou documento que NÃO existe na lista de arquivos disponíveis da base de dados, NUNCA envie códigos [SEND_FILE]. Responda educadamente esclarecendo que vai solicitar à equipa responsável ou explique as informações em texto.
 
 ═══ LEITURA DE ÁUDIOS, DOCUMENTOS E IMAGENS ENVIADOS PELO CLIENTE ═══
-- O Gemini multimodal lê e transcreve com precisão os áudios, ficheiros PDF/Word e imagens que o cliente envia.
-- Você (escritor e consultor) DEVE SEMPRE responder com base nas informações extraídas desses ficheiros e áudios:
+- O Gemini multimodal analisa e extrai com precisão o conteúdo de imagens, fotos, comprovativos de pagamento, documentos PDF/Word e áudios enviados pelo cliente.
+- Você (escritor e consultor) DEVE SEMPRE responder com base nas informações extraídas desses ficheiros, imagens e áudios:
+  * Se o cliente enviou uma imagem/foto: responda diretamente ao que está na imagem (ex: comprovativo de transferência bancária, foto de produto, documento, tabela, orçamento, captura de ecrã ou dúvida ilustrada). Confirme que viu a imagem e aborde os seus detalhes com naturalidade. NUNCA diga que não consegue visualizar ou processar imagens.
   * Se o cliente enviou um áudio: responda com precisão ao que ele disse ou perguntou no áudio.
   * Se o cliente enviou um documento (ex: PDF, Word, tabela, orçamento): confirme que leu o documento, resuma os pontos essenciais e responda detalhadamente às questões do cliente.
 
@@ -650,26 +651,32 @@ export class AIService {
    */
   static async describeImageWithGemini(base64: string, mimeType: string): Promise<string> {
     try {
-      console.log(`[AIService] Descrevendo imagem (${mimeType}) com Gemini...`);
+      console.log(`[AIService] 🖼️ Descrevendo imagem (${mimeType}) com Gemini Multimodal...`);
+      
+      // Normalizar mimeType para formatos suportados pelo Gemini
+      let normalizedMime = (mimeType || 'image/jpeg').toLowerCase().split(';')[0].trim();
+      if (normalizedMime === 'image/jpg') normalizedMime = 'image/jpeg';
+      if (!normalizedMime.startsWith('image/')) normalizedMime = 'image/jpeg';
+
       const responseData = await postGeminiWithRetry(`${GEMINI_MODEL}:generateContent`, {
         contents: [{
           parts: [
             {
               inlineData: {
-                mimeType,
+                mimeType: normalizedMime,
                 data: base64,
               }
             },
             {
-              text: 'Descreva esta imagem detalhadamente em português, identificando qualquer texto escrito (OCR), documentos, recibos, números, tabelas, informações relevantes, ofertas ou produtos. Retorne apenas a descrição direta e completa para servir de contexto à conversa.'
+              text: 'Analise esta imagem detalhadamente em português. Se contiver texto, transcreva integralmente (OCR: recibos, comprovativos de pagamento, dados bancários, valores, datas, nomes, tabelas ou mensagens). Se for um produto, documento ou fotografia, descreva todos os elementos visuais essenciais de forma clara e objetiva para servir de contexto direto ao assistente.'
             }
           ]
         }],
         generationConfig: {
           temperature: 0.2,
-          maxOutputTokens: 1000,
+          maxOutputTokens: 1500,
         }
-      }, 15000);
+      }, 25000);
 
       const text = responseData?.candidates?.[0]?.content?.parts
         ?.filter((p: any) => !p.thought)
@@ -677,9 +684,15 @@ export class AIService {
         ?.join('')
         ?.trim() || '';
 
+      if (text) {
+        console.log(`[AIService] ✅ Imagem analisada com sucesso (${text.length} caracteres).`);
+      } else {
+        console.warn('[AIService] ⚠️ Gemini retornou descrição vazia para a imagem.');
+      }
+
       return text;
     } catch (err: any) {
-      console.error('[AIService] Falha ao descrever imagem com Gemini:', err.message);
+      console.error('[AIService] ❌ Falha ao descrever imagem com Gemini:', err.message);
       return '';
     }
   }
