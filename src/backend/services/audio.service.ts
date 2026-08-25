@@ -1,76 +1,30 @@
-import axios from 'axios';
-import fs from 'fs';
-import path from 'path';
-import os from 'os';
-import { getApiKey, postGeminiWithRetry } from './ai.service';
+import { postGeminiWithRetry } from './ai.service';
 
-const GEMINI_MODEL = 'gemini-2.5-flash';
-const GEMINI_BASE  = 'https://generativelanguage.googleapis.com/v1beta/models';
+const GEMINI_MODEL = 'gemini-2.0-flash';
 
 /**
  * Serviço de processamento de áudio.
- * Usa o Gemini 2.5 Flash multimodal para transcrição de voz (STT).
- * TTS é opcional e retorna null se não configurado.
+ * Usa o Google Gemini Multimodal para transcrição de voz (STT).
  */
 export class AudioService {
 
   /**
-   * Transcreve áudio em Base64 para texto usando Whisper (OpenAI) ou Gemini.
-   * Retorna o texto transcrito e a língua detectada automaticamente.
+   * Transcreve áudio em Base64 para texto usando o Gemini Multimodal.
+   * Retorna o texto transcrito e a língua detectada.
    */
   static async speechToTextFromBase64(
     base64: string,
     mimeType: string
   ): Promise<{ text: string; language: string } | null> {
-    // ─────────────────────────────────────────────────────────
-    // 1. Tentar OpenAI Whisper se a chave estiver configurada
-    // ─────────────────────────────────────────────────────────
-    const openaiKey = process.env.OPENAI_API_KEY?.replace(/^["']|["']$/g, '')?.trim();
-    if (openaiKey && openaiKey.length > 10) {
-      try {
-        console.log(`[AudioService] Tentando transcrição de áudio via OpenAI Whisper...`);
-
-        // Obter extensão correspondente para o arquivo
-        const ext = mimeType.includes('mpeg') || mimeType.includes('mp3') ? 'mp3' :
-                    mimeType.includes('wav') ? 'wav' :
-                    mimeType.includes('webm') ? 'webm' : 'ogg';
-
-        const buffer   = Buffer.from(base64, 'base64');
-        const fileBlob = new Blob([buffer], { type: mimeType });
-
-        const formData = new FormData();
-        formData.append('file', fileBlob, `audio.${ext}`);
-        formData.append('model', 'whisper-1');
-        // Sem 'language' explícito — Whisper deteta automaticamente a língua do cliente
-
-        const response = await axios.post('https://api.openai.com/v1/audio/transcriptions', formData, {
-          headers: {
-            'Authorization': `Bearer ${openaiKey}`,
-            'Content-Type': 'multipart/form-data',
-          },
-          timeout: 25_000,
-        });
-
-        const transcript = response.data?.text?.trim();
-        const detectedLang: string = response.data?.language || 'pt'; // Whisper retorna a língua detetada
-        if (transcript) {
-          console.log(`[AudioService] ✅ Transcrição Whisper concluída. Língua detectada: ${detectedLang}`);
-          return { text: transcript, language: detectedLang };
-        }
-      } catch (err: any) {
-        console.error('[AudioService] ❌ Transcrição Whisper falhou:', err.response?.data || err.message);
-        console.log('[AudioService] Avançando para fallback Gemini para transcrição de áudio...');
-      }
-    }
-
-    // ─────────────────────────────────────────────────────────
-    // 2. Fallback para Gemini 2.5 Flash com Rotação de Chaves
-    // ─────────────────────────────────────────────────────────
-    // Normalizar mimeType para formatos suportados pelo Gemini
-    const supportedTypes = ['audio/ogg', 'audio/mpeg', 'audio/mp4', 'audio/wav', 'audio/webm', 'audio/ogg; codecs=opus'];
-    const normalizedMime = mimeType.includes('ogg') ? 'audio/ogg' : mimeType;
-
     try {
+      console.log(`[AudioService] 🎙️ Transcrevendo áudio (${mimeType}) via Gemini Multimodal...`);
+
+      // Normalizar mimeType para formatos suportados pelo Gemini
+      let normalizedMime = (mimeType || 'audio/ogg').toLowerCase().split(';')[0].trim();
+      if (normalizedMime === 'audio/mp3') normalizedMime = 'audio/mpeg';
+      if (normalizedMime === 'audio/m4a') normalizedMime = 'audio/mp4';
+      if (normalizedMime === 'audio/opus') normalizedMime = 'audio/ogg';
+
       const responseData = await postGeminiWithRetry(`${GEMINI_MODEL}:generateContent`, {
         contents: [{
           parts: [
@@ -81,15 +35,15 @@ export class AudioService {
               }
             },
             {
-              text: 'Transcreva este áudio para texto em português. Retorne APENAS a transcrição, sem comentários, introduções ou formatação extra. Se o áudio estiver vazio ou inaudível, retorne: [inaudível]'
+              text: 'Transcreva com precisão todo o conteúdo falado deste áudio para texto. Retorne APENAS a transcrição literal, sem comentários, prefixos ou formatação extra. Se o áudio estiver completamente silencioso ou inaudível, retorne: [inaudível]'
             }
           ]
         }],
         generationConfig: {
           temperature: 0,
-          maxOutputTokens: 512,
+          maxOutputTokens: 1000,
         },
-      });
+      }, 25000);
 
       const text: string = responseData?.candidates?.[0]?.content?.parts
         ?.filter((p: any) => !p.thought)
@@ -97,66 +51,25 @@ export class AudioService {
         ?.join('')
         ?.trim() || '';
 
-      if (!text || text === '[inaudível]') return null;
+      if (!text || text === '[inaudível]') {
+        console.warn('[AudioService] Áudio vazio, inaudível ou sem texto reconhecido.');
+        return null;
+      }
 
-      return { text, language: 'pt' }; // Gemini fallback assume PT (não reporta língua)
+      console.log(`[AudioService] ✅ Áudio transcrito com sucesso: "${text.substring(0, 80)}"`);
+      return { text, language: 'pt' };
 
     } catch (err: any) {
-      console.error('[AudioService] Erro na transcrição Gemini com chaves rotativas:', err.message);
+      console.error('[AudioService] ❌ Erro na transcrição de áudio com Gemini:', err.message);
       return null;
     }
   }
 
   /**
-   * Converte texto em áudio usando a API Text-to-Speech (TTS) da OpenAI.
-   * Utiliza o modelo tts-1 e a voz feminina "nova" (enérgica e carismática).
-   * Salva o ficheiro temporariamente e retorna o caminho absoluto do MP3.
+   * TTS desabilitado (exclusivo para texto e áudio recebido)
    */
-  static async textToSpeech(text: string): Promise<string | null> {
-    const openaiKey = process.env.OPENAI_API_KEY?.replace(/^["']|["']$/g, '')?.trim();
-    
-    if (!openaiKey || openaiKey.length < 10) {
-      console.warn('[AudioService] OPENAI_API_KEY não configurada ou inválida. TTS ignorado.');
-      return null;
-    }
-
-    try {
-      console.log(`[AudioService] A gerar áudio via OpenAI TTS (voz feminina 'nova')...`);
-      
-      const response = await axios.post(
-        'https://api.openai.com/v1/audio/speech',
-        {
-          model: 'tts-1',
-          input: text,
-          voice: 'nova', // Voz feminina expressiva e natural
-          response_format: 'mp3'
-        },
-        {
-          headers: {
-            'Authorization': `Bearer ${openaiKey}`,
-            'Content-Type': 'application/json'
-          },
-          responseType: 'arraybuffer',
-          timeout: 25000
-        }
-      );
-
-      const tempDir = os.tmpdir();
-      const filename = `tts_reply_${Date.now()}.mp3`;
-      const filePath = path.join(tempDir, filename);
-
-      fs.writeFileSync(filePath, Buffer.from(response.data));
-      console.log(`[AudioService] ✅ Áudio TTS gravado em: ${filePath}`);
-      
-      return filePath;
-    } catch (err: any) {
-      const errMsg = err.response?.data 
-        ? Buffer.isBuffer(err.response.data) 
-          ? err.response.data.toString() 
-          : JSON.stringify(err.response.data)
-        : err.message;
-      console.error('[AudioService] ❌ Erro ao gerar TTS via OpenAI:', errMsg);
-      return null;
-    }
+  static async textToSpeech(_text: string): Promise<string | null> {
+    return null;
   }
 }
+

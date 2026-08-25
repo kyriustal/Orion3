@@ -1493,7 +1493,7 @@ router.get('/test-keys', async (req, res) => {
     for (let i = 0; i < keys.length; i++) {
       const key = keys[i];
       const masked = key.substring(0, 8) + '...' + key.substring(key.length - 4);
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`;
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${key}`;
       
       try {
         const response = await axios.post(url, {

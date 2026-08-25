@@ -50,7 +50,7 @@ export interface GenerateResult {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  Configuração Gemini 2.5 Flash
+//  Configuração Google Gemini (Multimodal: Áudio, Imagens, Vídeos, Documentos)
 // ─────────────────────────────────────────────────────────────────────────────
 const GEMINI_MODEL = 'gemini-2.5-flash';
 const GEMINI_BASE  = 'https://generativelanguage.googleapis.com/v1beta/models';
@@ -58,11 +58,6 @@ const GEMINI_BASE  = 'https://generativelanguage.googleapis.com/v1beta/models';
 // Chaves de fallback resiliente garantidas para funcionamento contínuo mesmo se o .env do servidor estiver incompleto
 const DEFAULT_DEEPSEEK_KEYS = [
   'sk-af8be088f2f64a908b0627e252038e3e'
-];
-
-const DEFAULT_GEMINI_KEYS = [
-  'AIzaSyAcGFxdt4vcB__g5jafVKvzPuNSfFZDgq0',
-  'AIzaSyCx82gslbXvYzNiYsHKAeED4YE0-xSe0vo'
 ];
 
 // Mapa de cooldown para chaves temporariamente em 429
@@ -75,7 +70,6 @@ export function getUniqueApiKeys(): string[] {
     process.env.GEMINI_API_KEY_2,
     process.env.GEMINI_API_KEY_3,
     process.env.GEMINI_API_KEY_4,
-    ...DEFAULT_GEMINI_KEYS
   ].filter(Boolean) as string[];
 
   const allKeys: string[] = [];
@@ -92,7 +86,7 @@ export function getUniqueApiKeys(): string[] {
 export function getApiKey(attempt = 0): string {
   const uniqueKeys = getUniqueApiKeys();
   if (uniqueKeys.length === 0) {
-    throw new Error('[AIService] Nenhuma GEMINI_API_KEY válida no .env');
+    throw new Error('[AIService] Nenhuma GEMINI_API_KEY configurada no .env');
   }
   const baseIdx = Math.floor(Date.now() / 60_000);
   const idx = (baseIdx + attempt) % uniqueKeys.length;
@@ -129,10 +123,10 @@ export async function postGeminiWithRetry(
 ): Promise<any> {
   const keys = getUniqueApiKeys();
   if (keys.length === 0) {
-    throw new Error('[GeminiRetry] Nenhuma GEMINI_API_KEY configurada.');
+    throw new Error('[GeminiRetry] Nenhuma GEMINI_API_KEY configurada no .env.');
   }
 
-  const candidateModels = [GEMINI_MODEL, 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'];
+  const candidateModels = [GEMINI_MODEL, 'gemini-2.5-flash', 'gemini-flash-latest', 'gemini-2.5-flash-lite', 'gemini-2.5-pro'];
   const uniqueCandidateModels = Array.from(new Set(candidateModels));
 
   let lastError = '';
