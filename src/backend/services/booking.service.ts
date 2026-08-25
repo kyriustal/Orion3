@@ -415,6 +415,61 @@ export class BookingService {
       });
     }
 
+    // Estágio 4: Avaliação Pós-Atendimento (Após a data/hora marcada)
+    // Agendado para ~2 horas após o início da consultoria.
+    // Se ultrapassar as 19:00 ou for antes das 09:00, ajusta para as 09:30 da manhã seguinte.
+    const postReviewDate = new Date(appointmentDateObj);
+    postReviewDate.setHours(postReviewDate.getHours() + 2);
+
+    if (postReviewDate.getHours() >= 19 || postReviewDate.getHours() < 9) {
+      if (postReviewDate.getHours() >= 19) {
+        postReviewDate.setDate(postReviewDate.getDate() + 1);
+      }
+      postReviewDate.setHours(9, 30, 0, 0);
+    }
+
+    if (postReviewDate.getTime() > now.getTime()) {
+      remindersToSchedule.push({
+        reminder_stage: 'post_appointment_review',
+        scheduled_at: postReviewDate.toISOString(),
+      });
+
+      // Agendar também no canal de mensagens instantâneas (WhatsApp / Followup Schedules)
+      if (phone) {
+        try {
+          // Cancelar follow-ups de vendas pendentes para o cliente
+          await supabaseAdmin
+            .from('followup_schedules')
+            .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
+            .eq('org_id', orgId)
+            .eq('customer_phone', phone)
+            .eq('status', 'pending');
+
+          // Agendar mensagem de avaliação pós-atendimento
+          await supabaseAdmin
+            .from('followup_schedules')
+            .insert({
+              org_id: orgId,
+              customer_phone: phone,
+              platform: 'whatsapp',
+              scheduled_at: postReviewDate.toISOString(),
+              status: 'pending',
+              followup_step: 100, // 100 = código especial para avaliação pós-atendimento
+              customer_name: name,
+              context_snapshot: JSON.stringify({
+                type: 'post_appointment_review',
+                subject,
+                appointmentDate: date,
+                appointmentTime: time,
+              }),
+            });
+          console.log(`[BookingService] ⭐ Avaliação pós-atendimento programada para ${phone} em ${postReviewDate.toISOString()}`);
+        } catch (fErr: any) {
+          console.warn('[BookingService] Aviso ao agendar avaliação no followup_schedules:', fErr.message);
+        }
+      }
+    }
+
     // Inserir os lembretes na tabela appointment_reminders
     for (const rem of remindersToSchedule) {
       try {

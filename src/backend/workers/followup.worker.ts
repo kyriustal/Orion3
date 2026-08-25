@@ -34,10 +34,23 @@ async function buildFollowupMessage(item: any): Promise<string> {
   const name     = item.customer_name || '';
   const scenario = await resolveScenario(item);
 
-  if (step === 1) {
-    return FOLLOWUP_MESSAGES.step1(name);
+  if (step === 100) {
+    let subject = 'o seu processo de visto';
+    try {
+      if (item.context_snapshot) {
+        const parsed = JSON.parse(item.context_snapshot);
+        if (parsed.subject) subject = parsed.subject;
+      }
+    } catch {}
+    const greeting = name ? `Olá, ${name}!` : 'Olá!';
+    return `${greeting} Esperamos que tenha corrido tudo bem com a sua consultoria na On Visa (${subject}). 😊\n\nGostaríamos muito de saber: como foi o atendimento? A sua avaliação e feedback são muito importantes para nós! ⭐`;
   }
-  return FOLLOWUP_MESSAGES.step2(name, scenario);
+
+  if (step === 1) return FOLLOWUP_MESSAGES.step1(name);
+  if (step === 2) return FOLLOWUP_MESSAGES.step2(name, scenario);
+  if (step === 3) return FOLLOWUP_MESSAGES.step3(name, scenario);
+  if (step === 4) return FOLLOWUP_MESSAGES.step4(name, scenario);
+  return FOLLOWUP_MESSAGES.step5(name);
 }
 
 async function runFollowups() {
@@ -161,10 +174,12 @@ async function runFollowups() {
         await FollowupService.setStatus(item.id, 'sent');
         console.log(`[FOLLOWUP] ✅ Step ${currentStep} enviado para ${item.customer_phone}`);
 
-        // ── 7. Agendar próximo follow-up (se step < 5) ───────────────────
+        // ── 7. Agendar próximo follow-up (se for fluxo de vendas step < 5) ───
         // Limite: 5 follow-ups máximos (12h → +24h → +24h → +48h → +72h)
         const MAX_STEPS = 5;
-        if (currentStep < MAX_STEPS) {
+        if (currentStep === 100) {
+          console.log(`[FOLLOWUP] ⭐ Avaliação pós-atendimento enviada para ${item.customer_phone}. Sequência concluída com sucesso.`);
+        } else if (currentStep < MAX_STEPS) {
           const nextStep = currentStep + 1;
 
           // Intervalos progressivos: step1→24h, step2→24h, step3→48h, step4→72h

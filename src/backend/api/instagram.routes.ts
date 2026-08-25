@@ -349,9 +349,8 @@ router.post('/webhook', async (req, res) => {
           metadata:       { platform: 'instagram' },
         });
 
-        // Ativar protocolo de follow-up se a resposta da IA termina com pergunta
-        const trimmedIgReply = aiReply.trimEnd();
-        if ((trimmedIgReply.endsWith('?') || trimmedIgReply.endsWith('?!')) && !transfer && !aiResult.booking) {
+        // Ativar protocolo de follow-up para todos os clientes sem agendamento e sem transferência para humano
+        if (!transfer && !aiResult.booking) {
           FollowupService.scheduleSmartFollowup({
             orgId,
             phone:    senderId,

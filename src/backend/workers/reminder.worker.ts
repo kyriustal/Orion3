@@ -51,22 +51,37 @@ async function runAppointmentReminders() {
         let smsSuccess = false;
         const errors: string[] = [];
 
+        const isPostReview = reminder.reminder_stage === 'post_appointment_review';
+
         // ── 1. Enviar Email se o cliente tiver e-mail cadastrado ──
         if (reminder.customer_email && (reminder.channels === 'email' || reminder.channels === 'both')) {
           try {
-            console.log(`[REMINDER WORKER] ✉️ Enviando lembrete (${reminder.reminder_stage}) por e-mail para ${reminder.customer_email}...`);
-            emailSuccess = await EmailService.sendBookingReminderToCustomer({
-              customerEmail: reminder.customer_email,
-              customerName: reminder.customer_name,
-              date: reminder.appointment_date,
-              time: reminder.appointment_time,
-              subject: reminder.subject,
-              reminderStage: reminder.reminder_stage as any,
-              companyName,
-              companyPhone,
-              companyAddress,
-              mapsLink,
-            });
+            if (isPostReview) {
+              console.log(`[REMINDER WORKER] ✉️ Enviando email de avaliação pós-atendimento para ${reminder.customer_email}...`);
+              emailSuccess = await EmailService.sendPostAppointmentReviewToCustomer({
+                customerEmail: reminder.customer_email,
+                customerName: reminder.customer_name,
+                date: reminder.appointment_date,
+                time: reminder.appointment_time,
+                subject: reminder.subject,
+                companyName,
+                companyPhone,
+              });
+            } else {
+              console.log(`[REMINDER WORKER] ✉️ Enviando lembrete (${reminder.reminder_stage}) por e-mail para ${reminder.customer_email}...`);
+              emailSuccess = await EmailService.sendBookingReminderToCustomer({
+                customerEmail: reminder.customer_email,
+                customerName: reminder.customer_name,
+                date: reminder.appointment_date,
+                time: reminder.appointment_time,
+                subject: reminder.subject,
+                reminderStage: reminder.reminder_stage as any,
+                companyName,
+                companyPhone,
+                companyAddress,
+                mapsLink,
+              });
+            }
           } catch (eErr: any) {
             errors.push(`Email error: ${eErr.message}`);
           }
@@ -75,21 +90,36 @@ async function runAppointmentReminders() {
         // ── 2. Enviar SMS se o cliente tiver telefone cadastrado ──
         if (reminder.customer_phone && (reminder.channels === 'sms' || reminder.channels === 'both')) {
           try {
-            console.log(`[REMINDER WORKER] 📱 Enviando lembrete (${reminder.reminder_stage}) por SMS para ${reminder.customer_phone}...`);
-            const smsRes = await TelcoSMSService.sendBookingReminderSMS({
-              orgId,
-              to: reminder.customer_phone,
-              customerName: reminder.customer_name,
-              date: reminder.appointment_date,
-              time: reminder.appointment_time,
-              subject: reminder.subject,
-              reminderStage: reminder.reminder_stage as any,
-              companyName,
-              mapsLink,
-            });
-            smsSuccess = smsRes.success;
-            if (!smsRes.success && smsRes.error) {
-              errors.push(`SMS: ${smsRes.error}`);
+            if (isPostReview) {
+              console.log(`[REMINDER WORKER] 📱 Enviando SMS de avaliação pós-atendimento para ${reminder.customer_phone}...`);
+              const smsRes = await TelcoSMSService.sendPostAppointmentReviewSMS({
+                orgId,
+                to: reminder.customer_phone,
+                customerName: reminder.customer_name,
+                subject: reminder.subject,
+                companyName,
+              });
+              smsSuccess = smsRes.success;
+              if (!smsRes.success && smsRes.error) {
+                errors.push(`SMS: ${smsRes.error}`);
+              }
+            } else {
+              console.log(`[REMINDER WORKER] 📱 Enviando lembrete (${reminder.reminder_stage}) por SMS para ${reminder.customer_phone}...`);
+              const smsRes = await TelcoSMSService.sendBookingReminderSMS({
+                orgId,
+                to: reminder.customer_phone,
+                customerName: reminder.customer_name,
+                date: reminder.appointment_date,
+                time: reminder.appointment_time,
+                subject: reminder.subject,
+                reminderStage: reminder.reminder_stage as any,
+                companyName,
+                mapsLink,
+              });
+              smsSuccess = smsRes.success;
+              if (!smsRes.success && smsRes.error) {
+                errors.push(`SMS: ${smsRes.error}`);
+              }
             }
           } catch (sErr: any) {
             errors.push(`SMS error: ${sErr.message}`);

@@ -964,10 +964,8 @@ async function triggerAIResponse(params: {
       console.log(`[IA] Transferência para humano solicitada para ${fromNumber}. IA pausada por 30 min.`);
     }
 
-    // Ativar protocolo de follow-up se a resposta da IA termina com pergunta
-    const trimmedReply = ptReplyText.trimEnd();
-    const endsWithQuestion = trimmedReply.endsWith('?') || trimmedReply.endsWith('?!');
-    if (endsWithQuestion && !aiResult.transfer && !aiResult.booking) {
+    // Ativar protocolo de follow-up para todos os clientes sem agendamento e sem transferência para humano
+    if (!aiResult.transfer && !aiResult.booking) {
       // Buscar nome do cliente para personalizar follow-up
       const clientName = (customerProfile?.name || '').trim().split(/\s+/)[0] || '';
 

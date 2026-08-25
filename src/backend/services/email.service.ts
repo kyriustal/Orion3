@@ -581,4 +581,95 @@ export class EmailService {
       return false;
     }
   }
+
+  /**
+   * Envia e-mail de pesquisa de satisfação e avaliação pós-atendimento.
+   */
+  static async sendPostAppointmentReviewToCustomer(params: {
+    customerEmail: string;
+    customerName: string;
+    date: string;
+    time: string;
+    subject: string;
+    companyName: string;
+    companyPhone?: string;
+  }): Promise<boolean> {
+    const { customerEmail, customerName, date, time, subject, companyName, companyPhone } = params;
+
+    const host = process.env.SMTP_HOST;
+    const port = parseInt(process.env.SMTP_PORT || '587', 10);
+    const user = process.env.SMTP_USER;
+    const pass = process.env.SMTP_PASS;
+    const smtpUser = user || 'no-reply@orion.com';
+    const from = `${companyName} <${smtpUser}>`;
+
+    if (!user || !pass) {
+      console.warn(`[EmailService] ⚠️ SMTP não configurado. Simulação de email de avaliação pós-atendimento para ${customerEmail}`);
+      return true;
+    }
+
+    try {
+      const transporter = nodemailer.createTransport({
+        host,
+        port,
+        secure: port === 465,
+        auth: { user, pass },
+      });
+
+      const htmlContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <style>
+          body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f3f4f6; margin: 0; padding: 0; }
+          .container { max-width: 600px; margin: 40px auto; background: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
+          .header { background: linear-gradient(135deg, #4f46e5 0%, #1e1b4b 100%); padding: 35px 20px; text-align: center; color: #ffffff; }
+          .header h1 { margin: 0; font-size: 22px; font-weight: 700; }
+          .content { padding: 30px; color: #1f2937; line-height: 1.6; }
+          .badge { display: inline-block; background-color: rgba(255,255,255,0.2); padding: 4px 12px; border-radius: 9999px; font-size: 11px; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 8px; }
+          .card { background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px; margin: 20px 0; text-align: center; }
+          .stars { font-size: 24px; color: #fbbf24; margin: 10px 0; }
+          .footer { background-color: #f9fafb; padding: 20px; text-align: center; font-size: 13px; color: #9ca3af; border-top: 1px solid #e5e7eb; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <span class="badge">AVALIAÇÃO DE ATENDIMENTO</span>
+            <h1>Como foi a sua experiência?</h1>
+            <p style="margin: 8px 0 0 0; opacity: 0.95;">${companyName}</p>
+          </div>
+          <div class="content">
+            <p>Olá <strong>${customerName}</strong>,</p>
+            <p>Esperamos que tenha corrido tudo bem com a sua consultoria sobre <strong>${subject}</strong> realizada em ${date}.</p>
+            <div class="card">
+              <p style="margin: 0; font-size: 16px; font-weight: 600; color: #334155;">A sua opinião é fundamental para melhorarmos continuamente!</p>
+              <div class="stars">⭐⭐⭐⭐⭐</div>
+              <p style="font-size: 14px; color: #64748b; margin: 0;">Como avalia o atendimento e esclarecimento prestado pela nossa equipa?</p>
+            </div>
+            <p>Basta responder a este e-mail ou enviar uma mensagem para o nosso WhatsApp (${companyPhone || 'o nosso contacto'}) partilhando os seus comentários ou sugestões.</p>
+          </div>
+          <div class="footer">
+            <p>&copy; ${new Date().getFullYear()} ${companyName}. Todos os direitos reservados.</p>
+          </div>
+        </div>
+      </body>
+      </html>
+      `;
+
+      await transporter.sendMail({
+        from,
+        to: customerEmail,
+        subject: `⭐ Como foi o seu atendimento com a ${companyName}?`,
+        html: htmlContent,
+      });
+
+      console.log(`[EmailService] ✅ Email de avaliação pós-atendimento enviado para ${customerEmail}`);
+      return true;
+    } catch (err: any) {
+      console.error(`[EmailService] ❌ Erro ao enviar email de avaliação pós-atendimento para ${customerEmail}:`, err.message);
+      return false;
+    }
+  }
 }

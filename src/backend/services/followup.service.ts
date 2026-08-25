@@ -23,22 +23,40 @@ export const FOLLOWUP_MESSAGES = {
   /** Step 1 — após 12h sem resposta */
   step1: (name: string) => {
     const greeting = name ? `Olá, ${name}!` : 'Olá!';
-    return `${greeting} Sei que a rotina é corrida, por isso passo só para saber se conseguiu ver a minha última mensagem ou se prefere que conversamos noutro momento. Abraço!`;
+    return `${greeting} Sei que a rotina é corrida, por isso passo só para saber se conseguiu ver a minha última mensagem sobre os nossos serviços de visto ou se prefere que conversemos noutro momento. Abraço!`;
   },
 
   /** Step 2 — após +24h, contextualizado por cenário */
   step2: (name: string, scenario: number): string => {
     const n = name ? `Olá, ${name}!` : 'Olá!';
     switch (scenario) {
-      case 1: // 🛋️ Cenário 1: Aguardava fotos ou informações do sofá
-        return `${n} Passando para saber se conseguiu tirar aquelas fotos do sofá ou verificar o tamanho dele para eu conseguir fechar o seu orçamento. Fico à espera!`;
-      case 2: // 💰 Cenário 2: Enviou o orçamento e o cliente sumiu
-        return `${n} Tudo bem? Só queria confirmar se conseguiu analisar o orçamento para a lavagem do seu sofá. Ficou com alguma dúvida sobre o valor ou sobre o nosso processo de limpeza?`;
-      case 3: // 📅 Cenário 3: Faltava apenas agendar o dia/hora
-        return `${n} Como a sua rotina deve estar corrida, passo para saber se conseguiu ver qual o melhor dia e horário para fazermos a lavagem do seu sofá. Ainda tenho algumas vagas para esta semana!`;
-      default: // 🧼 Cenário 4: Abordagem ultra-rápida
-        return `${n} Tudo bem? Passando só para alinhar o nosso contacto sobre a limpeza do seu sofá. Conseguimos avançar?`;
+      case 1: // 📄 Cenário 1: Aguardava documentos, fotos ou informações do cliente
+        return `${n} Passando para saber se conseguiu verificar os seus documentos ou as informações do seu perfil para darmos seguimento à análise da sua candidatura ao visto. Fico à sua disposição!`;
+      case 2: // 💰 Cenário 2: Enviou orçamento / valores / modalidade pós-paga
+        return `${n} Tudo bem? Queria saber se conseguiu analisar os valores e as condições da nossa assessoria (incluindo o nosso protocolo de pagamento). Ficou com alguma dúvida sobre o investimento ou formas de pagamento?`;
+      case 3: // 📅 Cenário 3: Faltava agendar consultoria
+        return `${n} Como a rotina pode estar corrida, passo para saber se conseguiu ver qual o melhor dia e horário para a sua consultoria de visto presencial ou online. Ainda temos algumas vagas para esta semana!`;
+      default: // 🌍 Cenário 4: Abordagem geral de vistos
+        return `${n} Tudo bem? Passando só para saber se gostaria de avançar com a sua assessoria de visto connosco ou esclarecer alguma dúvida. Conseguimos avançar?`;
     }
+  },
+
+  /** Step 3 — após +48h */
+  step3: (name: string, scenario: number): string => {
+    const n = name ? `Olá, ${name}!` : 'Olá!';
+    return `${n} Não gostaria que perdesse as oportunidades e prazos atuais para o seu visto. Caso queira conversar com um dos nossos consultores ou agendar um atendimento no escritório, avise-me por aqui!`;
+  },
+
+  /** Step 4 — após +72h */
+  step4: (name: string, scenario: number): string => {
+    const n = name ? `Olá, ${name}!` : 'Olá!';
+    return `${n} Tudo bem? Passando para deixar uma nota sobre o seu processo de visto. Se ainda tiver interesse em dar entrada ou tirar dúvidas, basta responder a esta mensagem quando for mais conveniente!`;
+  },
+
+  /** Step 5 — encerramento cordial */
+  step5: (name: string) => {
+    const n = name ? `Olá, ${name}!` : 'Olá!';
+    return `${n} Vou encerrar os nossos lembretes automáticos por aqui para não incomodar. Estaremos sempre à sua disposição na On Visa quando desejar dar o próximo passo no seu visto. Tenha um excelente dia!`;
   }
 };
 
@@ -46,16 +64,16 @@ export const FOLLOWUP_MESSAGES = {
 export function detectScenario(history: { sender: string; text: string }[]): number {
   const allText = history.map(h => h.text).join(' ').toLowerCase();
 
-  // Cenário 1 — aguardava fotos / informações / medidas / detalhes
-  if (/foto|imagem|medida|tamanho|dimensão|dimensao|documento|verificar info|enviar info|conseguiu tirar|conseguiu verificar/.test(allText)) {
+  // Cenário 1 — aguardava documentos / fotos / dados pessoais / passaporte / currículo
+  if (/(foto|imagem|documento|passaporte|curriculo|currículo|registo criminal|registro criminal|dados|informações|informacoes|detalhes|perfil)/i.test(allText)) {
     return 1;
   }
-  // Cenário 2 — orçamento enviado / valor / preço
-  if (/orçamento|orcamento|valor|preço|preco|custo|proposta|€|kz|usd|mzn|cotação|cotacao/.test(allText)) {
+  // Cenário 2 — orçamento enviado / valor / preço / pagamento / kz / usd / eur / pós-pago / pos-paga
+  if (/(orçamento|orcamento|valor|preço|preco|custo|proposta|kz|kwanza|eur|usd|pós-paga|pos-paga|pagamento|investimento)/i.test(allText)) {
     return 2;
   }
-  // Cenário 3 — faltava agendar
-  if (/agendar|marcar|marcação|agendamento|data|dia|horário|horario|disponibilidade|reservar/.test(allText)) {
+  // Cenário 3 — agendamento / consultoria / marcar consulta ou visita
+  if (/(agendar|marcar|marcação|marcacao|consultoria|agendamento|horário|horario|disponibilidade|escritório|escritorio)/i.test(allText)) {
     return 3;
   }
   return 4;
@@ -133,6 +151,22 @@ export class FollowupService {
     try {
       // Cancelar eventuais follow-ups anteriores pendentes
       await this.cancelPendingForPhone(params.orgId, params.phone);
+
+      // Verificar se o cliente já possui agendamento ativo ou futuro
+      const todayIso = new Date().toISOString().split('T')[0];
+      const { data: activeBookings } = await supabaseAdmin
+        .from('bookings')
+        .select('id')
+        .eq('org_id', params.orgId)
+        .eq('phone', params.phone)
+        .gte('date', todayIso)
+        .neq('status', 'cancelled')
+        .limit(1);
+
+      if (activeBookings && activeBookings.length > 0) {
+        console.log(`[FOLLOWUP] ℹ️ Cliente ${params.phone} já possui agendamento ativo. Follow-up de vendas ignorado.`);
+        return;
+      }
 
       // Buscar histórico para snapshot de contexto e detetar cenário
       const history = await this.fetchContext(params.orgId, params.phone);

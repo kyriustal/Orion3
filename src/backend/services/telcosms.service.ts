@@ -212,5 +212,26 @@ export class TelcoSMSService {
       message,
     });
   }
+
+  /**
+   * Envia SMS de avaliação pós-atendimento/consultoria.
+   */
+  static async sendPostAppointmentReviewSMS(params: {
+    orgId: string;
+    to: string;
+    customerName: string;
+    subject: string;
+    companyName: string;
+  }): Promise<SendSMSResult> {
+    const { orgId, to, customerName, subject, companyName } = params;
+    const name = customerName ? `${customerName}` : 'Cliente';
+    const message = `Olá, ${name}! Esperamos que tenha corrido tudo bem com o seu atendimento na ${companyName} (${subject}). Gostaríamos muito de saber: como foi a sua experiência? A sua avaliação é muito importante para nós!`;
+
+    return this.sendSMS({
+      orgId,
+      to,
+      message,
+    });
+  }
 }
 
