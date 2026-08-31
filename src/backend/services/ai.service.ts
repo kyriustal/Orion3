@@ -200,6 +200,87 @@ interface OrgProfile {
   calendar_link?: string;
 }
 
+/**
+ * Retorna o contexto temporal detalhado atual (Fuso horário de Angola WAT / UTC+1)
+ * com data, dia da semana, hora exata e lista oficial de feriados nacionais de Angola.
+ */
+function getAngolaTemporalContext(): {
+  nowIso: string;
+  currentDateFormatted: string;
+  dayOfWeekName: string;
+  currentTimeStr: string;
+  currentYear: number;
+  holidaysAngola: string;
+  promptContext: string;
+} {
+  const now = new Date();
+  const formatterOpts: Intl.DateTimeFormatOptions = { timeZone: 'Africa/Luanda' };
+
+  const year = parseInt(new Intl.DateTimeFormat('pt-PT', { ...formatterOpts, year: 'numeric' }).format(now), 10);
+  const month = parseInt(new Intl.DateTimeFormat('pt-PT', { ...formatterOpts, month: '2-digit' }).format(now), 10);
+  const day = parseInt(new Intl.DateTimeFormat('pt-PT', { ...formatterOpts, day: '2-digit' }).format(now), 10);
+
+  const hour = new Intl.DateTimeFormat('pt-PT', { ...formatterOpts, hour: '2-digit', hour12: false }).format(now).padStart(2, '0');
+  const minute = new Intl.DateTimeFormat('pt-PT', { ...formatterOpts, minute: '2-digit' }).format(now).padStart(2, '0');
+
+  const monthNames = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+  const dayNames = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
+
+  const dateInTimezone = new Date(Date.UTC(year, month - 1, day));
+  const dayOfWeek = dateInTimezone.getUTCDay();
+  const dayOfWeekName = dayNames[dayOfWeek];
+  const monthName = monthNames[month - 1];
+
+  const yyyy = String(year);
+  const mm = String(month).padStart(2, '0');
+  const dd = String(day).padStart(2, '0');
+  const nowIso = `${yyyy}-${mm}-${dd}`;
+  const currentDateFormatted = `${dayOfWeekName}, ${dd} de ${monthName} de ${yyyy}`;
+  const currentTimeStr = `${hour}:${minute}`;
+
+  const holidaysAngola = [
+    `- 1 de Janeiro: Dia de Ano Novo / Fraternidade Universal`,
+    `- 4 de Fevereiro: Dia do Início da Luta Armada de Libertação Nacional`,
+    `- 8 de Março: Dia Internacional da Mulher`,
+    `- 23 de Março: Dia da Libertação da África Austral`,
+    `- 4 de Abril: Dia da Paz e da Reconciliação Nacional`,
+    `- 1 de Maio: Dia Internacional do Trabalhador`,
+    `- 17 de Setembro: Dia do Herói Nacional e do Fundador da Nação`,
+    `- 2 de Novembro: Dia dos Finados`,
+    `- 11 de Novembro: Dia da Independência Nacional`,
+    `- 25 de Dezembro: Dia de Natal e da Família`,
+    `- Carnaval e Sexta-feira Santa (Feriados Móveis Nacionais)`
+  ].join('\n');
+
+  const promptContext = `
+═══ CONSCIÊNCIA TEMPORAL E LÓGICA DE CALENDÁRIO EM TEMPO REAL ═══
+- DATA ATUAL: ${nowIso} (${currentDateFormatted})
+- HORA ATUAL (Fuso de Luanda / WAT UTC+1): ${currentTimeStr}
+- DIA DA SEMANA ATUAL: ${dayOfWeekName}
+
+REGRAS TEMPORAIS E DE CALENDÁRIO OBRIGATÓRIAS:
+1. CONSCIÊNCIA EM TEMPO REAL: Consulte SEMPRE a data atual (${nowIso}), o dia da semana atual (${dayOfWeekName}) e a hora exata (${currentTimeStr}) antes de sugerir ou confirmar qualquer horário.
+2. CÁLCULO MATEMÁTICO DE DIAS DA SEMANA:
+   - Calcule dias relativos ("amanhã", "quarta-feira desta semana", "próxima sexta", "segunda que vem") com precisão matemática a contar estritamente de HOJE (${nowIso}, ${dayOfWeekName}).
+   - Se o cliente sugerir um dia vago como "próxima quinta" ou "nesta quarta", confirme SEMPRE a data numérica por extenso (ex: "Quinta-feira, dia ${dd} de ${monthName}") para garantir que ambos estão alinhados antes de registrar no sistema.
+3. BLOQUEIO ABSOLUTO DO PASSADO: É TERMINANTEMENTE PROIBIDO agendar compromissos em datas passadas (anteriores a ${nowIso}) ou horários que já passaram em relação à hora atual (${currentTimeStr}).
+4. FERIADOS NACIONAIS DE ANGOLA E FUNCIONAMENTO:
+   Tenha plena noção dos feriados nacionais de Angola:
+${holidaysAngola}
+   Respeite o horário de funcionamento da empresa e informe educadamente o cliente caso a data solicitada coincida com um feriado em que a empresa não preste atendimento.
+`;
+
+  return {
+    nowIso,
+    currentDateFormatted,
+    dayOfWeekName,
+    currentTimeStr,
+    currentYear: year,
+    holidaysAngola,
+    promptContext,
+  };
+}
+
 function buildSystemPrompt(
   mode: 'simulation' | 'support',
   org: OrgProfile | null,
@@ -210,9 +291,11 @@ function buildSystemPrompt(
   customerProfile?: CustomerProfile,
   businessHoursText?: string
 ): string {
+  const temporal = getAngolaTemporalContext();
+
   if (mode === 'support') {
     return `Você é o assistente virtual de suporte da **Orion** — plataforma SaaS angolana de automação de atendimento ao cliente via WhatsApp com Inteligência Artificial.
-
+${temporal.promptContext}
 MISSÃO: Ajudar utilizadores com dúvidas sobre a plataforma Orion (configuração, billing, WhatsApp Cloud API, campanhas, live chat, etc.)
 
 REGRAS:
@@ -277,17 +360,28 @@ REGRAS:
   const transferRule = '- Se o cliente pedir explicitamente para falar com um humano, atendente ou pessoa real, inicie a sua resposta com o token [TRANSFERIR_HUMANO] e despeça-se gentilmente.';
 
   const bookingRule = `
-═══ FLUXO OBRIGATÓRIO DE AGENDAMENTO (WHATSAPP) ═══
+═══ FLUXO OBRIGATÓRIO DE AGENDAMENTO E REGRA CRÍTICA ANTI-FALSOS AGENDAMENTOS ═══
 Quando o cliente quiser agendar um compromisso, marcação, reunião, consulta ou serviço:
+
 1. DADOS OBRIGATÓRIOS (REGRA INEGOCIÁVEL - NÃO CONFIRMAR SEM TODOS ESTES DADOS):
    Você DEVE recolher e confirmar impreterivelmente estes 5 dados:
    - 👤 1. Nome do cliente (pergunte se ainda não souber)
    - 📋 2. Assunto a tratar (motivo específico ou serviço pretendido)
    - 📱/✉️ 3. Pelo menos um contacto válido: Telefone (WhatsApp) OU E-mail
-   - 📅 4. Dia / Data exata (ex: 2026-08-20)
-   - ⏰ 5. Horário / Hora exata (ex: 10:00 ou 15:30)
+   - 📅 4. Dia / Data exata calculada a partir de hoje (${temporal.nowIso}, formato YYYY-MM-DD)
+   - ⏰ 5. Horário / Hora exata dentro do expediente (formato HH:MM)
 
-2. ██████████ REGRA ABSOLUTA E INEGOCIÁVEL: RESPEITO AO HORÁRIO DE ATIVIDADE ██████████
+2. ██████████ REGRA CRÍTICA DE CONFIRMAÇÃO (EVITAR FALSOS AGENDAMENTOS) ██████████
+   - Você NUNCA deve confirmar um agendamento com o cliente na conversa antes de reunir TODOS os 5 dados e emitir o token técnico [BOOKING_CONFIRMED:...].
+   - Dizer "Está agendado!" ou "Confirmado!" sem gerar o token estruturado para o sistema registrar na agenda é uma FALHA GRAVE.
+   - O fluxo correto é:
+     1. Identificar a data e hora desejada pelo cliente respeitando o horário de funcionamento e feriados.
+     2. Validar que a data/hora não pertencem ao passado e calcular a data exata.
+     3. Emitir o token [BOOKING_CONFIRMED:{"name":"...","phone":"...","email":"...","subject":"...","date":"YYYY-MM-DD","time":"HH:MM"}] no início da mensagem.
+     4. Confirmar a mensagem de sucesso ao cliente somente quando estiver emitindo este token técnico.
+   ████████████████████████████████████████████████████████████████████
+
+3. ██████████ REGRA ABSOLUTA E INEGOCIÁVEL: RESPEITO AO HORÁRIO DE ATIVIDADE ██████████
    - A IA NUNCA DEVE agendar nem confirmar marcações fora do horário de funcionamento ou em dias em que a empresa está FECHADA.
    - Se o cliente solicitar uma marcação para um dia em que a empresa NÃO abre (ex: Domingo ou dias fechados) ou fora do horário (ex: antes da abertura ou após o fecho):
      * NÃO gere o token [BOOKING_CONFIRMED:...].
@@ -296,29 +390,28 @@ Quando o cliente quiser agendar um compromisso, marcação, reunião, consulta o
    - A DATA e a HORA do agendamento confirmadas devem respeitar estritamente o expediente da empresa.
    ████████████████████████████████████████████████████████████████████
 
-3. ██████████ REGRA ABSOLUTA E INEGOCIÁVEL SOBRE DATA E HORA ██████████
+4. ██████████ REGRA ABSOLUTA E INEGOCIÁVEL SOBRE DATA E HORA ██████████
    - A DATA e a HORA do agendamento são SEMPRE E EXCLUSIVAMENTE as que o CLIENTE definiu ou confirmou explicitamente na conversa.
    - É ESTRITAMENTE PROIBIDO alterar, adiantar, adiar, ajustar ou sugerir uma data ou hora diferente da que o cliente disse, SALVO SE o cliente pedir sugestão ou se a data solicitada for fora do horário de funcionamento.
-   - Se o cliente disser "dia 18 de Agosto às 12H", você DEVE usar OBRIGATORIAMENTE: "date":"2026-08-18","time":"12:00" no token. NÃO USE outra data. NÃO USE outra hora.
-   - Se o cliente disser "amanhã às 14H" e hoje é 18 de Agosto, use "date":"2026-08-19","time":"14:00".
+   - Se o cliente disser "amanhã às 14H" e hoje é ${temporal.nowIso}, calcule a data exata do dia seguinte.
    - Se o cliente confirmar disponibilidade para uma data/hora específica, essa confirmação É DEFINITIVA. Não pergunte novamente nem altere.
-   - VIOLAÇÃO GRAVE: Marcar às 13H quando o cliente disse 12H, ou marcar dia 21 quando o cliente disse dia 18, é um erro gravíssimo que NÃO DEVE acontecer jamais.
+   - VIOLAÇÃO GRAVE: Marcar às 13H quando o cliente disse 12H, ou marcar uma data diferente da combinada, é um erro gravíssimo que NÃO DEVE acontecer jamais.
    - ATENÇÃO: Leia o histórico completo da conversa antes de confirmar o agendamento para garantir que a data e hora registadas correspondem EXATAMENTE ao que o cliente confirmou.
    ████████████████████████████████████████████████████████████████████
 
-4. Dinâmica de Conversação:
+5. Dinâmica de Conversação:
    - Se faltar qualquer um dos 5 dados, pergunte amigavelmente e de forma fluida APENAS pelos dados em falta. NÃO confirme o agendamento enquanto faltar algum dado.
    - REGRA OBRIGATÓRIA E INEGOCIÁVEL: No momento exato em que você confirmar o agendamento ao cliente (quando tiver os dados completos: nome, assunto, pelo menos um contacto, data e hora válidas dentro do expediente), você DEVE OBRIGATORIAMENTE incluir no INÍCIO da sua resposta o token:
      [BOOKING_CONFIRMED:{"name":"<Nome do Cliente>","phone":"<Telefone>","email":"<email@dominio.com>","subject":"<Assunto>","date":"<YYYY-MM-DD>","time":"<HH:MM>"}]
-   - O campo "date" no token DEVE ser SEMPRE em formato ISO YYYY-MM-DD (ex: 2026-08-18) e a hora no formato HH:MM (ex: 12:00).
-   - Verifique DUAS vezes antes de emitir o token: a data e hora no token DEVEM corresponder exatamente ao que o cliente disse na conversa e estar dentro do horário de atividade.
+   - O campo "date" no token DEVE ser SEMPRE em formato ISO YYYY-MM-DD (ex: ${temporal.nowIso}) e a hora no formato HH:MM (ex: 12:00).
+   - Verifique DUAS vezes antes de emitir o token: a data e hora no token DEVEM corresponder exatamente ao que o cliente disse na conversa, não podem ser no passado e devem estar dentro do horário de atividade.
    - Confirme com entusiasmo ao cliente que a sua marcação foi registada com sucesso e que receberá os alertas e lembretes de confirmação.
    - Caso o cliente apenas pergunte como agendar ou mencione que deseja marcar mas ainda faltam dados, inclua o token [AGENDAR] e solicite os dados necessários.
 
-5. QUANDO SUGERIR DATAS (APENAS NESTES CASOS):
+6. QUANDO SUGERIR DATAS (APENAS NESTES CASOS):
    - O cliente expressamente pede sugestão: "quando tem disponibilidade?", "sugira um horário", "qual o próximo slot livre?"
    - O cliente demonstra incerteza total: "não sei que dia", "qualquer hora serve", "quando for melhor para vocês"
-   - O cliente escolheu um dia ou horário fora do expediente da empresa.
+   - O cliente escolheu um dia ou horário fora do expediente da empresa ou feriado sem atendimento.
    - NUNCA sugira datas se o cliente já especificou uma data válida dentro do expediente.
 `;
 
@@ -386,6 +479,7 @@ INSTRUÇÕES CRÍTICAS PARA ATENDIMENTO DE LEADS DE ANÚNCIOS:
     : '';
 
   return `Você é ${botName}, assistente virtual oficial da empresa "${companyName}".
+${temporal.promptContext}
 ${customerMemorySection}
 ${companyContactInfo}
 ${businessHoursSection}

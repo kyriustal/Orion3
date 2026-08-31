@@ -104,6 +104,38 @@ export class BookingService {
       };
     }
 
+    // ── Validação Temporal Estrita (Bloqueio do Passado no fuso de Angola WAT / UTC+1) ──
+    try {
+      const now = new Date();
+      const formatterOpts: Intl.DateTimeFormatOptions = { timeZone: 'Africa/Luanda' };
+      const yStr = new Intl.DateTimeFormat('pt-PT', { ...formatterOpts, year: 'numeric' }).format(now);
+      const mStr = new Intl.DateTimeFormat('pt-PT', { ...formatterOpts, month: '2-digit' }).format(now);
+      const dStr = new Intl.DateTimeFormat('pt-PT', { ...formatterOpts, day: '2-digit' }).format(now);
+      const hStr = new Intl.DateTimeFormat('pt-PT', { ...formatterOpts, hour: '2-digit', hour12: false }).format(now).padStart(2, '0');
+      const minStr = new Intl.DateTimeFormat('pt-PT', { ...formatterOpts, minute: '2-digit' }).format(now).padStart(2, '0');
+
+      const todayIso = `${yStr}-${mStr}-${dStr}`;
+      const currentTime = `${hStr}:${minStr}`;
+
+      if (date < todayIso) {
+        return {
+          isValid: false,
+          missingFields: [],
+          errorMessage: `Não é possível agendar compromissos em datas que já passaram (${date}). A data de hoje é ${todayIso}.`,
+        };
+      }
+
+      if (date === todayIso && time < currentTime) {
+        return {
+          isValid: false,
+          missingFields: [],
+          errorMessage: `Não é possível agendar compromissos em horários que já passaram (${time}). A hora atual é ${currentTime}.`,
+        };
+      }
+    } catch (dateErr: any) {
+      console.warn('[BookingService] Aviso ao validar tempo atual:', dateErr.message);
+    }
+
     return {
       isValid: true,
       missingFields: [],
