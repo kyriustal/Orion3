@@ -1,5 +1,5 @@
 import { supabaseAdmin } from '../config/supabase';
-import { createGoogleCalendarEvent } from './calendar.service';
+import { createGoogleCalendarEvent, createMicrosoftCalendarEvent, syncCalendarEvent } from './calendar.service';
 import { EmailService } from './email.service';
 import { TelcoSMSService } from './telcosms.service';
 
@@ -319,7 +319,7 @@ export class BookingService {
       console.warn('[BookingService] Aviso ao persistir na tabela bookings (não bloqueante):', dbErr.message);
     }
 
-    // ── 2. Sincronização Segura com Google Calendar ───────────────────────────
+    // ── 2. Sincronização Segura com a Agenda (Google Calendar ou Microsoft Outlook/365) ──
     let calendarResult: any = null;
     try {
       const descLines = [
@@ -334,7 +334,7 @@ export class BookingService {
       if (companyPhone) descLines.push(`Telefone da Empresa: ${companyPhone}`);
       if (mapsLink) descLines.push(`Localização: [Localizar no Google Maps](${mapsLink})`);
 
-      calendarResult = await createGoogleCalendarEvent(orgId, {
+      calendarResult = await syncCalendarEvent(orgId, {
         summary: `${subject} - ${name}`,
         appointmentDate: date,
         appointmentTime: time,
@@ -346,12 +346,12 @@ export class BookingService {
       });
 
       if (calendarResult.success) {
-        console.log(`[BookingService] 📆 Google Calendar sincronizado! Event ID: ${calendarResult.eventId} (Já existia: ${calendarResult.alreadyExisted})`);
+        console.log(`[BookingService] 📆 Agenda (${calendarResult.provider?.toUpperCase() || 'CALENDAR'}) sincronizada com sucesso! Event ID: ${calendarResult.eventId} (Já existia: ${calendarResult.alreadyExisted})`);
       } else {
-        console.warn(`[BookingService] ℹ️ Google Calendar: ${calendarResult.error}`);
+        console.warn(`[BookingService] ⚠️ Aviso ao sincronizar com a agenda (${calendarResult.provider || 'default'}): ${calendarResult.error}`);
       }
     } catch (calErr: any) {
-      console.error('[BookingService] ❌ Erro ao sincronizar Google Calendar:', calErr.message);
+      console.error('[BookingService] ❌ Erro ao sincronizar agenda externa:', calErr.message);
     }
 
     // ── 3. Disparo Imediato dos Alertas Instantâneos ──────────────────────────

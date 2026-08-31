@@ -6,6 +6,7 @@ import { requireAuth, AuthRequest } from '../middleware/auth';
 import { EmailService } from '../services/email.service';
 import { PushService } from '../services/push.service';
 import { FollowupService } from '../services/followup.service';
+import { BookingService } from '../services/booking.service';
 import { getIo } from '../socket';
 import { AudioService } from '../services/audio.service';
 import axios from 'axios';
@@ -303,6 +304,29 @@ router.post('/webhook', async (req, res) => {
             platform: 'facebook'
           });
         } catch (_) { /* silencioso */ }
+      }
+
+      // ── Processamento Centralizado de Agendamento (Agenda Google/Microsoft + Deduplicação + Email/SMS) ──
+      if (aiResult.bookingData) {
+        const bData = aiResult.bookingData;
+        console.log(`[FB-BOOKING] 📅 Agendamento detectado via Facebook para ${bData.name} (${bData.date} às ${bData.time})`);
+        
+        BookingService.processBooking(orgId, {
+          name: bData.name,
+          subject: bData.subject,
+          phone: bData.phone || senderId,
+          email: bData.email,
+          date: bData.date,
+          time: bData.time,
+        }, { channelOrigin: 'Facebook Messenger' })
+        .then(res => {
+          if (res.success) {
+            console.log(`[FB-BOOKING] ✅ Agendamento processado! Lembretes programados: ${res.alertsScheduled}`);
+          } else {
+            console.warn(`[FB-BOOKING] ⚠️ Agendamento não concluído: ${res.error}`);
+          }
+        })
+        .catch(err => console.error('[FB-BOOKING] ❌ Erro ao processar agendamento:', err.message));
       }
 
       // 6. Enviar resposta

@@ -4,6 +4,7 @@ import { AIService } from '../services/ai.service';
 import { InstagramService } from '../services/instagram.service';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import { FollowupService } from '../services/followup.service';
+import { BookingService } from '../services/booking.service';
 import { getIo } from '../socket';
 import { AudioService } from '../services/audio.service';
 import axios from 'axios';
@@ -335,6 +336,29 @@ router.post('/webhook', async (req, res) => {
 
       const aiReply  = aiResult.reply;
       const transfer = aiResult.transfer;
+
+      // ── Processamento Centralizado de Agendamento (Agenda Google/Microsoft + Deduplicação + Email/SMS) ──
+      if (aiResult.bookingData) {
+        const bData = aiResult.bookingData;
+        console.log(`[INSTAGRAM-BOOKING] 📅 Agendamento detectado via Instagram para ${bData.name} (${bData.date} às ${bData.time})`);
+        
+        BookingService.processBooking(orgId, {
+          name: bData.name,
+          subject: bData.subject,
+          phone: bData.phone || senderId,
+          email: bData.email,
+          date: bData.date,
+          time: bData.time,
+        }, { channelOrigin: 'Instagram DM' })
+        .then(res => {
+          if (res.success) {
+            console.log(`[INSTAGRAM-BOOKING] ✅ Agendamento processado! Lembretes programados: ${res.alertsScheduled}`);
+          } else {
+            console.warn(`[INSTAGRAM-BOOKING] ⚠️ Agendamento não concluído: ${res.error}`);
+          }
+        })
+        .catch(err => console.error('[INSTAGRAM-BOOKING] ❌ Erro ao processar agendamento:', err.message));
+      }
 
       // 7. Enviar resposta via Instagram DM
       if (aiReply) {

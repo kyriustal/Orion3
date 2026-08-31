@@ -266,3 +266,227 @@ export async function createGoogleCalendarEvent(
     return { success: false, error: errorDetails };
   }
 }
+
+/**
+ * Obtém um Access Token válido da Microsoft a partir do Refresh Token guardado
+ */
+export async function getMicrosoftAccessToken(
+  orgId: string,
+  customCredentials?: { clientId?: string; clientSecret?: string; refreshToken?: string }
+): Promise<{ accessToken: string | null; error?: string }> {
+  try {
+    let clientId = customCredentials?.clientId?.trim();
+    let clientSecret = customCredentials?.clientSecret?.trim();
+    let refreshToken = customCredentials?.refreshToken?.trim();
+
+    if (!clientId || !clientSecret || !refreshToken) {
+      if (orgId) {
+        const { data: org, error } = await supabaseAdmin
+          .from('organizations')
+          .select('microsoft_client_id, microsoft_client_secret, microsoft_refresh_token, calendar_provider')
+          .eq('id', orgId)
+          .maybeSingle();
+
+        if (error) {
+          console.warn('[CALENDAR SERVICE] Aviso ao consultar organização para Microsoft:', error.message);
+        }
+
+        if (org) {
+          clientId = clientId || org.microsoft_client_id?.trim();
+          clientSecret = clientSecret || org.microsoft_client_secret?.trim();
+          refreshToken = refreshToken || org.microsoft_refresh_token?.trim();
+        }
+      }
+
+      clientId = clientId || process.env.MICROSOFT_CLIENT_ID?.trim();
+      clientSecret = clientSecret || process.env.MICROSOFT_CLIENT_SECRET?.trim();
+    }
+
+    if (!refreshToken) {
+      return { accessToken: null, error: 'Microsoft Refresh Token não configurado. Por favor, conecte a sua conta Microsoft nas Configurações.' };
+    }
+    if (!clientId || !clientSecret) {
+      return { accessToken: null, error: 'Microsoft Client ID ou Client Secret ausentes no painel ou .env.' };
+    }
+
+    const tokenRes = await axios.post(
+      'https://login.microsoftonline.com/common/oauth2/v2.0/token',
+      new URLSearchParams({
+        client_id: clientId,
+        client_secret: clientSecret,
+        refresh_token: refreshToken,
+        grant_type: 'refresh_token',
+        scope: 'Calendars.ReadWrite offline_access',
+      }).toString(),
+      {
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        timeout: 10000,
+      }
+    );
+
+    const accessToken = tokenRes.data.access_token;
+    if (!accessToken) {
+      return { accessToken: null, error: 'Microsoft não retornou um access_token válido.' };
+    }
+
+    return { accessToken };
+  } catch (err: any) {
+    const rawError = err.response?.data?.error;
+    const rawDesc = err.response?.data?.error_description || '';
+    console.error('[CALENDAR SERVICE] Erro ao obter access_token da Microsoft:', { error: rawError, description: rawDesc, message: err.message });
+    return { accessToken: null, error: rawDesc || rawError || err.message };
+  }
+}
+
+/**
+ * Cria um agendamento no Microsoft Outlook / 365 Calendar via Microsoft Graph API
+ */
+export async function createMicrosoftCalendarEvent(
+  orgId: string,
+  input: GoogleCalendarEventInput
+): Promise<{ success: boolean; eventId?: string; webLink?: string; error?: string; alreadyExisted?: boolean }> {
+  const { accessToken, error } = await getMicrosoftAccessToken(orgId);
+  if (!accessToken) {
+    console.warn('[CALENDAR SERVICE] Agendamento não sincronizado com Microsoft Calendar:', error);
+    return { success: false, error };
+  }
+
+  try {
+    const duration = input.durationMinutes || 60;
+    const timeFormatted = input.appointmentTime.length === 5 ? `${input.appointmentTime}:00` : input.appointmentTime;
+
+    const dateParts = input.appointmentDate.split('-').map(Number);
+    const timeParts = timeFormatted.split(':').map(Number);
+
+    if (dateParts.length !== 3 || isNaN(dateParts[0]) || isNaN(dateParts[1]) || isNaN(dateParts[2])) {
+      return { success: false, error: 'Data do agendamento inválida (formato esperado YYYY-MM-DD).' };
+    }
+    if (timeParts.length < 2 || isNaN(timeParts[0]) || isNaN(timeParts[1])) {
+      return { success: false, error: 'Hora do agendamento inválida (formato esperado HH:MM).' };
+    }
+
+    const startDateTime = new Date(dateParts[0], dateParts[1] - 1, dateParts[2], timeParts[0], timeParts[1], timeParts[2] || 0);
+    const endDateTime = new Date(startDateTime.getTime() + duration * 60 * 1000);
+
+    const descriptionParts: string[] = [];
+    if (input.description) descriptionParts.push(input.description);
+    if (input.customerName) descriptionParts.push(`Cliente: ${input.customerName}`);
+    if (input.customerPhone) descriptionParts.push(`Telefone: ${input.customerPhone}`);
+    if (input.customerEmail) descriptionParts.push(`E-mail: ${input.customerEmail}`);
+    descriptionParts.push(`\nAgendado via Orion Intelligence Platform`);
+
+    const startIsoString = `${input.appointmentDate}T${timeFormatted.substring(0, 5)}:00`;
+    const endH = String(endDateTime.getHours()).padStart(2, '0');
+    const endMin = String(endDateTime.getMinutes()).padStart(2, '0');
+    const endIsoString = `${input.appointmentDate}T${endH}:${endMin}:00`;
+
+    const eventPayload: any = {
+      subject: input.summary,
+      body: {
+        contentType: 'HTML',
+        content: descriptionParts.join('<br>'),
+      },
+      start: {
+        dateTime: startIsoString,
+        timeZone: 'Africa/Luanda',
+      },
+      end: {
+        dateTime: endIsoString,
+        timeZone: 'Africa/Luanda',
+      },
+    };
+
+    if (input.location) {
+      eventPayload.location = {
+        displayName: input.location,
+      };
+    }
+
+    if (input.customerEmail && input.customerEmail.includes('@')) {
+      eventPayload.attendees = [
+        {
+          emailAddress: {
+            address: input.customerEmail,
+            name: input.customerName || input.customerEmail,
+          },
+          type: 'required',
+        },
+      ];
+    }
+
+    const res = await axios.post('https://graph.microsoft.com/v1.0/me/events', eventPayload, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      timeout: 10000,
+    });
+
+    console.log('[CALENDAR SERVICE] ✅ Evento criado no Microsoft Calendar:', res.data.id);
+    return {
+      success: true,
+      eventId: res.data.id,
+      webLink: res.data.webLink,
+      alreadyExisted: false,
+    };
+  } catch (err: any) {
+    const errorDetails = err.response?.data?.error?.message || err.message;
+    console.error('[CALENDAR SERVICE] ❌ Falha ao criar evento no Microsoft Calendar:', errorDetails);
+    return { success: false, error: errorDetails };
+  }
+}
+
+/**
+ * Sincroniza o agendamento com o provedor de calendário configurado (Google Calendar ou Microsoft Outlook/365)
+ */
+export async function syncCalendarEvent(
+  orgId: string,
+  input: GoogleCalendarEventInput
+): Promise<{
+  success: boolean;
+  provider?: string;
+  eventId?: string;
+  link?: string;
+  error?: string;
+  alreadyExisted?: boolean;
+}> {
+  try {
+    const { data: org } = await supabaseAdmin
+      .from('organizations')
+      .select('calendar_provider, google_refresh_token, google_user_refresh_token, microsoft_refresh_token')
+      .eq('id', orgId)
+      .maybeSingle();
+
+    const provider = org?.calendar_provider || 'google';
+
+    if (provider === 'microsoft' || (!org?.google_user_refresh_token && !org?.google_refresh_token && org?.microsoft_refresh_token)) {
+      console.log('[CALENDAR SERVICE] A sincronizar com Microsoft Outlook / 365...');
+      const msRes = await createMicrosoftCalendarEvent(orgId, input);
+      if (msRes.success) {
+        return { success: true, provider: 'microsoft', eventId: msRes.eventId, link: msRes.webLink, alreadyExisted: msRes.alreadyExisted };
+      }
+      return { success: false, provider: 'microsoft', error: msRes.error };
+    }
+
+    // Padrão: Google Calendar
+    console.log('[CALENDAR SERVICE] A sincronizar com Google Calendar...');
+    const googleRes = await createGoogleCalendarEvent(orgId, input);
+    if (googleRes.success) {
+      return { success: true, provider: 'google', eventId: googleRes.eventId, link: googleRes.htmlLink, alreadyExisted: googleRes.alreadyExisted };
+    }
+
+    // Se o Google falhar e houver token Microsoft configurado, tenta Microsoft como fallback
+    if (org?.microsoft_refresh_token) {
+      console.log('[CALENDAR SERVICE] Tentando Microsoft Calendar como fallback...');
+      const msRes = await createMicrosoftCalendarEvent(orgId, input);
+      if (msRes.success) {
+        return { success: true, provider: 'microsoft', eventId: msRes.eventId, link: msRes.webLink, alreadyExisted: msRes.alreadyExisted };
+      }
+    }
+
+    return { success: false, provider: 'google', error: googleRes.error };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+}
+
