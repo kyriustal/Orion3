@@ -495,3 +495,93 @@ export async function syncCalendarEvent(
   }
 }
 
+
+/**
+ * Apaga um evento do Google Calendar pelo eventId
+ */
+export async function deleteGoogleCalendarEvent(
+  orgId: string,
+  eventId: string
+): Promise<{ success: boolean; error?: string }> {
+  const { accessToken, error } = await getGoogleAccessToken(orgId);
+  if (!accessToken) {
+    return { success: false, error: error || 'Não foi possível autenticar com o Google Calendar.' };
+  }
+  try {
+    await axios.delete(
+      `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(eventId)}`,
+      { headers: { Authorization: `Bearer ${accessToken}` }, timeout: 10000 }
+    );
+    console.log(`[CALENDAR SERVICE] ??? Evento ${eventId} apagado do Google Calendar.`);
+    return { success: true };
+  } catch (err: any) {
+    if (err.response?.status === 410 || err.response?.status === 404) {
+      return { success: true }; // Already deleted
+    }
+    const errorDetails = err.response?.data?.error?.message || err.message;
+    console.error('[CALENDAR SERVICE] ? Erro ao apagar evento do Google Calendar:', errorDetails);
+    return { success: false, error: errorDetails };
+  }
+}
+
+/**
+ * Apaga um evento do Microsoft Outlook/365 pelo eventId
+ */
+export async function deleteMicrosoftCalendarEvent(
+  orgId: string,
+  eventId: string
+): Promise<{ success: boolean; error?: string }> {
+  const { accessToken, error } = await getMicrosoftAccessToken(orgId);
+  if (!accessToken) {
+    return { success: false, error: error || 'Não foi possível autenticar com o Microsoft Calendar.' };
+  }
+  try {
+    await axios.delete(
+      `https://graph.microsoft.com/v1.0/me/events/${encodeURIComponent(eventId)}`,
+      { headers: { Authorization: `Bearer ${accessToken}` }, timeout: 10000 }
+    );
+    console.log(`[CALENDAR SERVICE] ??? Evento ${eventId} apagado do Microsoft Calendar.`);
+    return { success: true };
+  } catch (err: any) {
+    if (err.response?.status === 404 || err.response?.status === 410) {
+      return { success: true };
+    }
+    const errorDetails = err.response?.data?.error?.message || err.message;
+    console.error('[CALENDAR SERVICE] ? Erro ao apagar evento do Microsoft Calendar:', errorDetails);
+    return { success: false, error: errorDetails };
+  }
+}
+
+/**
+ * Apaga um evento do calendário configurado (Google ou Microsoft).
+ * Se provider não for fornecido, consulta a organização para determinar o provider ativo.
+ */
+export async function deleteCalendarEvent(
+  orgId: string,
+  eventId: string,
+  provider?: 'google' | 'microsoft'
+): Promise<{ success: boolean; provider?: string; error?: string }> {
+  try {
+    let resolvedProvider = provider;
+    if (!resolvedProvider) {
+      const { data: org } = await supabaseAdmin
+        .from('organizations')
+        .select('calendar_provider, google_user_refresh_token, google_refresh_token, microsoft_refresh_token')
+        .eq('id', orgId)
+        .maybeSingle();
+      resolvedProvider =
+        org?.calendar_provider === 'microsoft' ||
+        (!org?.google_user_refresh_token && !org?.google_refresh_token && org?.microsoft_refresh_token)
+          ? 'microsoft'
+          : 'google';
+    }
+    if (resolvedProvider === 'microsoft') {
+      const res = await deleteMicrosoftCalendarEvent(orgId, eventId);
+      return { ...res, provider: 'microsoft' };
+    }
+    const res = await deleteGoogleCalendarEvent(orgId, eventId);
+    return { ...res, provider: 'google' };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+}

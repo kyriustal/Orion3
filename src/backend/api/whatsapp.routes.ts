@@ -939,28 +939,40 @@ async function triggerAIResponse(params: {
     // ── Automação Pós-Confirmação de Agendamento (BookingService: Google Calendar + Deduplicação + Alertas 4 Etapas) ──
     if (aiResult?.bookingData) {
       const bData = aiResult.bookingData;
-      console.log(`[BOOKING-AUTO] 📅 Agendamento detectado via WhatsApp para ${bData.name} (${bData.date} às ${bData.time})`);
+      const isReschedule = Boolean(aiResult.noShowReschedule);
+      console.log(`[BOOKING-AUTO] 📅 ${isReschedule ? 'Remarcação' : 'Agendamento'} detectado via WhatsApp para ${bData.name} (${bData.date} às ${bData.time})`);
 
       const customerPhone = (bData.phone && bData.phone.replace(/[^\d+]/g, '').length >= 8) 
         ? bData.phone.replace(/[^\d+]/g, '') 
         : fromNumber;
 
-      BookingService.processBooking(orgId, {
-        name: bData.name,
-        subject: bData.subject,
-        phone: customerPhone,
-        email: bData.email,
-        date: bData.date,
-        time: bData.time,
-      }, { channelOrigin: 'WhatsApp Chatbot' })
-      .then(res => {
-        if (res.success) {
-          console.log(`[BOOKING-AUTO] ✅ Agendamento processado! Lembretes programados: ${res.alertsScheduled}`);
-        } else {
-          console.warn(`[BOOKING-AUTO] ⚠️ Agendamento não concluído: ${res.error}`);
-        }
-      })
-      .catch(err => console.error('[BOOKING-AUTO] ❌ Erro ao processar agendamento:', err.message));
+      const bookingPromise = isReschedule
+        ? BookingService.rescheduleBooking(orgId, {
+            name: bData.name,
+            subject: bData.subject,
+            phone: customerPhone,
+            email: bData.email,
+            date: bData.date,
+            time: bData.time,
+          }, { channelOrigin: 'WhatsApp Chatbot' })
+        : BookingService.processBooking(orgId, {
+            name: bData.name,
+            subject: bData.subject,
+            phone: customerPhone,
+            email: bData.email,
+            date: bData.date,
+            time: bData.time,
+          }, { channelOrigin: 'WhatsApp Chatbot' });
+
+      bookingPromise
+        .then(res => {
+          if (res.success) {
+            console.log(`[BOOKING-AUTO] ✅ ${isReschedule ? 'Remarcação' : 'Agendamento'} processado! Lembretes programados: ${res.alertsScheduled}`);
+          } else {
+            console.warn(`[BOOKING-AUTO] ⚠️ ${isReschedule ? 'Remarcação' : 'Agendamento'} não concluído: ${res.error}`);
+          }
+        })
+        .catch(err => console.error('[BOOKING-AUTO] ❌ Erro ao processar agendamento:', err.message));
 
       try {
         await supabaseAdmin.from('contacts').upsert({

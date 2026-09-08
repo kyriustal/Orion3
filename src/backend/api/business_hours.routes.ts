@@ -56,8 +56,17 @@ router.get('/settings/business-hours', requireAuth, async (req: AuthRequest, res
       });
     }
 
+    const { data: org } = await supabaseAdmin
+      .from('organizations')
+      .select('opens_on_holidays')
+      .eq('id', orgId)
+      .maybeSingle();
+
     const result = Array.from(map.values()).sort((a, b) => a.day_of_week - b.day_of_week);
-    res.json(result);
+    res.json({
+      days: result,
+      opens_on_holidays: Boolean(org?.opens_on_holidays),
+    });
   } catch (err: any) {
     console.error('[BusinessHours GET] Erro:', err.message);
     res.status(500).json({ error: 'Erro ao carregar horários de funcionamento', details: err.message });
@@ -66,37 +75,47 @@ router.get('/settings/business-hours', requireAuth, async (req: AuthRequest, res
 
 /**
  * PUT /api/settings/business-hours
- * Guarda ou actualiza os horários de funcionamento para todos os dias.
+ * Guarda ou actualiza os horários de funcionamento para todos os dias e a preferência de feriados.
  */
 router.put('/settings/business-hours', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const orgId = req.user?.orgId || req.user?.id;
     if (!orgId) return res.status(401).json({ error: 'Organização não identificada.' });
 
-    const days: BusinessDaySchedule[] = req.body.days || req.body;
-    if (!Array.isArray(days) || days.length === 0) {
-      return res.status(400).json({ error: 'Formato inválido. Esperada lista de dias.' });
+    // Actualizar opens_on_holidays se fornecido
+    if (req.body.opens_on_holidays !== undefined) {
+      const { error: orgErr } = await supabaseAdmin
+        .from('organizations')
+        .update({ opens_on_holidays: Boolean(req.body.opens_on_holidays) })
+        .eq('id', orgId);
+
+      if (orgErr) {
+        console.warn('[BusinessHours PUT] Aviso ao atualizar opens_on_holidays:', orgErr.message);
+      }
     }
 
-    const rows = days.map(d => ({
-      org_id: orgId,
-      day_of_week: d.day_of_week,
-      is_open: Boolean(d.is_open),
-      open_time: d.open_time ? (d.open_time.length === 5 ? `${d.open_time}:00` : d.open_time) : '08:00:00',
-      close_time: d.close_time ? (d.close_time.length === 5 ? `${d.close_time}:00` : d.close_time) : '18:00:00',
-      updated_at: new Date().toISOString(),
-    }));
+    const days: BusinessDaySchedule[] = req.body.days || (Array.isArray(req.body) ? req.body : null);
+    if (days && Array.isArray(days) && days.length > 0) {
+      const rows = days.map(d => ({
+        org_id: orgId,
+        day_of_week: d.day_of_week,
+        is_open: Boolean(d.is_open),
+        open_time: d.open_time ? (d.open_time.length === 5 ? `${d.open_time}:00` : d.open_time) : '08:00:00',
+        close_time: d.close_time ? (d.close_time.length === 5 ? `${d.close_time}:00` : d.close_time) : '18:00:00',
+        updated_at: new Date().toISOString(),
+      }));
 
-    const { error } = await supabaseAdmin
-      .from('business_hours')
-      .upsert(rows, { onConflict: 'org_id,day_of_week' });
+      const { error } = await supabaseAdmin
+        .from('business_hours')
+        .upsert(rows, { onConflict: 'org_id,day_of_week' });
 
-    if (error) {
-      console.error('[BusinessHours PUT] Erro no upsert:', error.message);
-      throw error;
+      if (error) {
+        console.error('[BusinessHours PUT] Erro no upsert:', error.message);
+        throw error;
+      }
     }
 
-    console.log(`[BusinessHours] ✅ Horários de funcionamento atualizados para a org ${orgId}`);
+    console.log(`[BusinessHours] ✅ Horários de funcionamento e feriados atualizados para a org ${orgId}`);
     res.json({ success: true, message: 'Horários atualizados com sucesso.' });
   } catch (err: any) {
     console.error('[BusinessHours PUT] Erro:', err.message);

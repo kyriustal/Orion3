@@ -159,6 +159,37 @@ export class BookingService {
       const dateObj = new Date(year, month - 1, day);
       const dayOfWeek = dateObj.getDay(); // 0 = Domingo, 1 = Segunda, etc.
 
+      // 1. Validar Feriados Nacionais de Angola se a empresa não abre aos feriados
+      const { data: org } = await supabaseAdmin
+        .from('organizations')
+        .select('opens_on_holidays')
+        .eq('id', orgId)
+        .maybeSingle();
+
+      const opensOnHolidays = Boolean(org?.opens_on_holidays);
+      if (!opensOnHolidays) {
+        const mmDd = `${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+        const angolaHolidays: Record<string, string> = {
+          '01-01': 'Dia de Ano Novo / Fraternidade Universal',
+          '02-04': 'Dia do Início da Luta Armada de Libertação Nacional',
+          '03-08': 'Dia Internacional da Mulher',
+          '03-23': 'Dia da Libertação da África Austral',
+          '04-04': 'Dia da Paz e da Reconciliação Nacional',
+          '05-01': 'Dia Internacional do Trabalhador',
+          '09-17': 'Dia do Herói Nacional e do Fundador da Nação',
+          '11-02': 'Dia dos Finados',
+          '11-11': 'Dia da Independência Nacional',
+          '12-25': 'Dia de Natal e da Família',
+        };
+
+        if (angolaHolidays[mmDd]) {
+          return {
+            isValid: false,
+            reason: `A empresa está encerrada aos feriados nacionais (${angolaHolidays[mmDd]} em ${dateStr}).`
+          };
+        }
+      }
+
       // Procurar horários configurados no banco
       const { data: schedule, error } = await supabaseAdmin
         .from('business_hours')
@@ -401,6 +432,25 @@ export class BookingService {
       }
     }
 
+    // Alerta Instantâneo por E-mail à Empresa Registrada
+    try {
+      console.log(`[BookingService] 🏢 Disparando e-mail de alerta de agendamento à empresa (${companyName})...`);
+      EmailService.sendBookingNotificationToCompany({
+        orgId,
+        customerName: name,
+        customerPhone: phone,
+        customerEmail: email,
+        date,
+        time,
+        subject,
+        companyName,
+        channelOrigin: options?.channelOrigin,
+        isReschedule: false,
+      }).catch(err => console.error('[BookingService] Erro ao enviar email de notificação à empresa:', err.message));
+    } catch (teamMailErr: any) {
+      console.error('[BookingService] Erro ao disparar email de alerta à empresa:', teamMailErr.message);
+    }
+
     // ── 4. Programação dos 3 Estágios de Lembretes Futuros ─────────────────────
     let alertsScheduled = 0;
     const channels = email && phone ? 'both' : email ? 'email' : 'sms';
@@ -549,6 +599,274 @@ export class BookingService {
       bookingId,
       calendarEventId: calendarResult?.eventId,
       calendarHtmlLink: calendarResult?.htmlLink,
+      alertsScheduled,
+      instantEmailSent,
+      instantSmsSent,
+    };
+  }
+
+  /**
+   * Remarcação de agendamento:
+   * 1. Valida nova data/hora e horário de funcionamento
+   * 2. Localiza agendamento anterior para este cliente (ou pelo previousBookingId)
+   * 3. Atualiza data/hora na tabela bookings (ou cria se não existir)
+   * 4. Cancela/remove lembretes pendentes da data anterior e agenda os novos
+   * 5. Sincroniza novo evento no Google Calendar / Microsoft Calendar
+   * 6. Envia confirmação de remarcação por email e SMS ao cliente
+   * 7. Envia alerta de remarcação à empresa
+   */
+  static async rescheduleBooking(
+    orgId: string,
+    input: BookingValidationInput,
+    options?: { channelOrigin?: string; previousBookingId?: string }
+  ): Promise<ProcessBookingResult> {
+    const validation = this.validateBookingData(input);
+    if (!validation.isValid || !validation.cleanData) {
+      console.warn(`[BookingService] ⚠️ Tentativa de remarcação rejeitada: ${validation.errorMessage}`);
+      return {
+        success: false,
+        alertsScheduled: 0,
+        error: validation.errorMessage,
+      };
+    }
+
+    const { name, subject, phone, email, date, time } = validation.cleanData;
+
+    // Validar horário de expediente
+    const bhCheck = await this.checkWithinBusinessHours(orgId, date, time);
+    if (!bhCheck.isValid) {
+      console.warn(`[BookingService] ⚠️ Rejeitando remarcação fora do expediente: ${bhCheck.reason}`);
+      return {
+        success: false,
+        alertsScheduled: 0,
+        error: bhCheck.reason,
+      };
+    }
+
+    console.log(`[BookingService] 🔄 Processando remarcação para ${name} | Nova Data: ${date} ${time} | Org: ${orgId}`);
+
+    // Obter dados da organização
+    let orgData: any = null;
+    try {
+      const { data } = await supabaseAdmin
+        .from('organizations')
+        .select('name, phone, whatsapp, address, maps_link, telcosms_api_key, telcosms_sender_id')
+        .eq('id', orgId)
+        .maybeSingle();
+      orgData = data;
+    } catch (orgErr: any) {
+      console.warn('[BookingService] Aviso ao obter dados da organização:', orgErr.message);
+    }
+
+    const companyName = orgData?.name?.trim() || 'Nossa Empresa';
+    const companyPhone = orgData?.phone?.trim() || orgData?.whatsapp?.trim() || '';
+    const companyAddress = orgData?.address?.trim() || '';
+    const mapsLink = orgData?.maps_link?.trim() || '';
+
+    // 1. Atualizar ou Criar Booking
+    let bookingId: string | undefined = options?.previousBookingId;
+    try {
+      if (!bookingId) {
+        const query = supabaseAdmin
+          .from('bookings')
+          .select('id')
+          .eq('org_id', orgId)
+          .order('created_at', { ascending: false })
+          .limit(1);
+
+        if (phone) {
+          query.eq('phone', phone);
+        } else if (email) {
+          query.eq('email', email);
+        }
+
+        const { data: latest } = await query.maybeSingle();
+        if (latest) bookingId = latest.id;
+      }
+
+      if (bookingId) {
+        await supabaseAdmin
+          .from('bookings')
+          .update({
+            appointment_date: date,
+            appointment_time: time,
+            service: subject,
+            email: email || undefined,
+            phone: phone || undefined,
+          })
+          .eq('id', bookingId);
+        console.log(`[BookingService] ✅ Agendamento ${bookingId} atualizado para ${date} às ${time}`);
+
+        // Cancelar lembretes antigos pendentes para este booking
+        await supabaseAdmin
+          .from('appointment_reminders')
+          .delete()
+          .eq('booking_id', bookingId)
+          .eq('status', 'pending');
+      } else {
+        const { data: newB } = await supabaseAdmin
+          .from('bookings')
+          .insert({
+            org_id: orgId,
+            first_name: name.split(' ')[0] || name,
+            last_name: name.split(' ').slice(1).join(' ') || undefined,
+            email: email || undefined,
+            phone: phone || 'N/A',
+            service: subject,
+            appointment_date: date,
+            appointment_time: time,
+          })
+          .select('id')
+          .single();
+        if (newB) bookingId = newB.id;
+      }
+    } catch (dbErr: any) {
+      console.warn('[BookingService] Erro ao persistir remarcação:', dbErr.message);
+    }
+
+    // 2. Sincronizar novo evento na agenda
+    let calendarResult: any = null;
+    try {
+      const descLines = [
+        `Remarcação via Orion Platform (${options?.channelOrigin || 'Chatbot'})`,
+        `Empresa: ${companyName}`,
+        `Assunto: ${subject}`,
+        `Cliente: ${name}`,
+      ];
+      if (phone) descLines.push(`Telefone: ${phone}`);
+      if (email) descLines.push(`Email: ${email}`);
+      if (companyAddress) descLines.push(`Endereço: ${companyAddress}`);
+      if (companyPhone) descLines.push(`Telefone da Empresa: ${companyPhone}`);
+      if (mapsLink) descLines.push(`Localização: [Localizar no Google Maps](${mapsLink})`);
+
+      calendarResult = await syncCalendarEvent(orgId, {
+        summary: `[REMARCADO] ${subject} - ${name}`,
+        appointmentDate: date,
+        appointmentTime: time,
+        location: companyAddress || mapsLink || undefined,
+        customerName: name,
+        customerEmail: email,
+        customerPhone: phone,
+        description: descLines.join('\n'),
+      });
+      console.log(`[BookingService] 📆 Calendário sincronizado para remarcação:`, calendarResult);
+    } catch (calErr: any) {
+      console.error('[BookingService] Erro ao sincronizar agenda na remarcação:', calErr.message);
+    }
+
+    // 3. Alertas Instantâneos
+    let instantEmailSent = false;
+    let instantSmsSent = false;
+
+    if (email) {
+      try {
+        instantEmailSent = await EmailService.sendBookingConfirmationToCustomer({
+          customerEmail: email,
+          customerName: name,
+          date,
+          time,
+          subject: `[REMARCAÇÃO] ${subject}`,
+          companyName,
+          companyPhone,
+          companyAddress,
+          mapsLink,
+        });
+      } catch (eErr: any) {
+        console.error('[BookingService] Erro no email de remarcação ao cliente:', eErr.message);
+      }
+    }
+
+    if (phone) {
+      try {
+        let smsMsg = `Olá ${name}, a sua remarcação para ${subject} com ${companyName} foi confirmada para ${date} às ${time}.`;
+        if (mapsLink) smsMsg += ` Localizar no Maps: ${mapsLink}`;
+        smsMsg += ` Obrigado, ${companyName}.`;
+
+        const smsRes = await TelcoSMSService.sendSMS({
+          orgId,
+          to: phone,
+          message: smsMsg,
+          apiKey: orgData?.telcosms_api_key,
+          senderId: orgData?.telcosms_sender_id,
+        });
+        instantSmsSent = smsRes.success;
+      } catch (sErr: any) {
+        console.error('[BookingService] Erro no SMS de remarcação:', sErr.message);
+      }
+    }
+
+    // Alerta à Empresa Registrada
+    try {
+      EmailService.sendBookingNotificationToCompany({
+        orgId,
+        customerName: name,
+        customerPhone: phone,
+        customerEmail: email,
+        date,
+        time,
+        subject,
+        companyName,
+        channelOrigin: options?.channelOrigin,
+        isReschedule: true,
+      }).catch(err => console.error('[BookingService] Erro ao alertar empresa da remarcação:', err.message));
+    } catch (_) {}
+
+    // 4. Agendar novos lembretes
+    let alertsScheduled = 0;
+    const channels = email && phone ? 'both' : email ? 'email' : 'sms';
+    const [y, m, d] = date.split('-').map(Number);
+    const [h, min] = time.split(':').map(Number);
+    const appointmentDateObj = new Date(y, m - 1, d, h, min, 0);
+    const now = new Date();
+
+    const remindersToSchedule = [];
+    const sevenDaysBefore = new Date(appointmentDateObj);
+    sevenDaysBefore.setDate(sevenDaysBefore.getDate() - 7);
+    const s7 = this.getRandomBusinessHour(sevenDaysBefore);
+    if (s7.getTime() > now.getTime()) {
+      remindersToSchedule.push({ reminder_stage: '7_days_before', scheduled_at: s7.toISOString() });
+    }
+
+    const threeDaysBefore = new Date(appointmentDateObj);
+    threeDaysBefore.setDate(threeDaysBefore.getDate() - 3);
+    const s3 = this.getRandomBusinessHour(threeDaysBefore);
+    if (s3.getTime() > now.getTime()) {
+      remindersToSchedule.push({ reminder_stage: '3_days_before', scheduled_at: s3.toISOString() });
+    }
+
+    const sameDay = new Date(appointmentDateObj);
+    sameDay.setHours(7, 0, 0, 0);
+    if (sameDay.getTime() > now.getTime()) {
+      remindersToSchedule.push({ reminder_stage: 'same_day_morning', scheduled_at: sameDay.toISOString() });
+    }
+
+    for (const rem of remindersToSchedule) {
+      try {
+        const { error: insErr } = await supabaseAdmin
+          .from('appointment_reminders')
+          .insert({
+            org_id: orgId,
+            booking_id: bookingId || undefined,
+            customer_name: name,
+            customer_phone: phone || undefined,
+            customer_email: email || undefined,
+            subject,
+            appointment_date: date,
+            appointment_time: time,
+            reminder_stage: rem.reminder_stage,
+            scheduled_at: rem.scheduled_at,
+            channels,
+            status: 'pending',
+          });
+        if (!insErr) alertsScheduled++;
+      } catch (_) {}
+    }
+
+    return {
+      success: true,
+      bookingId,
+      calendarEventId: calendarResult?.eventId,
+      calendarHtmlLink: calendarResult?.webLink || calendarResult?.link,
       alertsScheduled,
       instantEmailSent,
       instantSmsSent,

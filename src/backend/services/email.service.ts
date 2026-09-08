@@ -792,10 +792,143 @@ export class EmailService {
         html: htmlContent,
       });
 
-      console.log(`[EmailService] ✅ Email de avaliação pós-atendimento enviado para ${customerEmail}`);
+      console.log(`[EmailService] ✉️ Email de avaliação pós-atendimento enviado para ${customerEmail}`);
       return true;
     } catch (err: any) {
       console.error(`[EmailService] ❌ Erro ao enviar email de avaliação pós-atendimento para ${customerEmail}:`, err.message);
+      return false;
+    }
+  }
+
+  /**
+   * Envia email de notificação à empresa registrada quando um novo agendamento for confirmado ou remarcado.
+   */
+  static async sendBookingNotificationToCompany(params: {
+    orgId: string;
+    customerName: string;
+    customerPhone?: string;
+    customerEmail?: string;
+    date: string;
+    time: string;
+    subject: string;
+    companyName?: string;
+    channelOrigin?: string;
+    isReschedule?: boolean;
+  }): Promise<boolean> {
+    const { orgId, customerName, customerPhone, customerEmail, date, time, subject, companyName, channelOrigin, isReschedule } = params;
+
+    try {
+      const { data: teamMembers } = await supabaseAdmin
+        .from('team_members')
+        .select('email, role')
+        .eq('org_id', orgId)
+        .in('role', ['OWNER', 'ADMIN', 'AGENT']);
+
+      const { data: orgData } = await supabaseAdmin
+        .from('organizations')
+        .select('name, email')
+        .eq('id', orgId)
+        .maybeSingle();
+
+      const resolvedOrgName = companyName || orgData?.name || 'sua organização';
+      const teamEmails = (teamMembers || []).map(m => m.email).filter(Boolean);
+      const orgEmail = orgData?.email ? [orgData.email] : [];
+      const vipEmails = (process.env.VIP_EMAILS || '')
+        .split(',')
+        .map(e => e.trim())
+        .filter(e => e.includes('@'));
+
+      const allRecipients = Array.from(new Set([...teamEmails, ...orgEmail, ...vipEmails]));
+
+      if (allRecipients.length === 0) {
+        console.warn(`[EmailService] ⚠️ Nenhum destinatário para email de novo agendamento na org ${orgId}`);
+        return false;
+      }
+
+      const host = process.env.SMTP_HOST;
+      const port = parseInt(process.env.SMTP_PORT || '587', 10);
+      const user = process.env.SMTP_USER;
+      const pass = process.env.SMTP_PASS;
+      const from = `${resolvedOrgName} <${user || 'no-reply@orion.com'}>`;
+
+      if (!user || !pass) {
+        console.warn(`[EmailService] ⚠️ SMTP não configurado. Simulação de email de agendamento à empresa para ${allRecipients.join(', ')}.`);
+        return true;
+      }
+
+      const transporter = nodemailer.createTransport({
+        host,
+        port,
+        secure: port === 465,
+        auth: { user, pass },
+      });
+
+      const actionTitle = isReschedule ? 'Agendamento Remarcado' : 'Novo Agendamento Confirmado';
+      const badgeText = isReschedule ? '🔄 REMARCAÇÃO DE CONSULTA' : '📅 NOVO AGENDAMENTO';
+      const liveChatUrl = `${process.env.VITE_APP_URL || 'http://localhost:3000'}/dashboard/live-chat`;
+
+      const htmlContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <style>
+          body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f8fafc; margin: 0; padding: 0; }
+          .container { max-width: 600px; margin: 40px auto; background: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.08); border: 1px solid #e2e8f0; }
+          .header { background: linear-gradient(135deg, #059669 0%, #064e3b 100%); padding: 32px 20px; text-align: center; color: #ffffff; }
+          .badge { display: inline-block; background-color: rgba(255,255,255,0.2); padding: 5px 14px; border-radius: 9999px; font-size: 12px; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 10px; }
+          .header h1 { margin: 0; font-size: 22px; font-weight: 800; }
+          .content { padding: 30px; color: #1e293b; line-height: 1.6; }
+          .card { background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 20px; margin: 20px 0; }
+          .row { margin-bottom: 12px; font-size: 15px; }
+          .label { font-weight: 700; color: #475569; }
+          .value { font-weight: 600; color: #0f172a; }
+          .btn { background-color: #059669; color: #ffffff !important; padding: 14px 28px; text-decoration: none; border-radius: 8px; font-weight: 700; display: inline-block; margin-top: 15px; text-align: center; }
+          .footer { background-color: #f8fafc; padding: 20px; text-align: center; font-size: 13px; color: #94a3b8; border-top: 1px solid #e2e8f0; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <span class="badge">${badgeText}</span>
+            <h1>${actionTitle}</h1>
+            <p style="margin: 6px 0 0 0; opacity: 0.95;">Organização: ${resolvedOrgName}</p>
+          </div>
+          <div class="content">
+            <p>Olá equipa <strong>${resolvedOrgName}</strong>,</p>
+            <p>Foi ${isReschedule ? 'remarcada' : 'registada'} com sucesso uma nova marcação de atendimento via <strong>${channelOrigin || 'Chatbot IA'}</strong>.</p>
+            <div class="card">
+              <div class="row"><span class="label">👤 Cliente:</span> <span class="value">${customerName}</span></div>
+              <div class="row"><span class="label">📅 Data:</span> <span class="value">${date}</span></div>
+              <div class="row"><span class="label">⏰ Horário:</span> <span class="value">${time}</span></div>
+              <div class="row"><span class="label">📋 Assunto / Serviço:</span> <span class="value">${subject}</span></div>
+              ${customerPhone ? `<div class="row"><span class="label">📞 Telefone / WhatsApp:</span> <span class="value">${customerPhone}</span></div>` : ''}
+              ${customerEmail ? `<div class="row"><span class="label">✉️ E-mail:</span> <span class="value">${customerEmail}</span></div>` : ''}
+              <div class="row"><span class="label">🌐 Canal de Origem:</span> <span class="value">${channelOrigin || 'Chatbot Orion'}</span></div>
+            </div>
+            <div style="text-align: center;">
+              <a href="${liveChatUrl}" class="btn">Visualizar Conversa no Live Chat</a>
+            </div>
+          </div>
+          <div class="footer">
+            <p>&copy; ${new Date().getFullYear()} Orion AI Platform. Notificação automática de agendamento.</p>
+          </div>
+        </div>
+      </body>
+      </html>
+      `;
+
+      await transporter.sendMail({
+        from,
+        to: allRecipients,
+        subject: `📅 ${actionTitle}: ${customerName} - ${date} às ${time} (${resolvedOrgName})`,
+        html: htmlContent,
+      });
+
+      console.log(`[EmailService] ✅ Email de notificação de agendamento enviado para a empresa (${allRecipients.join(', ')})`);
+      return true;
+    } catch (err: any) {
+      console.error('[EmailService] ❌ Erro ao enviar email de notificação à empresa:', err.message);
       return false;
     }
   }

@@ -62,6 +62,7 @@ export default function Settings() {
     { day_of_week: 6, is_open: true,  open_time: "08:00", close_time: "13:00" },
   ];
   const [businessHours, setBusinessHours] = useState<{ day_of_week: number; is_open: boolean; open_time: string; close_time: string }[]>(DEFAULT_HOURS);
+  const [opensOnHolidays, setOpensOnHolidays] = useState<boolean>(false);
   const [isSavingHours, setIsSavingHours] = useState(false);
   const [isLoadingHours, setIsLoadingHours] = useState(false);
 
@@ -165,13 +166,17 @@ export default function Settings() {
       });
       if (!res.ok) throw new Error("Erro ao carregar horários");
       const data = await res.json();
-      if (Array.isArray(data) && data.length === 7) {
-        setBusinessHours(data.map((d: any) => ({
+      const daysList = Array.isArray(data) ? data : data?.days;
+      if (Array.isArray(daysList) && daysList.length === 7) {
+        setBusinessHours(daysList.map((d: any) => ({
           day_of_week: d.day_of_week,
           is_open:    !!d.is_open,
           open_time:  d.open_time  ? d.open_time.substring(0, 5)  : "08:00",
           close_time: d.close_time ? d.close_time.substring(0, 5) : "18:00",
         })));
+      }
+      if (data && typeof data.opens_on_holidays === "boolean") {
+        setOpensOnHolidays(data.opens_on_holidays);
       }
     } catch (err: any) {
       console.warn("Aviso ao carregar horários:", err.message);
@@ -190,13 +195,13 @@ export default function Settings() {
           "Content-Type":  "application/json",
           "Authorization": `Bearer ${localStorage.getItem("token")}`
         },
-        body: JSON.stringify({ days: businessHours })
+        body: JSON.stringify({ days: businessHours, opens_on_holidays: opensOnHolidays })
       });
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
         throw new Error(d.error || "Erro ao guardar horários");
       }
-      toast.success("Horários de funcionamento atualizados!");
+      toast.success("Horários e preferências de feriados atualizados com sucesso!");
     } catch (err: any) {
       toast.error(err.message);
     } finally {
@@ -654,8 +659,38 @@ export default function Settings() {
                 </div>
               )}
 
+              {/* Botão / Toggle: A empresa abre aos feriados? (Sim/Não) */}
+              <div className="pt-3 pb-1 border-t border-zinc-100 mt-3">
+                <div className="flex items-center justify-between p-3 rounded-lg border border-zinc-200 bg-zinc-50/50">
+                  <div className="space-y-0.5 pr-4">
+                    <Label htmlFor="toggle-opens-holidays" className="text-sm font-semibold text-zinc-800 flex items-center gap-2">
+                      <Calendar className="w-4 h-4 text-emerald-600" />
+                      A empresa abre aos feriados?
+                    </Label>
+                    <p className="text-xs text-zinc-500">
+                      {opensOnHolidays
+                        ? "Aberto nos feriados: a IA permitirá agendamentos respeitando o horário do respectivo dia da semana."
+                        : "Fechado nos feriados: a IA tem total noção do calendário oficial de Angola e bloqueará agendamentos em feriados nacionais."}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
+                      opensOnHolidays ? "bg-emerald-100 text-emerald-700" : "bg-zinc-200 text-zinc-700"
+                    }`}>
+                      {opensOnHolidays ? "Sim" : "Não"}
+                    </span>
+                    <Switch
+                      id="toggle-opens-holidays"
+                      checked={opensOnHolidays}
+                      onCheckedChange={setOpensOnHolidays}
+                      className={opensOnHolidays ? "[&>div]:bg-emerald-600" : ""}
+                    />
+                  </div>
+                </div>
+              </div>
+
               <p className="text-[11px] text-zinc-400 pt-1">
-                ⚠️ A IA usará estes horários para não confirmar marcações em dias ou horas fora do expediente.
+                ⚠️ A IA usará estes horários e a regra de feriados para não confirmar marcações fora do expediente.
               </p>
             </CardContent>
             <CardFooter className="pt-0">

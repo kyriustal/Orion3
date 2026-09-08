@@ -385,24 +385,40 @@ router.post('/webhook', async (req, res) => {
       // ── Processamento Centralizado de Agendamento (Agenda Google/Microsoft + Deduplicação + Email/SMS) ──
       if (aiResult.bookingData) {
         const bData = aiResult.bookingData;
-        console.log(`[INSTAGRAM-BOOKING] 📅 Agendamento detectado via Instagram para ${bData.name} (${bData.date} às ${bData.time})`);
-        
-        BookingService.processBooking(orgId, {
-          name: bData.name,
-          subject: bData.subject,
-          phone: bData.phone || senderId,
-          email: bData.email,
-          date: bData.date,
-          time: bData.time,
-        }, { channelOrigin: 'Instagram DM' })
-        .then(res => {
-          if (res.success) {
-            console.log(`[INSTAGRAM-BOOKING] ✅ Agendamento processado! Lembretes programados: ${res.alertsScheduled}`);
-          } else {
-            console.warn(`[INSTAGRAM-BOOKING] ⚠️ Agendamento não concluído: ${res.error}`);
-          }
-        })
-        .catch(err => console.error('[INSTAGRAM-BOOKING] ❌ Erro ao processar agendamento:', err.message));
+        const isReschedule = Boolean(aiResult.noShowReschedule);
+        console.log(`[INSTAGRAM-BOOKING] 📅 ${isReschedule ? 'Remarcação' : 'Agendamento'} detectado via Instagram para ${bData.name} (${bData.date} às ${bData.time})`);
+
+        const customerPhone = (bData.phone && bData.phone.replace(/[^\d+]/g, '').length >= 8)
+          ? bData.phone.replace(/[^\d+]/g, '')
+          : undefined;
+
+        const bookingPromise = isReschedule
+          ? BookingService.rescheduleBooking(orgId, {
+              name: bData.name,
+              subject: bData.subject,
+              phone: customerPhone,
+              email: bData.email,
+              date: bData.date,
+              time: bData.time,
+            }, { channelOrigin: 'Instagram DM' })
+          : BookingService.processBooking(orgId, {
+              name: bData.name,
+              subject: bData.subject,
+              phone: customerPhone,
+              email: bData.email,
+              date: bData.date,
+              time: bData.time,
+            }, { channelOrigin: 'Instagram DM' });
+
+        bookingPromise
+          .then(res => {
+            if (res.success) {
+              console.log(`[INSTAGRAM-BOOKING] ✅ ${isReschedule ? 'Remarcação' : 'Agendamento'} processado! Lembretes programados: ${res.alertsScheduled}`);
+            } else {
+              console.warn(`[INSTAGRAM-BOOKING] ⚠️ ${isReschedule ? 'Remarcação' : 'Agendamento'} não concluído: ${res.error}`);
+            }
+          })
+          .catch(err => console.error('[INSTAGRAM-BOOKING] ❌ Erro ao processar agendamento:', err.message));
       }
 
       // 7. Persistir resposta do bot
