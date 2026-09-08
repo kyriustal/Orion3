@@ -291,7 +291,7 @@ export class EmailService {
         : type === 'proposal'
         ? 'A Inteligência Artificial detetou que o cliente enviou uma proposta comercial (serviço, parceria ou produto).'
         : 'A Inteligência Artificial detetou uma pergunta sem dados na base de conhecimento e informou que confirmará as informações.';
- 
+
       const htmlContent = `
       <!DOCTYPE html>
       <html>
@@ -318,31 +318,158 @@ export class EmailService {
             <p>Olá equipa da <strong>${orgName}</strong>,</p>
             <p>${description}</p>
             <div class="card">
-              <div class="row"><span class="label">Contacto do Cliente:</span> ${customerPhone}</div>
-              ${messageText ? '<div class="row"><span class="label">Última Mensagem:</span> "' + messageText + '"</div>' : ''}
+              <div class="row"><span class="label">Contacto:</span> ${customerPhone}</div>
+              <div class="row"><span class="label">Nome:</span> ${customerName}</div>
+              ${messageText ? `<div class="row"><span class="label">Mensagem do Cliente:</span> <em>"${messageText}"</em></div>` : ''}
             </div>
-            <p>Aceda ao painel do Live Chat da Orion para dar seguimento ao contacto.</p>
-            <div style="text-align: center;">
-              <a href="${process.env.VITE_APP_URL || 'https://orionboot.com'}/dashboard/live-chat" class="btn">Abrir Live Chat</a>
-            </div>
+            <p>Por favor, aceda ao Live Chat para dar seguimento:</p>
+            <a href="${process.env.VITE_APP_URL || 'http://localhost:3000'}/dashboard/live-chat" class="btn">Abrir Live Chat</a>
           </div>
         </div>
       </body>
       </html>
       `;
 
-      const emails = teamMembers.map(m => m.email).join(', ');
+      // Enviar para todos os membros elegíveis
+      const recipients = teamMembers.map(m => m.email).filter(Boolean);
+      if (recipients.length > 0) {
+        await transporter.sendMail({
+          from,
+          to: recipients,
+          subject: `${title} - ${orgName} (${customerPhone})`,
+          html: htmlContent,
+        });
+        console.log(`[EmailService] ✅ Alerta de ${type} enviado com sucesso para ${recipients.length} destinatários.`);
+      }
+    } catch (err: any) {
+      console.error(`[EmailService] ❌ Erro ao enviar alerta de ${type}:`, err.message);
+    }
+  }
+
+  /**
+   * Envia um Email de URGÊNCIA MÁXIMA para intervenção imediata da empresa quando as 3 tentativas da IA falham.
+   */
+  static async sendUrgentInterventionAlert(params: {
+    orgId: string;
+    customerPhone: string;
+    customerName?: string;
+    errorMessage: string;
+    customerMessage?: string;
+    platform?: string;
+  }): Promise<boolean> {
+    const { orgId, customerPhone, customerName = 'Cliente', errorMessage, customerMessage = '', platform = 'WhatsApp' } = params;
+
+    try {
+      const { data: orgData } = await supabaseAdmin
+        .from('organizations')
+        .select('name')
+        .eq('id', orgId)
+        .maybeSingle();
+
+      const { data: teamMembers } = await supabaseAdmin
+        .from('team_members')
+        .select('email, role')
+        .eq('org_id', orgId)
+        .in('role', ['OWNER', 'ADMIN', 'AGENT']);
+
+      const orgName = orgData?.name || 'sua organização';
+      const host = process.env.SMTP_HOST;
+      const port = parseInt(process.env.SMTP_PORT || '587', 10);
+      const user = process.env.SMTP_USER;
+      const pass = process.env.SMTP_PASS;
+      const from = process.env.SMTP_FROM || 'Orion Platform <urgencias@orion.com>';
+
+      // Lista consolidada de destinatários (Equipa + VIPs)
+      const teamEmails = (teamMembers || []).map(m => m.email).filter(Boolean);
+      const vipEmails = (process.env.VIP_EMAILS || '')
+        .split(',')
+        .map(e => e.trim())
+        .filter(e => e.includes('@'));
+
+      const allRecipients = Array.from(new Set([...teamEmails, ...vipEmails]));
+
+      if (allRecipients.length === 0) {
+        console.warn(`[EmailService] Nenhum destinatário para email de urgência na org ${orgId}`);
+        return false;
+      }
+
+      if (!user || !pass) {
+        console.warn(`[EmailService] ⚠️ SMTP não configurado. Simulação de email de URGÊNCIA para ${allRecipients.join(', ')}.`);
+        return true;
+      }
+
+      const transporter = nodemailer.createTransport({
+        host,
+        port,
+        secure: port === 465,
+        auth: { user, pass },
+      });
+
+      const liveChatUrl = `${process.env.VITE_APP_URL || 'http://localhost:3000'}/dashboard/live-chat`;
+
+      const htmlContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <style>
+          body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #fef2f2; margin: 0; padding: 0; }
+          .container { max-width: 600px; margin: 40px auto; background: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 10px 25px rgba(239,68,68,0.15); border: 1px solid #fee2e2; }
+          .header { background: linear-gradient(135deg, #dc2626 0%, #991b1b 100%); padding: 35px 20px; text-align: center; color: #ffffff; }
+          .badge { display: inline-block; background-color: rgba(255,255,255,0.25); padding: 5px 14px; border-radius: 9999px; font-size: 12px; font-weight: 800; letter-spacing: 0.8px; margin-bottom: 10px; }
+          .header h1 { margin: 0; font-size: 24px; font-weight: 800; }
+          .content { padding: 30px; color: #1f2937; }
+          .alert-box { background-color: #fef2f2; border-left: 4px solid #ef4444; border-radius: 6px; padding: 16px; margin: 20px 0; color: #991b1b; }
+          .card { background-color: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 20px; margin: 20px 0; }
+          .row { margin-bottom: 10px; font-size: 15px; }
+          .label { font-weight: 700; color: #374151; }
+          .btn { background-color: #dc2626; color: #ffffff !important; padding: 14px 28px; text-decoration: none; border-radius: 8px; font-weight: 700; display: inline-block; margin-top: 20px; text-align: center; box-shadow: 0 4px 10px rgba(220,38,38,0.3); }
+          .footer { background-color: #f9fafb; padding: 20px; text-align: center; font-size: 13px; color: #9ca3af; border-top: 1px solid #e5e7eb; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <span class="badge">⚠️ INTERVENÇÃO URGENTE NECESSÁRIA</span>
+            <h1>Falha de Envio de Mensagem</h1>
+            <p style="margin: 8px 0 0 0; opacity: 0.95;">Organização: ${orgName}</p>
+          </div>
+          <div class="content">
+            <div class="alert-box">
+              <strong>ATENÇÃO:</strong> A Inteligência Artificial tentou resolver o problema e repetiu 3 tentativas de resposta, mas o envio não foi concluído com sucesso. A conversa foi destacada a <strong>VERMELHO</strong> no Live Chat para atendimento humano imediato.
+            </div>
+            <p>O cliente está aguardando uma resposta e <strong>nenhuma mensagem técnica de erro foi enviada a ele</strong>.</p>
+            <div class="card">
+              <div class="row"><span class="label">📱 Plataforma:</span> ${platform.toUpperCase()}</div>
+              <div class="row"><span class="label">📞 Contacto do Cliente:</span> ${customerPhone}</div>
+              <div class="row"><span class="label">👤 Nome:</span> ${customerName}</div>
+              ${customerMessage ? `<div class="row"><span class="label">💬 Última Mensagem Recebida:</span> <em>"${customerMessage}"</em></div>` : ''}
+              <div class="row"><span class="label">⚙️ Diagnóstico do Erro:</span> <code style="color:#b91c1c; font-size:12px;">${errorMessage}</code></div>
+            </div>
+            <div style="text-align: center;">
+              <a href="${liveChatUrl}" class="btn">🚨 Assumir Conversa no Live Chat Agora</a>
+            </div>
+          </div>
+          <div class="footer">
+            <p>&copy; ${new Date().getFullYear()} Orion AI. Alerta de Segurança e Qualidade de Atendimento.</p>
+          </div>
+        </div>
+      </body>
+      </html>
+      `;
 
       await transporter.sendMail({
         from,
-        to: emails,
-        subject: `Orion AI | ${title} - ${customerPhone}`,
+        to: allRecipients,
+        subject: `🚨 URGENTE: Intervenção necessária no atendimento a ${customerName} (${customerPhone}) - ${orgName}`,
         html: htmlContent,
       });
 
-      console.log(`[EmailService] ✅ Alerta (${type}) enviado para a equipa da org ${orgId}`);
+      console.log(`[EmailService] 🚨 Email de intervenção de urgência enviado com sucesso para: ${allRecipients.join(', ')}`);
+      return true;
     } catch (err: any) {
-      console.error(`[EmailService] ❌ Erro ao enviar alerta (${type}):`, err.message);
+      console.error('[EmailService] ❌ Erro ao enviar email de intervenção urgente:', err.message);
+      return false;
     }
   }
 

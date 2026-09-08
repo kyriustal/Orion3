@@ -231,40 +231,83 @@ router.post('/webhook', async (req, res) => {
       // 4. Indicador de digitação
       await FacebookService.sendTypingIndicator(pageId, senderId, accessToken, 'typing_on');
 
-      // 5. Gerar resposta com IA
-      let aiResult;
-      try {
-        aiResult = await AIService.generateResponse({
-          message: userText || '',
-          orgId,
-          history,
-          botName: botName || 'Assistente',
-          mode: 'simulation',
-          media,
-          referral: referral || undefined,
-        });
-        console.log(`[FB WEBHOOK] ✅ Resposta gerada para sender=${senderId}: "${aiResult.reply.substring(0, 80)}"`);
-      } catch (aiErr: any) {
-        console.error(`[FB WEBHOOK] ❌ AIService lançou excepção para sender=${senderId}:`, aiErr.message);
+      // 5. PROTOCOLO DE SEGURANÇA E AUTO-CURA DA IA (Até 3 tentativas de recuperação)
+      let aiResult: any = null;
+      let sendSuccess = false;
+      let lastErrorMsg = '';
 
-        // NÃO enviar mensagem de erro ao cliente — apenas registar e sinalizar o painel.
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          console.log(`[FB WEBHOOK] 🛡️ Tentativa ${attempt}/3 de auto-cura para sender=${senderId}...`);
+          if (attempt > 1) {
+            await new Promise(r => setTimeout(r, attempt * 1000));
+          }
+
+          aiResult = await AIService.generateResponse({
+            message: userText || '',
+            orgId,
+            history,
+            botName: botName || 'Assistente',
+            mode: 'simulation',
+            media: attempt === 1 ? media : undefined,
+            referral: referral || undefined,
+          });
+
+          if (!aiResult?.reply) {
+            throw new Error('Resposta vazia da IA no Facebook.');
+          }
+
+          // Enviar resposta via Facebook API
+          await FacebookService.sendMessage(pageId, senderId, aiResult.reply, accessToken);
+          sendSuccess = true;
+          console.log(`[FB WEBHOOK] ✅ Mensagem enviada com sucesso para sender=${senderId} na tentativa ${attempt}!`);
+
+          // Emitir resolução de erro
+          try {
+            getIo().to(`org:${orgId}`).emit('chat_resolved', {
+              phone: senderId,
+              platform: 'facebook',
+            });
+          } catch (_) {}
+
+          break;
+        } catch (attemptErr: any) {
+          lastErrorMsg = attemptErr.message || String(attemptErr);
+          console.warn(`[FB WEBHOOK] ⚠️ Tentativa ${attempt}/3 falhou para sender=${senderId}: ${lastErrorMsg}`);
+        }
+      }
+
+      if (!sendSuccess) {
+        console.error(`[FB WEBHOOK] ❌ AIService falhou após 3 tentativas para sender=${senderId}: ${lastErrorMsg}`);
+
+        // NÃO enviar mensagem de erro ao cliente — apenas registar e sinalizar o painel com alerta vermelho.
         try {
           await supabaseAdmin.from('conversation_history').insert({
             org_id: orgId,
             customer_phone: senderId,
             sender: 'bot',
-            text: `[ERRO INTERNO — NÃO ENVIADO AO CLIENTE]: ${aiErr.message}`,
-            metadata: { platform: 'facebook', internal_error: true },
+            text: `[ERRO INTERNO — NÃO ENVIADO AO CLIENTE]: ${lastErrorMsg}`,
+            metadata: { platform: 'facebook', internal_error: true, needs_urgent_intervention: true },
           });
         } catch (_) { /* silencioso */ }
 
         try {
           getIo().to(`org:${orgId}`).emit('chat_error', {
             phone: senderId,
-            error: aiErr.message,
+            error: lastErrorMsg,
+            urgent: true,
             platform: 'facebook',
           });
         } catch (_) { /* silencioso */ }
+
+        EmailService.sendUrgentInterventionAlert({
+          orgId,
+          customerPhone: senderId,
+          customerName: 'Cliente Facebook',
+          errorMessage: lastErrorMsg,
+          customerMessage: userText,
+          platform: 'Facebook',
+        }).catch(e => console.error('[ALERTA FB] Erro ao enviar email de intervenção:', e.message));
 
         continue;
       }

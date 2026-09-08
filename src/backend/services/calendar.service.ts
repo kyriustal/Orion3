@@ -159,19 +159,22 @@ export async function createGoogleCalendarEvent(
       return { success: false, error: 'Hora do agendamento inválida (formato esperado HH:MM).' };
     }
 
-    const startDateTime = new Date(dateParts[0], dateParts[1] - 1, dateParts[2], timeParts[0], timeParts[1], timeParts[2] || 0);
+    const endMinutesTotal = timeParts[0] * 60 + timeParts[1] + duration;
+    const endH = Math.floor(endMinutesTotal / 60) % 24;
+    const endM = endMinutesTotal % 60;
+    const startHStr = String(timeParts[0]).padStart(2, '0');
+    const startMStr = String(timeParts[1]).padStart(2, '0');
+    const endHStr = String(endH).padStart(2, '0');
+    const endMStr = String(endM).padStart(2, '0');
 
-    if (isNaN(startDateTime.getTime())) {
-      return { success: false, error: 'Data ou hora do agendamento inválida.' };
-    }
-
-    const endDateTime = new Date(startDateTime.getTime() + duration * 60 * 1000);
+    const startIso = `${input.appointmentDate}T${startHStr}:${startMStr}:00`;
+    const endIso = `${input.appointmentDate}T${endHStr}:${endMStr}:00`;
 
     // ── 1. Deduplicação Ativa no Google Calendar ─────────────────────────────
     // Verificar se já existe um evento na faixa de tempo (+/- 15 minutos) com o mesmo cliente ou resumo
     try {
-      const windowMin = new Date(startDateTime.getTime() - 15 * 60 * 1000).toISOString();
-      const windowMax = new Date(endDateTime.getTime() + 15 * 60 * 1000).toISOString();
+      const windowMin = new Date(`${startIso}+01:00`).toISOString();
+      const windowMax = new Date(`${endIso}+01:00`).toISOString();
 
       const existingRes = await axios.get('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
         headers: { Authorization: `Bearer ${accessToken}` },
@@ -221,10 +224,12 @@ export async function createGoogleCalendarEvent(
       summary: input.summary,
       description: descriptionParts.join('\n'),
       start: {
-        dateTime: startDateTime.toISOString(),
+        dateTime: `${startIso}+01:00`,
+        timeZone: 'Africa/Luanda',
       },
       end: {
-        dateTime: endDateTime.toISOString(),
+        dateTime: `${endIso}+01:00`,
+        timeZone: 'Africa/Luanda',
       },
     };
 

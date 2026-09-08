@@ -7,6 +7,7 @@ import { FollowupService } from '../services/followup.service';
 import { BookingService } from '../services/booking.service';
 import { getIo } from '../socket';
 import { AudioService } from '../services/audio.service';
+import { EmailService } from '../services/email.service';
 import axios from 'axios';
 
 const router = Router();
@@ -297,39 +298,83 @@ router.post('/webhook', async (req, res) => {
       await InstagramService.markSeen(igUserId, senderId, accessToken);
       await InstagramService.sendTypingIndicator(igUserId, senderId, accessToken, 'typing_on');
 
-      // 6. Gerar resposta com IA
-      let aiResult;
-      try {
-        aiResult = await AIService.generateResponse({
-          message: messageText,
-          orgId,
-          history,
-          botName:  botName || 'Assistente',
-          mode:     'simulation',
-          media,
-          referral: referral || undefined,
-        });
-      } catch (aiErr: any) {
-        console.error(`[INSTAGRAM IA] Erro ao gerar resposta: ${aiErr.message}`);
+      // 6. PROTOCOLO DE SEGURANÇA E AUTO-CURA DA IA (Até 3 tentativas de recuperação)
+      let aiResult: any = null;
+      let sendSuccess = false;
+      let lastErrorMsg = '';
 
-        // NÃO enviar mensagem de erro ao cliente — apenas registar e sinalizar o painel.
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          console.log(`[INSTAGRAM WEBHOOK] 🛡️ Tentativa ${attempt}/3 de auto-cura para sender=${senderId}...`);
+          if (attempt > 1) {
+            await new Promise(r => setTimeout(r, attempt * 1000));
+          }
+
+          aiResult = await AIService.generateResponse({
+            message: messageText,
+            orgId,
+            history,
+            botName:  botName || 'Assistente',
+            mode:     'simulation',
+            media: attempt === 1 ? media : undefined,
+            referral: referral || undefined,
+          });
+
+          if (!aiResult?.reply) {
+            throw new Error('Resposta vazia da IA no Instagram.');
+          }
+
+          // Enviar resposta via Instagram DM
+          await InstagramService.sendMessage(igUserId, senderId, aiResult.reply, accessToken);
+          sendSuccess = true;
+          console.log(`[INSTAGRAM WEBHOOK] ✅ Mensagem enviada com sucesso para sender=${senderId} na tentativa ${attempt}!`);
+
+          // Emitir resolução de erro
+          try {
+            getIo().to(`org:${orgId}`).emit('chat_resolved', {
+              phone: senderId,
+              platform: 'instagram',
+            });
+          } catch (_) {}
+
+          break;
+        } catch (attemptErr: any) {
+          lastErrorMsg = attemptErr.message || String(attemptErr);
+          console.warn(`[INSTAGRAM WEBHOOK] ⚠️ Tentativa ${attempt}/3 falhou para sender=${senderId}: ${lastErrorMsg}`);
+        }
+      }
+
+      if (!sendSuccess) {
+        console.error(`[INSTAGRAM WEBHOOK] ❌ AIService falhou após 3 tentativas para sender=${senderId}: ${lastErrorMsg}`);
+
+        // NÃO enviar mensagem de erro ao cliente — apenas registar e sinalizar o painel com alerta vermelho.
         try {
           await supabaseAdmin.from('conversation_history').insert({
             org_id:         orgId,
             customer_phone: senderId,
             sender:         'bot',
-            text:           `[ERRO INTERNO — NÃO ENVIADO AO CLIENTE]: ${aiErr.message}`,
-            metadata:       { platform: 'instagram', internal_error: true },
+            text:           `[ERRO INTERNO — NÃO ENVIADO AO CLIENTE]: ${lastErrorMsg}`,
+            metadata:       { platform: 'instagram', internal_error: true, needs_urgent_intervention: true },
           });
         } catch (_) { /* silencioso */ }
 
         try {
           getIo().to(`org:${orgId}`).emit('chat_error', {
             phone: senderId,
-            error: aiErr.message,
+            error: lastErrorMsg,
+            urgent: true,
             platform: 'instagram',
           });
         } catch (_) { /* silencioso */ }
+
+        EmailService.sendUrgentInterventionAlert({
+          orgId,
+          customerPhone: senderId,
+          customerName: 'Cliente Instagram',
+          errorMessage: lastErrorMsg,
+          customerMessage: messageText,
+          platform: 'Instagram',
+        }).catch(e => console.error('[ALERTA IG] Erro ao enviar email de intervenção:', e.message));
 
         continue;
       }
@@ -360,31 +405,35 @@ router.post('/webhook', async (req, res) => {
         .catch(err => console.error('[INSTAGRAM-BOOKING] ❌ Erro ao processar agendamento:', err.message));
       }
 
-      // 7. Enviar resposta via Instagram DM
-      if (aiReply) {
-        await InstagramService.sendMessage(igUserId, senderId, aiReply, accessToken);
-
-        // 8. Persistir resposta do bot
-        await supabaseAdmin.from('conversation_history').insert({
-          org_id:         orgId,
-          customer_phone: senderId,
-          sender:         'bot',
-          text:           aiReply,
-          metadata:       { platform: 'instagram' },
-        });
-
-        // Ativar protocolo de follow-up para todos os clientes sem agendamento e sem transferência para humano
-        if (!transfer && !aiResult.booking) {
-          FollowupService.scheduleSmartFollowup({
-            orgId,
-            phone:    senderId,
-            platform: 'instagram',
-            botReply: aiReply,
-          }).catch(() => {});
-        }
-
-        console.log(`[INSTAGRAM] Resposta enviada para ${senderId}. Transfer: ${transfer}`);
+      // 7. Persistir resposta do bot
+      const igBotMetadata: any = { platform: 'instagram' };
+      if (aiResult.confirm) igBotMetadata.confirm = true;
+      if (aiResult.booking || aiResult.bookingData) igBotMetadata.booking = true;
+      if (aiResult.attended) igBotMetadata.attended = true;
+      if (aiResult.noShowReschedule) {
+        igBotMetadata.no_show_reschedule = true;
+        igBotMetadata.booking = true;
       }
+
+      await supabaseAdmin.from('conversation_history').insert({
+        org_id:         orgId,
+        customer_phone: senderId,
+        sender:         'bot',
+        text:           aiReply,
+        metadata:       igBotMetadata,
+      });
+
+      // Ativar protocolo de follow-up para todos os clientes sem agendamento e sem transferência para humano
+      if (!transfer && !aiResult.booking && !aiResult.bookingData) {
+        FollowupService.scheduleSmartFollowup({
+          orgId,
+          phone:    senderId,
+          platform: 'instagram',
+          botReply: aiReply,
+        }).catch(() => {});
+      }
+
+      console.log(`[INSTAGRAM] Resposta enviada para ${senderId}. Transfer: ${transfer}`);
     }
   } catch (err: any) {
     console.error('[INSTAGRAM WEBHOOK] Erro fatal:', err.message);

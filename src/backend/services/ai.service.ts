@@ -47,6 +47,8 @@ export interface GenerateResult {
   proposal?: boolean;
   contactData?: { name?: string; email?: string; phone?: string };
   confirm?: boolean;
+  attended?: boolean;
+  noShowReschedule?: boolean;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -478,6 +480,10 @@ INSTRUÇÕES CRÍTICAS PARA ATENDIMENTO DE LEADS DE ANÚNCIOS:
     ? `\n═══ MEMÓRIA PERMANENTE DO CLIENTE E CONTEXTO DAS CONVERSAS ═══\n${memoryLines.join('\n')}\n`
     : '';
 
+  const attendanceAndNoShowRule = `
+- CONFIRMAÇÃO DE ATENDIMENTO REALIZADO: Se o cliente confirmar que já esteve no atendimento/consultoria presencial ou online (ex: "já fui atendido", "estive aí hoje", "já fiz a consultoria", "fui atendido"), inclua no início da sua resposta o token [ATENDIMENTO:CONFIRMADO].
+- REMARCAÇÃO POR FALTA DE COMPARÊNCIA (NO-SHOW): Se o cliente informar que faltou, não conseguiu comparecer ao agendamento anterior ou deseja remarcar por falta (ex: "não pude ir", "faltei à reunião", "não consegui comparecer e quero remarcar"), acolha-o cordialmente, auxilie a agendar uma nova data e inclua no início da sua resposta o token [REMARCACAO:FALTA].`;
+
   return `Você é ${botName}, assistente virtual oficial da empresa "${companyName}".
 ${temporal.promptContext}
 ${customerMemorySection}
@@ -549,7 +555,8 @@ REGRAS OBRIGATÓRIAS:
 ${transferRule}
 ${bookingRule}
 ${proposalRule}
-${contactRule}`;
+${contactRule}
+${attendanceAndNoShowRule}`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1380,6 +1387,11 @@ export class AIService {
           const transfer     = cleanedText.includes('[TRANSFERIR_HUMANO]');
           const booking      = cleanedText.includes('[AGENDAR]') || cleanedText.includes('[BOOKING_CONFIRMED:');
           const proposal     = cleanedText.includes('[PROPOSTA]');
+          const attended     = cleanedText.includes('[ATENDIMENTO:CONFIRMADO]') || 
+            /(?:já fui atendido|fui atendido|já estive no escritório|estive na consulta|já realizei o atendimento|atendimento foi realizado)/i.test(enrichedMessage);
+          const noShowReschedule = cleanedText.includes('[REMARCACAO:FALTA]') || 
+            /(?:não pude comparecer|não consegui comparecer|faltei|não pude ir|não fui|remarcar por falta|remarcação por falta)/i.test(enrichedMessage);
+
           const contactMatch = cleanedText.match(/\[CONTATO:(\{[^}]+\})\]/);
           const contactData  = contactMatch
             ? (() => { try { return JSON.parse(contactMatch[1]); } catch { return undefined; } })()
@@ -1389,12 +1401,12 @@ export class AIService {
           const bookingData = parseBookingData(cleanedText, history, enrichedMessage, customerProfile);
 
           const cleanReply = cleanedText
-            .replace(/\[TRANSFERIR_HUMANO\]|\[AGENDAR\]|\[PROPOSTA\]|\[CONFIRMAR_INFORMAÇÃO\]|\[CONTATO:\{[^}]+\}\]|\[BOOKING_CONFIRMED:\{[\s\S]*?\}\]/g, '')
+            .replace(/\[TRANSFERIR_HUMANO\]|\[AGENDAR\]|\[PROPOSTA\]|\[CONFIRMAR_INFORMAÇÃO\]|\[ATENDIMENTO:CONFIRMADO\]|\[REMARCACAO:FALTA\]|\[CONTATO:\{[^}]+\}\]|\[BOOKING_CONFIRMED:\{[\s\S]*?\}\]/g, '')
             .trim();
 
           const finalReply = sanitizeGoogleMapsLinks(cleanReply || cleanedText);
-          console.log(`[AIService] ✅ Resposta via DeepSeek [PRINCIPAL] (${finalReply.length} chars). BookingData:`, bookingData ? 'Detectado' : 'Não');
-          return { reply: finalReply, transfer, booking: booking || !!bookingData, bookingData, proposal, contactData, confirm };
+          console.log(`[AIService] ✅ Resposta via DeepSeek [PRINCIPAL] (${finalReply.length} chars). BookingData:`, bookingData ? 'Detectado' : 'Não', `Attended: ${attended}`, `NoShowReschedule: ${noShowReschedule}`);
+          return { reply: finalReply, transfer, booking: booking || !!bookingData, bookingData, proposal, contactData, confirm, attended, noShowReschedule };
 
         } catch (dsErr: any) {
           const httpStatus = dsErr.response?.status ?? 'N/A';
@@ -1446,6 +1458,11 @@ export class AIService {
           const transfer     = cleanText.includes('[TRANSFERIR_HUMANO]');
           const booking      = cleanText.includes('[AGENDAR]') || cleanText.includes('[BOOKING_CONFIRMED:');
           const proposal     = cleanText.includes('[PROPOSTA]');
+          const attended     = cleanText.includes('[ATENDIMENTO:CONFIRMADO]') || 
+            /(?:já fui atendido|fui atendido|já estive no escritório|estive na consulta|já realizei o atendimento|atendimento foi realizado)/i.test(enrichedMessage);
+          const noShowReschedule = cleanText.includes('[REMARCACAO:FALTA]') || 
+            /(?:não pude comparecer|não consegui comparecer|faltei|não pude ir|não fui|remarcar por falta|remarcação por falta)/i.test(enrichedMessage);
+
           const contactMatch = cleanText.match(/\[CONTATO:(\{[^}]+\})\]/);
           const contactData  = contactMatch
             ? (() => { try { return JSON.parse(contactMatch[1]); } catch { return undefined; } })()
@@ -1455,12 +1472,12 @@ export class AIService {
           const bookingData = parseBookingData(cleanText, history, enrichedMessage, customerProfile);
 
           const cleanReply = cleanText
-            .replace(/\[TRANSFERIR_HUMANO\]|\[AGENDAR\]|\[PROPOSTA\]|\[CONFIRMAR_INFORMAÇÃO\]|\[CONTATO:\{[^}]+\}\]|\[BOOKING_CONFIRMED:\{[\s\S]*?\}\]/g, '')
+            .replace(/\[TRANSFERIR_HUMANO\]|\[AGENDAR\]|\[PROPOSTA\]|\[CONFIRMAR_INFORMAÇÃO\]|\[ATENDIMENTO:CONFIRMADO\]|\[REMARCACAO:FALTA\]|\[CONTATO:\{[^}]+\}\]|\[BOOKING_CONFIRMED:\{[\s\S]*?\}\]/g, '')
             .trim();
 
           const finalReply = sanitizeGoogleMapsLinks(cleanReply || cleanText);
-          console.log(`[AIService] ✅ Resposta via Gemini [FALLBACK] chave ${keyIdx}. BookingData:`, bookingData ? 'Detectado' : 'Não');
-          return { reply: finalReply, transfer, booking: booking || !!bookingData, bookingData, proposal, contactData, confirm };
+          console.log(`[AIService] ✅ Resposta via Gemini [FALLBACK] chave ${keyIdx}. BookingData:`, bookingData ? 'Detectado' : 'Não', `Attended: ${attended}`, `NoShowReschedule: ${noShowReschedule}`);
+          return { reply: finalReply, transfer, booking: booking || !!bookingData, bookingData, proposal, contactData, confirm, attended, noShowReschedule };
 
         } catch (err: any) {
           const status = err.response?.status ?? 'N/A';

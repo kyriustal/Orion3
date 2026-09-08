@@ -134,49 +134,104 @@ router.get('/chats', requireAuth, async (req: AuthRequest, res) => {
     if (error) throw error;
 
     const chatsMap = new Map<string, any>();
-    const phoneConfirmStatus = new Map<string, boolean>();
+    const phoneStatusMap = new Map<string, { needs_confirm: boolean; has_exclamation: boolean; has_error: boolean }>();
 
     (history || []).forEach(item => {
       if (!item.customer_phone || item.customer_phone === 'null') return;
+      const phone = item.customer_phone;
       
-      // Se ainda não decidimos se precisa de confirmação para este número:
-      if (!phoneConfirmStatus.has(item.customer_phone)) {
-        if (item.sender === 'human') {
-          // Se a mensagem mais recente (antes de ver um confirm do bot) for de um humano,
-          // significa que o humano já respondeu, então limpamos o status de confirmação.
-          phoneConfirmStatus.set(item.customer_phone, false);
-        } else if (item.sender === 'bot' && (item.metadata?.confirm === true || item.metadata?.booking === true)) {
-          // Se encontramos uma mensagem do bot que precisa de confirmação/agendamento antes de qualquer resposta humana,
-          // o chat fica marcado como precisando de confirmação.
-          phoneConfirmStatus.set(item.customer_phone, true);
+      if (!phoneStatusMap.has(phone)) {
+        let isAttended = false;
+        let isBooking = false;
+        let isNoShowReschedule = false;
+        let hasInternalError = false;
+
+        const phoneItems = (history || []).filter(h => h.customer_phone === phone);
+        
+        for (const h of phoneItems) {
+          if (h.metadata?.attended === true) {
+            isAttended = true;
+            break; // Já foi atendido, limpa o status de agendamento pendente
+          }
+          if (h.metadata?.no_show_reschedule === true || h.metadata?.noShowReschedule === true) {
+            isNoShowReschedule = true;
+          }
+          if (h.metadata?.booking === true || h.metadata?.confirm === true) {
+            isBooking = true;
+          }
+          if (h.metadata?.internal_error === true && !h.metadata?.resolved) {
+            hasInternalError = true;
+          }
         }
+
+        const needsConfirm = isBooking && !isAttended;
+        const hasExclamation = isNoShowReschedule && !isAttended;
+
+        phoneStatusMap.set(phone, {
+          needs_confirm: needsConfirm,
+          has_exclamation: hasExclamation,
+          has_error: hasInternalError,
+        });
       }
 
-      if (!chatsMap.has(item.customer_phone)) {
+      if (!chatsMap.has(phone)) {
         const platform = item.metadata?.platform || 'whatsapp';
-        let nameDisplay = `WhatsApp (${item.customer_phone})`;
-        if (platform === 'instagram') nameDisplay = `Instagram (@${item.customer_phone})`;
-        else if (platform === 'facebook') nameDisplay = `Messenger (${item.customer_phone.slice(-6)})`;
+        let nameDisplay = `WhatsApp (${phone})`;
+        if (platform === 'instagram') nameDisplay = `Instagram (@${phone})`;
+        else if (platform === 'facebook') nameDisplay = `Messenger (${phone.slice(-6)})`;
 
-        chatsMap.set(item.customer_phone, {
-          id: item.customer_phone,
-          phone: item.customer_phone,
+        const st = phoneStatusMap.get(phone) || { needs_confirm: false, has_exclamation: false, has_error: false };
+
+        chatsMap.set(phone, {
+          id: phone,
+          phone: phone,
           name: nameDisplay,
           lastMessage: item.text,
           time: new Date(item.created_at).toLocaleTimeString('pt-PT', { timeZone: 'Africa/Luanda', hour: '2-digit', minute: '2-digit' }),
           timestamp: item.created_at,
           lastSender: item.sender,
           platform: platform,
-          needs_confirm: false,
+          needs_confirm: st.needs_confirm,
+          has_exclamation: st.has_exclamation,
+          has_error: st.has_error,
         });
       }
     });
 
-    for (const [phone, chat] of chatsMap.entries()) {
-      chat.needs_confirm = phoneConfirmStatus.get(phone) || false;
+    res.json(Array.from(chatsMap.values()));
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── POST /api/whatsapp/mark-attended — Marcar atendimento como realizado ─────
+router.post('/mark-attended', requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const orgId = req.user?.orgId;
+    const { phone } = req.body;
+
+    if (!phone) {
+      return res.status(400).json({ error: 'Telefone obrigatório.' });
     }
 
-    res.json(Array.from(chatsMap.values()));
+    await supabaseAdmin.from('conversation_history').insert({
+      org_id: orgId,
+      customer_phone: phone,
+      sender: 'human',
+      text: '[ATENDIMENTO CONFIRMADO PELO AGENTE]',
+      metadata: { attended: true, internal_note: true }
+    });
+
+    try {
+      getIo().to(`org:${orgId}`).emit('chat_status_updated', {
+        phone,
+        attended: true,
+        needs_confirm: false,
+        has_exclamation: false,
+      });
+    } catch (_) {}
+
+    res.json({ success: true, message: 'Atendimento marcado como concluído!' });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -534,6 +589,8 @@ async function triggerAIResponse(params: {
     return;
   }
 
+  let customerProfile: CustomerProfile | undefined;
+
   try {
     // Indicador de "digitando..."
     try {
@@ -563,7 +620,6 @@ async function triggerAIResponse(params: {
     const history = pastDbHistory.reverse().map(h => ({ sender: h.sender, text: h.text }));
 
     // ── Carregar perfil do cliente (memória permanente de nome e contexto) ───────
-    let customerProfile: CustomerProfile | undefined;
     try {
       // 1. Buscar dados do contacto já capturados (nome, email)
       const { data: existingContact } = await supabaseAdmin
@@ -653,27 +709,165 @@ async function triggerAIResponse(params: {
       console.warn('[MEMÓRIA] Erro ao carregar perfil do cliente (não crítico):', memErr.message);
     }
 
-    // Gerar resposta com IA (Gemini para visão/áudio/documentos + DeepSeek para resposta textual)
-    const aiResult = await AIService.generateResponse({
-      message,
-      orgId,
-      history,
-      botName,
-      mode: 'simulation',
-      media,
-      referral,
-      timeSinceLastMessageHours,
-      customerProfile,
-    });
+    let sendSuccess = false;
+    let lastErrorMsg = '';
+    let aiResult: any = null;
+    let ptReplyText = '';
+    let replyText = '';
+    let sentMsgId: string | null = null;
 
-    if (!aiResult?.reply) {
-      throw new Error('Resposta da IA vazia.');
+    // ── PROTOCOLO DE SEGURANÇA E AUTO-CURA DA IA (Até 3 tentativas de recuperação) ──
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        console.log(`[PROTOCOLO SEGURANÇA IA] 🛡️ Tentativa ${attempt}/3 de auto-cura para ${fromNumber}...`);
+        if (attempt > 1) {
+          // Pausa adaptativa antes de retentar
+          await new Promise(r => setTimeout(r, attempt * 1000));
+        }
+
+        // Gerar resposta com IA (Gemini para visão/áudio/documentos + DeepSeek para resposta textual)
+        aiResult = await AIService.generateResponse({
+          message,
+          orgId,
+          history,
+          botName,
+          mode: 'simulation',
+          media: attempt === 1 ? media : undefined, // se falhou com media na 1ª tentativa, foca no texto
+          referral,
+          timeSinceLastMessageHours,
+          customerProfile,
+        });
+
+        if (!aiResult?.reply) {
+          throw new Error('Resposta da IA vazia.');
+        }
+
+        replyText = aiResult.reply;
+        ptReplyText = replyText;
+
+        // Tradução silenciosa para PT para manter o painel/histórico em português
+        if (detectedLanguage !== 'pt' && detectedLanguage !== 'por') {
+          console.log(`[IA] Traduzindo silenciosamente a resposta de ${detectedLanguage} para PT...`);
+          ptReplyText = await AIService.translateText(replyText, 'português');
+        }
+
+        // ── Processar envio de arquivos [SEND_FILE: ID] ───────────────────────
+        const fileMatches = [...replyText.matchAll(/\[SEND_FILE:\s*([a-f0-9-]{36})\]/gi)];
+        if (fileMatches.length > 0) {
+          console.log(`[IA] ${fileMatches.length} comando(s) de envio de arquivo detectado(s).`);
+          
+          replyText = replyText.replace(/\[SEND_FILE:\s*[a-f0-9-]{36}\]/gi, '').trim();
+          ptReplyText = ptReplyText.replace(/\[SEND_FILE:\s*[a-f0-9-]{36}\]/gi, '').trim();
+
+          for (const match of fileMatches) {
+            const assetId = match[1];
+            const { data: asset } = await supabaseAdmin
+              .from('public_assets')
+              .select('*')
+              .eq('id', assetId)
+              .eq('org_id', orgId)
+              .single();
+
+            if (asset) {
+              console.log(`[IA] Enviando arquivo "${asset.filename}" para ${fromNumber}...`);
+              const sentMediaId = await WhatsAppService.sendMediaByUrl(
+                fromNumber, 
+                asset.file_url, 
+                asset.mime_type, 
+                asset.filename, 
+                phoneNumberId, 
+                accessToken
+              );
+              if (sentMediaId) botSentMessages.add(sentMediaId);
+
+              const fileMsgText = `[Ficheiro: ${asset.filename}](${asset.file_url})`;
+              await supabaseAdmin.from('conversation_history').insert({
+                org_id: orgId,
+                customer_phone: fromNumber,
+                sender: 'bot',
+                text: fileMsgText,
+                metadata: {
+                  botName,
+                  mediaUrl: asset.file_url,
+                  fileName: asset.filename,
+                  mimeType: asset.mime_type
+                }
+              });
+
+              try {
+                getIo().to(`org:${orgId}`).emit('new_message', {
+                  phone:     fromNumber,
+                  sender:    'bot',
+                  text:      fileMsgText,
+                  botName:   botName,
+                  time:      new Date().toLocaleTimeString('pt-PT', { timeZone: 'Africa/Luanda', hour: '2-digit', minute: '2-digit' }),
+                  timestamp: new Date().toISOString(),
+                  platform:  'whatsapp',
+                  metadata:  {
+                    mediaUrl: asset.file_url,
+                    fileName: asset.filename,
+                    mimeType: asset.mime_type
+                  }
+                });
+              } catch (_) {}
+            }
+          }
+        }
+
+        // ── Enviar Mensagem via WhatsApp ────────────────────────────────────
+        sentMsgId = null;
+
+        // Se for áudio e a voz estiver autorizada, tentar TTS
+        if (isAudio && isVoiceAllowed && attempt === 1) {
+          try {
+            const audioPath = await AudioService.textToSpeech(replyText);
+            if (audioPath && fs.existsSync(audioPath)) {
+              const mediaId = await WhatsAppService.uploadMedia(audioPath, phoneNumberId, accessToken);
+              if (mediaId) {
+                sentMsgId = await WhatsAppService.sendAudio(fromNumber, mediaId, phoneNumberId, accessToken);
+              }
+              fs.unlinkSync(audioPath);
+            }
+          } catch (audioErr: any) {
+            console.warn('[IA] Falha no TTS de áudio, tentando envio em texto:', audioErr.message);
+          }
+        }
+
+        // Fallback: texto
+        if (!sentMsgId && replyText) {
+          sentMsgId = await WhatsAppService.sendTextMessage(phoneNumberId, fromNumber, replyText, accessToken);
+        }
+
+        if (sentMsgId) {
+          botSentMessages.add(sentMsgId);
+          sendSuccess = true;
+          console.log(`[PROTOCOLO SEGURANÇA IA] ✅ Mensagem entregue com sucesso para ${fromNumber} na tentativa ${attempt}! ID: ${sentMsgId}`);
+          break; // Sai do loop de retentativas
+        } else {
+          throw new Error('Meta API não retornou ID de mensagem entregue.');
+        }
+
+      } catch (attemptErr: any) {
+        lastErrorMsg = attemptErr.message || String(attemptErr);
+        console.warn(`[PROTOCOLO SEGURANÇA IA] ⚠️ Tentativa ${attempt}/3 falhou para ${fromNumber}: ${lastErrorMsg}`);
+      }
     }
 
+    if (!sendSuccess) {
+      throw new Error(`Falha persistente no envio após 3 tentativas de auto-cura: ${lastErrorMsg}`);
+    }
+
+    // ── Sucesso na Auto-Cura: Emitir resolução para limpar estados de erro no painel ──
+    try {
+      getIo().to(`org:${orgId}`).emit('chat_resolved', {
+        phone: fromNumber,
+        platform: 'whatsapp',
+      });
+    } catch (_) {}
+
     // Se a IA detectou um novo nome nos dados de contacto ou booking, gravar permanentemente
-    const newDetectedName = aiResult.contactData?.name || aiResult.bookingData?.name;
+    const newDetectedName = aiResult?.contactData?.name || aiResult?.bookingData?.name;
     if (newDetectedName && newDetectedName.trim().length > 1 && (!customerProfile?.name || customerProfile.name !== newDetectedName)) {
-      // Fire-and-forget (não bloqueia o envio da resposta ao cliente)
       Promise.resolve(
         supabaseAdmin.from('contacts').upsert({
           org_id: orgId,
@@ -682,13 +876,11 @@ async function triggerAIResponse(params: {
           email: aiResult.contactData?.email || aiResult.bookingData?.email || customerProfile?.email,
           updated_at: new Date().toISOString(),
         }, { onConflict: 'org_id,phone' })
-      ).then(() => {
-        console.log(`[MEMÓRIA] ✅ Novo nome "${newDetectedName}" capturado pela IA e guardado para ${fromNumber}`);
-      }).catch(() => {});
+      ).catch(() => {});
     }
 
     // ── Disparar notificações de Booking, Handover, Proposal ou Confirmation ──
-    if (aiResult.transfer || aiResult.booking || aiResult.proposal || aiResult.confirm) {
+    if (aiResult?.transfer || aiResult?.booking || aiResult?.proposal || aiResult?.confirm) {
       const alertType = aiResult.transfer 
         ? 'handover' 
         : aiResult.booking 
@@ -713,10 +905,8 @@ async function triggerAIResponse(params: {
         ? `O cliente ${fromNumber} enviou uma proposta comercial.`
         : `O cliente ${fromNumber} fez uma pergunta fora da base de dados.`;
       
-      // 1. Enviar email para admins/owners
       EmailService.sendAlertNotification(orgId, alertType, fromNumber, 'Cliente', message).catch(e => console.error('[ALERTA] Erro ao enviar email:', e.message));
       
-      // 2. Web Push Notification (segundo plano, browser fechado)
       PushService.sendAlertToOrg(orgId, {
         title: alertTitle,
         body:  alertBody,
@@ -724,7 +914,6 @@ async function triggerAIResponse(params: {
         url:   '/dashboard/live-chat',
       }).catch(e => console.error('[ALERTA] Erro ao enviar push:', e.message));
 
-      // 3. Emitir evento Socket para notificação sonora no painel (browser aberto)
       try {
         const socketEvent = alertType === 'handover' 
           ? 'handover_alert' 
@@ -741,7 +930,6 @@ async function triggerAIResponse(params: {
         });
       } catch (_) { /* silencioso */ }
 
-      // Se for transferência para humano ou confirmação de informação, pausar a IA por 24h automaticamente
       if (aiResult.transfer || aiResult.confirm) {
         aiPauses.set(historyKey, Date.now() + 24 * 60 * 60 * 1000);
         console.log(`[IA] Handover/Confirmação detectado. IA pausada automaticamente por 24h para ${fromNumber}`);
@@ -749,7 +937,7 @@ async function triggerAIResponse(params: {
     }
 
     // ── Automação Pós-Confirmação de Agendamento (BookingService: Google Calendar + Deduplicação + Alertas 4 Etapas) ──
-    if (aiResult.bookingData) {
+    if (aiResult?.bookingData) {
       const bData = aiResult.bookingData;
       console.log(`[BOOKING-AUTO] 📅 Agendamento detectado via WhatsApp para ${bData.name} (${bData.date} às ${bData.time})`);
 
@@ -757,7 +945,6 @@ async function triggerAIResponse(params: {
         ? bData.phone.replace(/[^\d+]/g, '') 
         : fromNumber;
 
-      // 1. Processar agendamento centralizado (Validação, DB, Google Calendar, Alertas Instantâneo + 7d + 72h + Dia 07h)
       BookingService.processBooking(orgId, {
         name: bData.name,
         subject: bData.subject,
@@ -775,7 +962,6 @@ async function triggerAIResponse(params: {
       })
       .catch(err => console.error('[BOOKING-AUTO] ❌ Erro ao processar agendamento:', err.message));
 
-      // 2. Atualizar contacto na base de dados
       try {
         await supabaseAdmin.from('contacts').upsert({
           org_id: orgId,
@@ -789,85 +975,15 @@ async function triggerAIResponse(params: {
       }
     }
 
-    let replyText = aiResult.reply;
-    let ptReplyText = replyText;
-
-    // Tradução silenciosa para PT para manter o painel/histórico em português
-    if (detectedLanguage !== 'pt' && detectedLanguage !== 'por') {
-      console.log(`[IA] Traduzindo silenciosamente a resposta de ${detectedLanguage} para PT...`);
-      ptReplyText = await AIService.translateText(replyText, 'português');
+    // Montar metadados da mensagem persistida
+    const botMetadata: any = {};
+    if (aiResult?.confirm) botMetadata.confirm = true;
+    if (aiResult?.booking || aiResult?.bookingData) botMetadata.booking = true;
+    if (aiResult?.attended) botMetadata.attended = true;
+    if (aiResult?.noShowReschedule) {
+      botMetadata.no_show_reschedule = true;
+      botMetadata.booking = true;
     }
-    
-    // ── 10. Processar envio de arquivos [SEND_FILE: ID] ───────────────────────
-    const fileMatches = [...replyText.matchAll(/\[SEND_FILE:\s*([a-f0-9-]{36})\]/gi)];
-    if (fileMatches.length > 0) {
-      console.log(`[IA] ${fileMatches.length} comando(s) de envio de arquivo detectado(s).`);
-      
-      // Remover todos os códigos [SEND_FILE: ...] do texto da resposta (ambas as versões)
-      replyText = replyText.replace(/\[SEND_FILE:\s*[a-f0-9-]{36}\]/gi, '').trim();
-      ptReplyText = ptReplyText.replace(/\[SEND_FILE:\s*[a-f0-9-]{36}\]/gi, '').trim();
-
-      for (const match of fileMatches) {
-        const assetId = match[1];
-        const { data: asset } = await supabaseAdmin
-          .from('public_assets')
-          .select('*')
-          .eq('id', assetId)
-          .eq('org_id', orgId)
-          .single();
-
-        if (asset) {
-          console.log(`[IA] Enviando arquivo "${asset.filename}" para ${fromNumber}...`);
-          const sentMediaId = await WhatsAppService.sendMediaByUrl(
-            fromNumber, 
-            asset.file_url, 
-            asset.mime_type, 
-            asset.filename, 
-            phoneNumberId, 
-            accessToken
-          );
-          if (sentMediaId) botSentMessages.add(sentMediaId);
-
-          // Persistir também a mensagem do ficheiro no histórico e Socket
-          const fileMsgText = `[Ficheiro: ${asset.filename}](${asset.file_url})`;
-          await supabaseAdmin.from('conversation_history').insert({
-            org_id: orgId,
-            customer_phone: fromNumber,
-            sender: 'bot',
-            text: fileMsgText,
-            metadata: {
-              botName,
-              mediaUrl: asset.file_url,
-              fileName: asset.filename,
-              mimeType: asset.mime_type
-            }
-          });
-
-          try {
-            getIo().to(`org:${orgId}`).emit('new_message', {
-              phone:     fromNumber,
-              sender:    'bot',
-              text:      fileMsgText,
-              botName:   botName,
-              time:      new Date().toLocaleTimeString('pt-PT', { timeZone: 'Africa/Luanda', hour: '2-digit', minute: '2-digit' }),
-              timestamp: new Date().toISOString(),
-              platform:  'whatsapp',
-              metadata:  {
-                mediaUrl: asset.file_url,
-                fileName: asset.filename,
-                mimeType: asset.mime_type
-              }
-            });
-          } catch (_) {}
-        } else {
-          console.warn(`[IA] Asset ${assetId} não encontrado para org ${orgId}`);
-        }
-      }
-    }
-
-    const botMetadata = (aiResult.confirm || aiResult.booking) 
-      ? { confirm: true, booking: !!aiResult.booking } 
-      : undefined;
 
     // Persistir resposta no histórico em PORTUGUÊS
     await supabaseAdmin.from('conversation_history').insert({
@@ -875,7 +991,7 @@ async function triggerAIResponse(params: {
       customer_phone: fromNumber,
       sender: 'bot',
       text: ptReplyText,
-      metadata: botMetadata,
+      metadata: Object.keys(botMetadata).length > 0 ? botMetadata : undefined,
     });
 
     // Emitir resposta da IA para o Live Chat em tempo real em PORTUGUÊS
@@ -888,15 +1004,14 @@ async function triggerAIResponse(params: {
         time:      new Date().toLocaleTimeString('pt-PT', { timeZone: 'Africa/Luanda', hour: '2-digit', minute: '2-digit' }),
         timestamp: new Date().toISOString(),
         platform:  'whatsapp',
-        metadata:  botMetadata,
+        metadata:  Object.keys(botMetadata).length > 0 ? botMetadata : undefined,
       });
     } catch (_) { /* silencioso */ }
 
     // ── Persistir dados de contacto capturados pela IA na tabela `contacts` ─────
-    if (aiResult.contactData && (aiResult.contactData.name || aiResult.contactData.email)) {
+    if (aiResult?.contactData && (aiResult.contactData.name || aiResult.contactData.email)) {
       try {
         const cd = aiResult.contactData;
-        // Upsert: apenas actualiza campos que a IA devolveu (não sobrescreve com vazios)
         const updateFields: Record<string, string> = {};
         if (cd.name)  updateFields.name  = cd.name;
         if (cd.email) updateFields.email = cd.email;
@@ -909,7 +1024,6 @@ async function triggerAIResponse(params: {
           .maybeSingle();
 
         if (existingForUpsert) {
-          // Actualizar apenas os campos que ainda não estão preenchidos (ou forçar)
           const patch: Record<string, string> = {};
           if (cd.name  && !existingForUpsert.name)  patch.name  = cd.name;
           if (cd.email && !existingForUpsert.email) patch.email = cd.email;
@@ -931,42 +1045,14 @@ async function triggerAIResponse(params: {
       }
     }
 
-    // Enviar mensagem
-    let sentMsgId: string | null = null;
-
-    // Se for áudio e a voz estiver autorizada, tentar TTS
-    if (isAudio && isVoiceAllowed) {
-      const audioPath = await AudioService.textToSpeech(replyText);
-      if (audioPath && fs.existsSync(audioPath)) {
-        const mediaId = await WhatsAppService.uploadMedia(audioPath, phoneNumberId, accessToken);
-        if (mediaId) {
-          sentMsgId = await WhatsAppService.sendAudio(fromNumber, mediaId, phoneNumberId, accessToken);
-        }
-        fs.unlinkSync(audioPath);
-      }
-    }
-
-    // Fallback: texto
-    if (!sentMsgId && replyText) {
-      sentMsgId = await WhatsAppService.sendTextMessage(phoneNumberId, fromNumber, replyText, accessToken);
-    }
-
-    if (sentMsgId) {
-      botSentMessages.add(sentMsgId);
-      console.log(`[IA] Mensagem entregue para ${fromNumber}. ID: ${sentMsgId}`);
-    } else {
-      throw new Error('Falha ao enviar mensagem via WhatsApp (Meta API).');
-    }
-
     // Se a IA detectou pedido de transferência, pausar por 30 minutos
-    if (aiResult.transfer) {
+    if (aiResult?.transfer) {
       aiPauses.set(historyKey, Date.now() + 30 * 60 * 1000);
       console.log(`[IA] Transferência para humano solicitada para ${fromNumber}. IA pausada por 30 min.`);
     }
 
     // Ativar protocolo de follow-up para todos os clientes sem agendamento e sem transferência para humano
-    if (!aiResult.transfer && !aiResult.booking) {
-      // Buscar nome do cliente para personalizar follow-up
+    if (!aiResult?.transfer && !aiResult?.booking && !aiResult?.bookingData) {
       const clientName = (customerProfile?.name || '').trim().split(/\s+/)[0] || '';
 
       FollowupService.scheduleSmartFollowup({
@@ -980,10 +1066,10 @@ async function triggerAIResponse(params: {
     }
 
   } catch (err: any) {
-    console.error(`[IA] ERRO no fluxo para ${fromNumber}:`, err.message);
+    console.error(`[PROTOCOLO SEGURANÇA IA] ❌ ERRO PERSISTENTE no fluxo para ${fromNumber}:`, err.message);
 
     // NÃO enviar mensagem de erro ao cliente — apenas sinalizar o painel internamente.
-    // O agente humano verá o chat marcado a vermelho e pode intervir.
+    // O agente humano verá o chat marcado a vermelho e receberá o email de urgência.
     try {
       // 1. Registar o erro internamente no histórico (visível apenas no painel)
       await supabaseAdmin.from('conversation_history').insert({
@@ -991,18 +1077,29 @@ async function triggerAIResponse(params: {
         customer_phone: fromNumber,
         sender: 'bot',
         text: `[ERRO INTERNO — NÃO ENVIADO AO CLIENTE]: ${err.message}`,
-        metadata: { internal_error: true },
+        metadata: { internal_error: true, needs_urgent_intervention: true },
       });
     } catch (_) { /* silencioso */ }
 
-    // 2. Emitir evento Socket para marcar o chat a vermelho no painel
+    // 2. Emitir evento Socket para marcar o chat a VERMELHO no painel
     try {
       getIo().to(`org:${orgId}`).emit('chat_error', {
         phone: fromNumber,
         error: err.message,
+        urgent: true,
         platform: 'whatsapp',
       });
     } catch (_) { /* silencioso */ }
+
+    // 3. Enviar EMAIL DE URGÊNCIA MÁXIMA à empresa para intervenção imediata
+    EmailService.sendUrgentInterventionAlert({
+      orgId,
+      customerPhone: fromNumber,
+      customerName: customerProfile?.name || senderName || 'Cliente',
+      errorMessage: err.message,
+      customerMessage: message,
+      platform: 'WhatsApp',
+    }).catch(e => console.error('[ALERTA URGENTE] Erro ao enviar email de intervenção:', e.message));
   }
 }
 

@@ -12,7 +12,7 @@ import { io, Socket } from "socket.io-client";
 import { toast } from "sonner";
 
 type Message = { id: number; sender: "user" | "bot" | "human"; text: string; time: string; timestamp?: string; botName?: string; agentName?: string; metadata?: any; };
-type Chat = { id: string; phone: string; name: string; lastMessage: string; time: string; timestamp: string; platform?: string; unread?: number; needs_confirm?: boolean; };
+type Chat = { id: string; phone: string; name: string; lastMessage: string; time: string; timestamp: string; platform?: string; unread?: number; needs_confirm?: boolean; has_exclamation?: boolean; has_error?: boolean; };
 
 const ANGOLA_TZ = 'Africa/Luanda';
 
@@ -652,8 +652,24 @@ export default function LiveChat() {
     // Marcar chat a vermelho quando a IA falha (sem enviar mensagem ao cliente)
     sock.on("chat_error", (data: { phone: string; error?: string; platform?: string }) => {
       setErrorChatIds(prev => new Set(prev).add(data.phone));
+      setChats(prev => prev.map(c => c.phone === data.phone ? { ...c, has_error: true } : c));
       // Limpar o indicador de digitação se estava activo
       setTypingChatIds(prev => { const next = new Set(prev); next.delete(data.phone); return next; });
+    });
+
+    // Limpar erro quando a auto-cura resolve ou humano envia
+    sock.on("chat_resolved", (data: { phone: string; platform?: string }) => {
+      setErrorChatIds(prev => { const next = new Set(prev); next.delete(data.phone); return next; });
+      setChats(prev => prev.map(c => c.phone === data.phone ? { ...c, has_error: false } : c));
+    });
+
+    // Atualização de status de atendimento / agendamento / remarcação
+    sock.on("chat_status_updated", (data: { phone: string; attended?: boolean; needs_confirm?: boolean; has_exclamation?: boolean }) => {
+      setChats(prev => prev.map(c => c.phone === data.phone ? {
+        ...c,
+        needs_confirm: data.needs_confirm !== undefined ? data.needs_confirm : !data.attended,
+        has_exclamation: data.has_exclamation !== undefined ? data.has_exclamation : false,
+      } : c));
     });
 
     return () => { sock.disconnect(); };
@@ -670,6 +686,25 @@ export default function LiveChat() {
   useEffect(() => { fetchChats(); }, [fetchChats]);
 
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
+
+  const handleMarkAttended = async () => {
+    if (!activeChatId) return;
+    try {
+      const res = await fetch("/api/whatsapp/mark-attended", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token()}`
+        },
+        body: JSON.stringify({ phone: activeChatId })
+      });
+      if (!res.ok) throw new Error("Falha ao marcar atendimento.");
+      toast.success("Atendimento confirmado com sucesso!");
+      setChats(prev => prev.map(c => c.phone === activeChatId ? { ...c, needs_confirm: false, has_exclamation: false } : c));
+    } catch (err: any) {
+      toast.error(err.message || "Erro ao marcar atendimento.");
+    }
+  };
 
   const selectChat = async (chat: Chat) => {
     setActiveChatId(chat.phone);
@@ -962,43 +997,63 @@ export default function LiveChat() {
           ) : filteredChats.map(chat => {
             const previewDate = formatChatPreviewDate(chat.timestamp, chat.time);
             const isToday = chat.timestamp ? getAngolaDateKey(new Date(chat.timestamp)) === getAngolaDateKey(new Date()) : true;
+            const isError = errorChatIds.has(chat.phone) || chat.has_error;
+            const isReschedule = chat.has_exclamation;
+            const isScheduled = chat.needs_confirm;
+
             return (
               <div
                 key={chat.id}
-                onClick={() => { selectChat(chat); setErrorChatIds(prev => { const next = new Set(prev); next.delete(chat.phone); return next; }); }}
+                onClick={() => { 
+                  selectChat(chat); 
+                  if (errorChatIds.has(chat.phone)) {
+                    setErrorChatIds(prev => { const next = new Set(prev); next.delete(chat.phone); return next; });
+                  }
+                }}
                 className={`p-4 border-b border-zinc-50 cursor-pointer transition-colors relative ${
-                  errorChatIds.has(chat.phone)
-                    ? (activeChatId === chat.phone ? "bg-red-50 border-l-2 border-l-red-500" : "bg-red-50/70 hover:bg-red-50 border-l-2 border-l-red-400")
-                    : activeChatId === chat.phone
-                      ? (chat.needs_confirm ? "bg-orange-50 border-l-2 border-l-orange-500" : "bg-emerald-50 border-l-2 border-l-emerald-500")
-                      : (chat.needs_confirm ? "bg-orange-50/70 hover:bg-orange-50 border-l-2 border-l-orange-400" : "hover:bg-zinc-50")
+                  isError
+                    ? (activeChatId === chat.phone ? "bg-red-50 border-l-4 border-l-red-600 shadow-sm" : "bg-red-50/80 hover:bg-red-50 border-l-4 border-l-red-500")
+                    : isScheduled
+                      ? isReschedule
+                        ? (activeChatId === chat.phone ? "bg-amber-50 border-l-4 border-l-amber-600 shadow-sm" : "bg-amber-50/80 hover:bg-amber-50 border-l-4 border-l-amber-500")
+                        : (activeChatId === chat.phone ? "bg-orange-50 border-l-4 border-l-orange-600 shadow-sm" : "bg-orange-50/80 hover:bg-orange-50 border-l-4 border-l-orange-400")
+                      : (activeChatId === chat.phone ? "bg-emerald-50 border-l-2 border-l-emerald-500" : "hover:bg-zinc-50")
                 }`}
               >
                 <div className="flex justify-between items-start mb-1">
                   <div className="flex items-center gap-1.5 min-w-0">
-                    <Smartphone className={`w-3 h-3 shrink-0 ${
-                      errorChatIds.has(chat.phone) ? "text-red-500" : chat.needs_confirm ? "text-orange-500" : "text-emerald-500"
+                    <Smartphone className={`w-3.5 h-3.5 shrink-0 ${
+                      isError ? "text-red-600" : isScheduled ? (isReschedule ? "text-amber-600 font-bold" : "text-orange-500 font-bold") : "text-emerald-500"
                     }`} />
-                    <h3 className="font-medium text-sm text-zinc-900 truncate max-w-[120px]">{chat.name}</h3>
-                    {errorChatIds.has(chat.phone) && (
-                      <span title="Erro ao processar — intervenção humana necessária" className="ml-0.5 text-red-500">
-                        <AlertCircle className="w-3 h-3" />
+                    <h3 className="font-medium text-sm text-zinc-900 truncate max-w-[110px]">{chat.name}</h3>
+                    {isError ? (
+                      <span title="Erro persistente no atendimento — intervenção humana necessária" className="ml-0.5 text-red-600 animate-pulse">
+                        <AlertCircle className="w-4 h-4 text-red-600 fill-red-100" />
                       </span>
-                    )}
+                    ) : isScheduled && isReschedule ? (
+                      <span title="Remarcação por Falta de Comparência" className="ml-0.5 text-amber-600 flex items-center gap-0.5">
+                        <AlertCircle className="w-3.5 h-3.5 text-amber-600 fill-amber-100" />
+                        <span className="text-[9px] bg-amber-100 text-amber-800 font-bold px-1 py-0.2 rounded border border-amber-300">Falta</span>
+                      </span>
+                    ) : isScheduled ? (
+                      <span className="text-[9px] bg-orange-100 text-orange-800 font-bold px-1.5 py-0.5 rounded">
+                        Agendado
+                      </span>
+                    ) : null}
                   </div>
                   <div className="flex items-center gap-1 shrink-0 ml-1">
                     <span className={`text-[10px] font-medium ${
-                      errorChatIds.has(chat.phone) ? 'text-red-600' : isToday ? (chat.needs_confirm ? 'text-orange-600' : 'text-zinc-400') : (chat.needs_confirm ? 'text-orange-700' : 'text-emerald-600')
+                      isError ? 'text-red-600 font-bold' : isToday ? (isScheduled ? 'text-orange-700 font-semibold' : 'text-zinc-400') : (isScheduled ? 'text-orange-700 font-semibold' : 'text-emerald-600')
                     }`}>{previewDate}</span>
                     {(chat.unread || 0) > 0 && <span className={`w-5 h-5 text-white text-[10px] rounded-full flex items-center justify-center font-bold ${
-                      errorChatIds.has(chat.phone) ? "bg-red-500" : chat.needs_confirm ? "bg-orange-500" : "bg-emerald-500"
+                      isError ? "bg-red-600" : isScheduled ? (isReschedule ? "bg-amber-600" : "bg-orange-500") : "bg-emerald-500"
                     }`}>{chat.unread}</span>}
                   </div>
                 </div>
                 <p className={`text-xs truncate ${
-                  errorChatIds.has(chat.phone) ? "text-red-600/80 font-medium" : chat.needs_confirm ? "text-orange-700/80 font-medium" : "text-zinc-400"
+                  isError ? "text-red-700 font-semibold" : isScheduled ? (isReschedule ? "text-amber-800 font-medium" : "text-orange-800 font-medium") : "text-zinc-400"
                 }`}>
-                  {errorChatIds.has(chat.phone) ? "⚠️ Erro ao processar — intervenção necessária" : chat.lastMessage}
+                  {isError ? "⚠️ Falha no envio — Intervenção urgente necessária" : chat.lastMessage}
                 </p>
               </div>
             );
@@ -1015,11 +1070,32 @@ export default function LiveChat() {
                 <ArrowLeft className="w-5 h-5" />
               </button>
               <div className="min-w-0">
-                <CardTitle className="text-base truncate">{activeChat.name}</CardTitle>
+                <CardTitle className="text-base truncate flex items-center gap-2">
+                  {activeChat.name}
+                  {activeChat.needs_confirm && (
+                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
+                      activeChat.has_exclamation ? "bg-amber-100 text-amber-800 border border-amber-300 flex items-center gap-1" : "bg-orange-100 text-orange-800"
+                    }`}>
+                      {activeChat.has_exclamation ? <><AlertCircle className="w-3 h-3 text-amber-700" /> Remarcação por Falta</> : "📅 Agendamento Pendente"}
+                    </span>
+                  )}
+                </CardTitle>
                 <p className="text-xs text-zinc-400 mt-0.5 truncate">{activeChat.phone}</p>
               </div>
             </div>
             <div className="flex items-center gap-2">
+              {/* Botão de Concluir / Marcar Atendido */}
+              {activeChat.needs_confirm && (
+                <button
+                  onClick={handleMarkAttended}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-orange-300 bg-orange-50 hover:bg-orange-100 text-orange-800 text-xs font-semibold transition-colors shadow-sm"
+                  title="Confirmar que o cliente compareceu e foi atendido"
+                >
+                  <Check className="w-3.5 h-3.5 text-orange-600" />
+                  Marcar como Atendido
+                </button>
+              )}
+
               {/* Botão para ativar pesquisa na conversa */}
               <button 
                 onClick={() => {
@@ -1264,13 +1340,16 @@ export default function LiveChat() {
                   value={message}
                   onChange={e => setMessage(e.target.value)}
                   onKeyDown={e => {
-                    // Ctrl+Enter ou Shift+Enter envia; Enter simples cria parágrafo
-                    if (e.key === "Enter" && (e.ctrlKey || e.shiftKey)) {
+                    // Enter envia; Shift+Enter ou Ctrl+Enter cria parágrafo (nova linha)
+                    if (e.key === "Enter") {
+                      if (e.shiftKey || e.ctrlKey) {
+                        return; // Permite a quebra de linha nativa
+                      }
                       e.preventDefault();
                       handleSend();
                     }
                   }}
-                  placeholder={selectedFile ? "Adicione uma legenda ao ficheiro..." : "Escreva como agente humano... (Enter = nova linha | Ctrl+Enter = enviar)"}
+                  placeholder={selectedFile ? "Adicione uma legenda ao ficheiro..." : "Escreva como agente humano... (Enter = enviar | Shift+Enter ou Ctrl+Enter = parágrafo)"}
                   rows={1}
                   className="flex-1 resize-none min-h-[40px] max-h-[120px] overflow-y-auto rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 leading-relaxed"
                   style={{ fieldSizing: 'content' } as React.CSSProperties}
