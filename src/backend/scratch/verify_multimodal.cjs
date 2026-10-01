@@ -18,7 +18,7 @@ async function testAll() {
     console.log(`\n--- Testando Chave #${i + 1} (${masked}) ---`);
 
     // 1. Teste básico de texto
-    const models = ['gemini-2.0-flash', 'gemini-1.5-flash'];
+    const models = ['gemini-3.8-flash', 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
     for (const m of models) {
       try {
         const url = `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${key}`;

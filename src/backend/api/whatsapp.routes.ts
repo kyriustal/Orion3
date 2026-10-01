@@ -11,6 +11,7 @@ import { createGoogleCalendarEvent } from '../services/calendar.service';
 import { TelcoSMSService } from '../services/telcosms.service';
 import { BookingService } from '../services/booking.service';
 import { FollowupService } from '../services/followup.service';
+import { GoogleSheetsService } from '../services/google_sheets.service';
 import { getIo } from '../socket';
 import axios from 'axios';
 import fs from 'fs';
@@ -1057,6 +1058,18 @@ async function triggerAIResponse(params: {
       }
     }
 
+    // Sincronizar interação em tempo real com a Folha Google Sheets
+    GoogleSheetsService.syncInteraction({
+      orgId,
+      channel: 'whatsapp',
+      phoneOrId: fromNumber,
+      name: aiResult?.contactData?.name || customerProfile?.name || 'Cliente WhatsApp',
+      email: aiResult?.contactData?.email || '',
+      text: message || '[media]',
+      subject: aiResult?.bookingData?.subject || '',
+      status: 'Ativo',
+    }).catch(e => console.warn('[WHATSAPP-SHEETS] Aviso ao sincronizar com Google Sheets:', e.message));
+
     // Se a IA detectou pedido de transferência, pausar por 30 minutos
     if (aiResult?.transfer) {
       aiPauses.set(historyKey, Date.now() + 30 * 60 * 1000);
@@ -1600,7 +1613,7 @@ router.get('/test-keys', async (req, res) => {
     for (let i = 0; i < keys.length; i++) {
       const key = keys[i];
       const masked = key.substring(0, 8) + '...' + key.substring(key.length - 4);
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${key}`;
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`;
       
       try {
         const response = await axios.post(url, {

@@ -2,6 +2,7 @@ import { supabaseAdmin } from '../config/supabase';
 import { createGoogleCalendarEvent, createMicrosoftCalendarEvent, syncCalendarEvent } from './calendar.service';
 import { EmailService } from './email.service';
 import { TelcoSMSService } from './telcosms.service';
+import { GoogleSheetsService } from './google_sheets.service';
 
 export interface BookingValidationInput {
   name?: string;
@@ -349,6 +350,18 @@ export class BookingService {
     } catch (dbErr: any) {
       console.warn('[BookingService] Aviso ao persistir na tabela bookings (não bloqueante):', dbErr.message);
     }
+
+    // ── 1b. Sincronização em Tempo Real com a Folha Google Sheets ─────────────
+    GoogleSheetsService.syncBooking({
+      orgId,
+      name,
+      subject,
+      phone,
+      email,
+      date,
+      time,
+      channel: options?.channelOrigin || 'Chatbot',
+    }).catch(e => console.warn('[BookingService] Aviso ao sincronizar com Google Sheets:', e.message));
 
     // ── 2. Sincronização Segura com a Agenda (Google Calendar ou Microsoft Outlook/365) ──
     let calendarResult: any = null;

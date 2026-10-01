@@ -37,7 +37,7 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // Health Check
 app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', server: 'Orion Backend', version: '3.0.0', ai: 'Gemini 2.5 Flash' });
+  res.json({ status: 'ok', server: 'Orion Backend', version: '3.0.0', ai_text: 'DeepSeek (Principal)', ai_multimodal: 'Gemini 2.5 Flash (Multimodal)' });
 });
 
 // ─── Rotas ────────────────────────────────────────────────────────────────────
@@ -60,6 +60,7 @@ import teamRoutes from './api/team.routes';
 import pushRoutes from './api/push.routes';
 import calendarRoutes from './api/calendar.routes';
 import businessHoursRoutes from './api/business_hours.routes';
+import reportsRoutes from './api/reports.routes';
 
 app.use('/api/auth',        authRoutes);
 app.use('/api/knowledge',   knowledgeRoutes);
@@ -77,6 +78,7 @@ app.use('/api/billing',     billingRoutes);
 app.use('/api/team',             teamRoutes);
 app.use('/api/push',             pushRoutes);
 app.use('/api/settings/calendar', calendarRoutes);
+app.use('/api/reports',           reportsRoutes);
 app.use('/api',                  businessHoursRoutes);
 app.use('/api',                  followupRoutes);
 app.use('/api',                  coreRoutes);
@@ -95,7 +97,7 @@ app.use((err: any, _req: express.Request, res: express.Response, _next: express.
 });
 
 httpServer.listen(PORT, () => {
-  console.log(`🚀 Orion Server na porta ${PORT} | IA: Gemini 2.5 Flash | Socket.io: Activo`);
+  console.log(`🚀 Orion Server na porta ${PORT} | IA Texto: DeepSeek (Principal) | IA Multimodal: Gemini 2.5 Flash | Socket.io: Activo`);
   
   // Auto-recuperação de leads sem resposta nas últimas 24 horas
   import('./api/whatsapp.routes').then(({ recoverMissedMessages }) => {
@@ -112,5 +114,10 @@ httpServer.listen(PORT, () => {
   // Iniciar worker de lembretes e alertas automáticos de agendamentos (4 estágios)
   import('./workers/reminder.worker').catch(err =>
     console.error('[REMINDER-BOOT] Erro ao iniciar worker de lembretes:', err.message)
+  );
+
+  // Iniciar worker de relatório diário às 23:59 (WAT / Horário de Angola)
+  import('./workers/daily_report.worker').catch(err =>
+    console.error('[DAILY-REPORT-BOOT] Erro ao iniciar worker de relatório diário:', err.message)
   );
 });

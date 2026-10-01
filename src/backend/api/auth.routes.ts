@@ -128,7 +128,8 @@ router.post('/register', async (req, res) => {
     try {
         const {
             email, password,
-            firstName, companyName, phone, whatsapp
+            firstName, companyName, phone, whatsapp,
+            companyEmail, socialObject, employees, product, chatbotName, address, contact
         } = req.body;
 
         if (!email || !password) {
@@ -234,14 +235,22 @@ router.post('/register', async (req, res) => {
             });
         }
 
+        const finalCompanyEmail = (companyEmail && companyEmail.trim()) || email;
+
         // Criar organização base (Sempre criada para garantir que o utilizador tem uma org associada)
         await supabaseAdmin.from('organizations').upsert({
             id: user.id,
-            owner_email: email,
+            owner_email: finalCompanyEmail,
             first_name: firstName || '',
             name: companyName || `${firstName || 'Minha'} Empresa`,
             phone: phone || '',
             whatsapp: whatsapp || '',
+            address: address || '',
+            contact_person: contact || '',
+            social_object: socialObject || '',
+            employees_count: employees || '',
+            product_description: product || '',
+            chatbot_name: chatbotName || 'Assistente',
         });
 
         res.status(201).json({

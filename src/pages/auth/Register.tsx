@@ -23,6 +23,7 @@ export default function Register() {
     password: "",
     // Company data
     companyName: "",
+    companyEmail: "",
     socialObject: "",
     employees: "",
     product: "",
@@ -159,6 +160,20 @@ export default function Register() {
                 <div className="space-y-2">
                   <Label htmlFor="companyName">Nome da Empresa *</Label>
                   <Input id="companyName" required value={formData.companyName} onChange={handleChange} />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="companyEmail">E-mail Comercial da Empresa (Opcional)</Label>
+                  <Input
+                    id="companyEmail"
+                    type="email"
+                    value={formData.companyEmail}
+                    onChange={handleChange}
+                    placeholder={formData.email ? `Padrão: ${formData.email}` : "ex: contacto@empresa.com"}
+                  />
+                  <p className="text-xs text-zinc-400">
+                    Caso não preencha, será utilizado o e-mail de registo ({formData.email || 'do passo 1'}) para receber notificações e agendamentos.
+                  </p>
                 </div>
 
                 <div className="space-y-2">

@@ -5,7 +5,8 @@ import {
   Send, User, Bot, AlertCircle, MessageCircle, Loader2, Pause, Play, 
   Wifi, WifiOff, Smartphone, ArrowLeft, Paperclip, FileText, X, 
   Mic, Camera, Video, Square, Check, CheckCheck, RefreshCw, 
-  Volume2, Search, ChevronUp, ChevronDown, Plus, Phone
+  Volume2, Search, ChevronUp, ChevronDown, Plus, Phone,
+  Calendar, Mail, Tag, Sparkles
 } from "lucide-react";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { io, Socket } from "socket.io-client";
@@ -175,12 +176,20 @@ export default function LiveChat() {
   const messageRefs = useRef<{ [key: string | number]: HTMLDivElement | null }>({});
   const pendingClientIds = useRef<Set<string>>(new Set());
 
-  // ─── Nova Conversa (modal) ────────────────────────────────────────────────────
-  const [isNewChatOpen,    setIsNewChatOpen]    = useState(false);
-  const [newChatDialCode,  setNewChatDialCode]  = useState("+244");
-  const [newChatNumber,    setNewChatNumber]    = useState("");
-  const [newChatError,     setNewChatError]     = useState("");
-  const [isStartingChat,   setIsStartingChat]   = useState(false);
+  // ─── Nova Conversa (modal com estrutura completa) ───────────────────────────
+  const [isNewChatOpen,       setIsNewChatOpen]       = useState(false);
+  const [newChatChannel,      setNewChatChannel]      = useState<'whatsapp' | 'facebook' | 'instagram'>('whatsapp');
+  const [newChatName,         setNewChatName]         = useState('');
+  const [newChatDialCode,     setNewChatDialCode]     = useState('+244');
+  const [newChatNumber,       setNewChatNumber]       = useState('');
+  const [newChatEmail,        setNewChatEmail]        = useState('');
+  const [newChatSubject,      setNewChatSubject]      = useState('');
+  const [newChatMessage,      setNewChatMessage]      = useState('');
+  const [newChatHasBooking,   setNewChatHasBooking]   = useState(false);
+  const [newChatBookingDate,  setNewChatBookingDate]  = useState('');
+  const [newChatBookingTime,  setNewChatBookingTime]  = useState('10:00');
+  const [newChatError,        setNewChatError]        = useState('');
+  const [isStartingChat,      setIsStartingChat]      = useState(false);
 
   const DIAL_CODES = [
     { flag: "🇦🇴", name: "Angola",       code: "+244" },
@@ -210,55 +219,95 @@ export default function LiveChat() {
   ];
 
   const handleStartNewChat = async () => {
+    if (!newChatName.trim()) {
+      setNewChatError("Por favor, insira o nome do cliente.");
+      return;
+    }
     const digits = newChatNumber.replace(/\D/g, "");
     if (!digits || digits.length < 6) {
       setNewChatError("Insira um número de telefone válido.");
       return;
     }
+    if (newChatHasBooking && !newChatBookingDate) {
+      setNewChatError("Por favor, selecione a data do agendamento.");
+      return;
+    }
+
     setNewChatError("");
     setIsStartingChat(true);
 
     // Número completo no formato E.164 sem o +
     const fullPhone = `${newChatDialCode.replace("+", "")}${digits}`;
 
-    // Se a conversa já existe na lista, abrir directamente
-    const existing = chats.find(c => c.phone === fullPhone || c.phone === `+${fullPhone}`);
-    if (existing) {
-      setIsStartingChat(false);
-      setIsNewChatOpen(false);
-      setNewChatNumber("");
-      selectChat(existing);
-      return;
-    }
-
-    // Criar entrada temporária na lista e abrir o chat
-    const displayPhone = `${newChatDialCode}${digits}`;
-    const tempChat: Chat = {
-      id: fullPhone,
-      phone: fullPhone,
-      name: `WhatsApp (${displayPhone})`,
-      lastMessage: "",
-      time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-      timestamp: new Date().toISOString(),
-      platform: "whatsapp",
-      unread: 0,
-    };
-
-    setChats(prev => [tempChat, ...prev.filter(c => c.phone !== fullPhone)]);
-    setIsStartingChat(false);
-    setIsNewChatOpen(false);
-    setNewChatNumber("");
-    setActiveChatId(fullPhone);
-    setMessages([]);
-    setShowMobileList(false);
-    setIsAiActive(true);
-
-    // Tentar carregar histórico existente (pode estar vazio)
     try {
-      const res = await fetch(`/api/whatsapp/history/${fullPhone}`, { headers: { Authorization: `Bearer ${token()}` } });
+      const res = await fetch("/api/orion-web/start-conversation", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token()}`
+        },
+        body: JSON.stringify({
+          channel: newChatChannel,
+          name: newChatName.trim(),
+          phone: fullPhone,
+          email: newChatEmail.trim() || undefined,
+          subject: newChatSubject.trim() || "Contacto Geral",
+          message: newChatMessage.trim(),
+          hasBooking: newChatHasBooking,
+          appointmentDate: newChatBookingDate || undefined,
+          appointmentTime: newChatBookingTime || undefined
+        })
+      });
+
       const data = await res.json();
-      if (Array.isArray(data) && data.length > 0) setMessages(data);
-    } catch {}
+      if (!res.ok) {
+        throw new Error(data.error || "Erro ao iniciar conversa.");
+      }
+
+      toast.success("Conversa iniciada com a estrutura completa e sincronizada!");
+
+      const initialText = newChatMessage.trim() || `[Início de Atendimento]: ${newChatSubject || "Contacto"}`;
+      const channelLabel = newChatChannel === "instagram" ? "Instagram" : newChatChannel === "facebook" ? "Facebook" : "WhatsApp";
+      const tempChat: Chat = {
+        id: fullPhone,
+        phone: fullPhone,
+        name: `${newChatName.trim()} (${channelLabel})`,
+        lastMessage: initialText,
+        time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        timestamp: new Date().toISOString(),
+        platform: newChatChannel,
+        unread: 0,
+        needs_confirm: newChatHasBooking
+      };
+
+      setChats(prev => [tempChat, ...prev.filter(c => c.phone !== fullPhone)]);
+      setActiveChatId(fullPhone);
+      setMessages([{
+        id: Date.now(),
+        sender: "human",
+        text: initialText,
+        time: new Date().toLocaleTimeString('pt-PT', { timeZone: 'Africa/Luanda', hour: '2-digit', minute: '2-digit' }),
+        timestamp: new Date().toISOString()
+      }]);
+      setShowMobileList(false);
+      setIsAiActive(true);
+
+      // Limpar formulário e fechar modal
+      setIsNewChatOpen(false);
+      setNewChatName("");
+      setNewChatNumber("");
+      setNewChatEmail("");
+      setNewChatSubject("");
+      setNewChatMessage("");
+      setNewChatHasBooking(false);
+      setNewChatBookingDate("");
+      setNewChatBookingTime("10:00");
+    } catch (err: any) {
+      setNewChatError(err.message || "Erro ao iniciar conversa.");
+      toast.error(err.message || "Erro ao iniciar conversa.");
+    } finally {
+      setIsStartingChat(false);
+    }
   };
 
   const filteredChats = useMemo(() => {
@@ -953,13 +1002,14 @@ export default function LiveChat() {
           <div className="flex items-center justify-between">
             <CardTitle className="text-base">Conversas</CardTitle>
             <div className="flex items-center gap-2">
-              {/* Botão Nova Conversa */}
+              {/* Botão Nova Conversa com Estrutura Completa */}
               <button
-                onClick={() => { setIsNewChatOpen(true); setNewChatError(""); setNewChatNumber(""); }}
-                title="Iniciar nova conversa"
-                className="w-7 h-7 flex items-center justify-center rounded-full bg-emerald-500 hover:bg-emerald-600 text-white transition-colors shadow-sm"
+                onClick={() => { setIsNewChatOpen(true); setNewChatError(""); }}
+                title="Iniciar conversa com a estrutura completa"
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold transition-all shadow-sm"
               >
-                <Plus className="w-4 h-4" />
+                <Plus className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Nova Conversa</span>
               </button>
               <span className={`flex items-center gap-1 text-xs px-2 py-1 rounded-full font-medium ${
                 isConnected ? "bg-emerald-50 text-emerald-600" : "bg-zinc-100 text-zinc-400"
@@ -1431,106 +1481,264 @@ export default function LiveChat() {
         </div>
       )}
 
-      {/* ─── Modal: Nova Conversa ──────────────────────────────────────────────── */}
+      {/* ─── Modal: Nova Conversa (Estrutura Completa & Sincronizada) ───────── */}
       {isNewChatOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4"
-          style={{ background: "rgba(0,0,0,0.45)", backdropFilter: "blur(4px)" }}
-          onClick={(e) => { if (e.target === e.currentTarget) setIsNewChatOpen(false); }}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-y-auto"
+          style={{ background: "rgba(0,0,0,0.5)", backdropFilter: "blur(5px)" }}
+          onClick={(e) => { if (e.target === e.currentTarget && !isStartingChat) setIsNewChatOpen(false); }}
         >
-          <div className="bg-white dark:bg-zinc-900 rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-5 animate-in fade-in zoom-in-95 duration-200">
+          <div className="bg-white dark:bg-zinc-900 rounded-2xl shadow-2xl w-full max-w-lg p-6 space-y-4 animate-in fade-in zoom-in-95 duration-200 border border-zinc-200 dark:border-zinc-800 my-8">
             {/* Cabeçalho */}
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <div className="w-9 h-9 rounded-full bg-emerald-50 flex items-center justify-center">
-                  <Phone className="w-4 h-4 text-emerald-600" />
+            <div className="flex items-center justify-between pb-3 border-b border-zinc-100 dark:border-zinc-800">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 flex items-center justify-center text-emerald-600 dark:text-emerald-400">
+                  <Sparkles className="w-5 h-5" />
                 </div>
                 <div>
-                  <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Nova Conversa</h2>
-                  <p className="text-[11px] text-zinc-400">Insira o número com indicativo</p>
+                  <h2 className="text-base font-bold text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
+                    Iniciar Nova Conversa
+                    <span className="text-[10px] bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 font-semibold px-2 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-800">
+                      Estrutura Completa
+                    </span>
+                  </h2>
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                    Regista o contacto, agendamento e sincroniza na folha Google Sheets.
+                  </p>
                 </div>
               </div>
               <button
-                onClick={() => setIsNewChatOpen(false)}
-                className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 transition-colors"
+                onClick={() => !isStartingChat && setIsNewChatOpen(false)}
+                className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 transition-colors p-1"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            {/* Seletor de indicativo + número */}
-            <div className="space-y-2">
-              <label className="text-xs font-medium text-zinc-600 dark:text-zinc-400">País / Indicativo</label>
-              <select
-                value={newChatDialCode}
-                onChange={e => setNewChatDialCode(e.target.value)}
-                className="w-full h-10 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-sm px-3 text-zinc-800 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              >
-                {DIAL_CODES.map(c => (
-                  <option key={c.code + c.name} value={c.code}>
-                    {c.flag} {c.name} ({c.code})
-                  </option>
-                ))}
-              </select>
+            {/* 1. Seleção de Canal / Plataforma */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">Canal de Atendimento</label>
+              <div className="grid grid-cols-3 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setNewChatChannel("whatsapp")}
+                  className={`flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg border text-xs font-medium transition-all ${
+                    newChatChannel === "whatsapp"
+                      ? "bg-emerald-50 dark:bg-emerald-950/60 border-emerald-500 text-emerald-700 dark:text-emerald-300 shadow-sm font-semibold"
+                      : "border-zinc-200 dark:border-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-800 text-zinc-600 dark:text-zinc-400"
+                  }`}
+                >
+                  <Smartphone className="w-3.5 h-3.5 text-emerald-600" />
+                  WhatsApp
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setNewChatChannel("facebook")}
+                  className={`flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg border text-xs font-medium transition-all ${
+                    newChatChannel === "facebook"
+                      ? "bg-blue-50 dark:bg-blue-950/60 border-blue-500 text-blue-700 dark:text-blue-300 shadow-sm font-semibold"
+                      : "border-zinc-200 dark:border-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-800 text-zinc-600 dark:text-zinc-400"
+                  }`}
+                >
+                  <MessageCircle className="w-3.5 h-3.5 text-blue-600" />
+                  Messenger
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setNewChatChannel("instagram")}
+                  className={`flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg border text-xs font-medium transition-all ${
+                    newChatChannel === "instagram"
+                      ? "bg-fuchsia-50 dark:bg-fuchsia-950/60 border-fuchsia-500 text-fuchsia-700 dark:text-fuchsia-300 shadow-sm font-semibold"
+                      : "border-zinc-200 dark:border-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-800 text-zinc-600 dark:text-zinc-400"
+                  }`}
+                >
+                  <Send className="w-3.5 h-3.5 text-fuchsia-600" />
+                  Instagram
+                </button>
+              </div>
             </div>
 
-            <div className="space-y-2">
-              <label className="text-xs font-medium text-zinc-600 dark:text-zinc-400">Número de Telefone</label>
-              <div className="flex items-center gap-2">
-                <span className="shrink-0 h-10 px-3 flex items-center rounded-lg border border-zinc-200 dark:border-zinc-700 bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 text-sm font-mono font-semibold select-none">
-                  {newChatDialCode}
-                </span>
+            {/* 2. Nome Completo e E-mail */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300 flex items-center gap-1">
+                  <User className="w-3.5 h-3.5 text-zinc-400" />
+                  Nome do Cliente <span className="text-red-500">*</span>
+                </label>
                 <Input
-                  type="tel"
-                  placeholder="912 345 678"
-                  value={newChatNumber}
-                  onChange={e => { setNewChatNumber(e.target.value); setNewChatError(""); }}
-                  onKeyDown={e => { if (e.key === "Enter") handleStartNewChat(); }}
-                  className="flex-1 h-10 text-sm font-mono"
-                  autoFocus
+                  type="text"
+                  placeholder="Ex: João Baptista"
+                  value={newChatName}
+                  onChange={e => { setNewChatName(e.target.value); setNewChatError(""); }}
+                  className="h-9 text-xs"
                 />
               </div>
-              {newChatError && (
-                <p className="text-xs text-red-500 flex items-center gap-1">
-                  <AlertCircle className="w-3 h-3 shrink-0" />{newChatError}
-                </p>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300 flex items-center gap-1">
+                  <Mail className="w-3.5 h-3.5 text-zinc-400" />
+                  E-mail do Cliente
+                </label>
+                <Input
+                  type="email"
+                  placeholder="cliente@exemplo.com"
+                  value={newChatEmail}
+                  onChange={e => setNewChatEmail(e.target.value)}
+                  className="h-9 text-xs"
+                />
+              </div>
+            </div>
+
+            {/* 3. Número de Telefone com DDI */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300 flex items-center gap-1">
+                <Phone className="w-3.5 h-3.5 text-zinc-400" />
+                Número de Telefone / WhatsApp <span className="text-red-500">*</span>
+              </label>
+              <div className="flex items-center gap-2">
+                <select
+                  value={newChatDialCode}
+                  onChange={e => setNewChatDialCode(e.target.value)}
+                  className="h-9 w-32 rounded-md border border-input bg-background px-2 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                >
+                  {DIAL_CODES.map(c => (
+                    <option key={c.code + c.name} value={c.code}>
+                      {c.flag} {c.code} ({c.name})
+                    </option>
+                  ))}
+                </select>
+                <Input
+                  type="tel"
+                  placeholder="923 456 789"
+                  value={newChatNumber}
+                  onChange={e => { setNewChatNumber(e.target.value); setNewChatError(""); }}
+                  className="flex-1 h-9 text-xs font-mono"
+                />
+              </div>
+              {newChatNumber.replace(/\D/g, "").length >= 6 && (
+                <div className="text-[11px] text-zinc-500 flex items-center gap-1 font-mono">
+                  <span>Padrão Internacional:</span>
+                  <span className="font-bold text-emerald-600 dark:text-emerald-400">
+                    {newChatDialCode}{newChatNumber.replace(/\D/g, "")}
+                  </span>
+                </div>
               )}
             </div>
 
-            {/* Preview do número completo */}
-            {newChatNumber.replace(/\D/g, "").length >= 6 && (
-              <div className="rounded-lg bg-zinc-50 dark:bg-zinc-800 border border-zinc-100 dark:border-zinc-700 px-3 py-2 flex items-center gap-2">
-                <Smartphone className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                <span className="text-xs text-zinc-500">Número completo:</span>
-                <span className="text-xs font-mono font-semibold text-zinc-800 dark:text-zinc-100">
-                  {newChatDialCode}{newChatNumber.replace(/\D/g, "")}
-                </span>
+            {/* 4. Assunto / Motivo */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300 flex items-center gap-1">
+                <Tag className="w-3.5 h-3.5 text-zinc-400" />
+                Assunto / Serviço / Interesse
+              </label>
+              <Input
+                type="text"
+                placeholder="Ex: Agendamento de Reunião, Informações de Serviços, Suporte..."
+                value={newChatSubject}
+                onChange={e => setNewChatSubject(e.target.value)}
+                className="h-9 text-xs"
+              />
+            </div>
+
+            {/* 5. Agendamento Imediato (Opcional) */}
+            <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-3 bg-zinc-50/50 dark:bg-zinc-800/40 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-semibold text-zinc-800 dark:text-zinc-200 flex items-center gap-1.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={newChatHasBooking}
+                    onChange={e => setNewChatHasBooking(e.target.checked)}
+                    className="rounded text-emerald-600 focus:ring-emerald-500 w-3.5 h-3.5 cursor-pointer"
+                  />
+                  <Calendar className="w-3.5 h-3.5 text-blue-600" />
+                  Marcar Agendamento Imediato
+                </label>
+                <span className="text-[10px] text-zinc-400">Google Calendar & Lembretes</span>
+              </div>
+
+              {newChatHasBooking && (
+                <div className="grid grid-cols-2 gap-2 pt-1 animate-in fade-in duration-150">
+                  <div>
+                    <label className="text-[11px] text-zinc-500 font-medium block mb-1">Data</label>
+                    <Input
+                      type="date"
+                      value={newChatBookingDate}
+                      onChange={e => setNewChatBookingDate(e.target.value)}
+                      className="h-8 text-xs bg-white dark:bg-zinc-900"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] text-zinc-500 font-medium block mb-1">Hora</label>
+                    <Input
+                      type="time"
+                      value={newChatBookingTime}
+                      onChange={e => setNewChatBookingTime(e.target.value)}
+                      className="h-8 text-xs bg-white dark:bg-zinc-900"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* 6. Mensagem Inicial */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+                Mensagem Inicial / Notas
+              </label>
+              <textarea
+                rows={2}
+                placeholder="Escreva a primeira mensagem para o cliente ou observação interna..."
+                value={newChatMessage}
+                onChange={e => setNewChatMessage(e.target.value)}
+                className="w-full text-xs rounded-md border border-input bg-background p-2.5 placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-emerald-500 leading-relaxed resize-none"
+              />
+            </div>
+
+            {/* Feedback de Erro */}
+            {newChatError && (
+              <div className="p-2.5 rounded-lg bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-900/50 text-xs text-red-600 dark:text-red-400 flex items-center gap-1.5">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>{newChatError}</span>
               </div>
             )}
 
-            {/* Acções */}
-            <div className="flex gap-2 pt-1">
-              <Button
-                type="button"
-                variant="outline"
-                className="flex-1 h-10"
-                onClick={() => setIsNewChatOpen(false)}
-              >
-                Cancelar
-              </Button>
-              <Button
-                type="button"
-                className="flex-1 h-10 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold gap-2"
-                onClick={handleStartNewChat}
-                disabled={isStartingChat}
-              >
-                {isStartingChat ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <MessageCircle className="w-4 h-4" />
-                )}
-                Iniciar Chat
-              </Button>
+            {/* Rodapé e Botões */}
+            <div className="flex items-center justify-between pt-2 border-t border-zinc-100 dark:border-zinc-800 gap-2">
+              <div className="text-[11px] text-zinc-400 flex items-center gap-1">
+                <CheckCheck className="w-3.5 h-3.5 text-emerald-500" />
+                Sincroniza no Google Sheets
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setIsNewChatOpen(false)}
+                  disabled={isStartingChat}
+                  className="text-xs h-9"
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={handleStartNewChat}
+                  disabled={isStartingChat}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs h-9 gap-1.5 shadow-sm"
+                >
+                  {isStartingChat ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      A Iniciar...
+                    </>
+                  ) : (
+                    <>
+                      <MessageCircle className="w-3.5 h-3.5" />
+                      Iniciar Conversa Completa
+                    </>
+                  )}
+                </Button>
+              </div>
             </div>
           </div>
         </div>

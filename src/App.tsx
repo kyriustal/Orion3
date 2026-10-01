@@ -15,6 +15,7 @@ import LiveChat from './pages/dashboard/LiveChat';
 import Campaigns from './pages/dashboard/Campaigns';
 import Templates from './pages/dashboard/Templates';
 import Insights from './pages/dashboard/Insights';
+import Reports from './pages/dashboard/Reports';
 import Team from './pages/dashboard/Team';
 import Billing from './pages/dashboard/Billing';
 import Settings from './pages/dashboard/Settings';
@@ -86,6 +87,7 @@ export default function App() {
             <Route path="campaigns"        element={<Campaigns />} />
             <Route path="templates"        element={<Templates />} />
             <Route path="insights"         element={<Insights />} />
+            <Route path="reports"          element={<Reports />} />
             <Route path="team"             element={<Team />} />
             <Route path="billing"          element={<Billing />} />
             <Route path="settings"         element={<Settings />} />

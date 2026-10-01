@@ -5,6 +5,7 @@ import { InstagramService } from '../services/instagram.service';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import { FollowupService } from '../services/followup.service';
 import { BookingService } from '../services/booking.service';
+import { GoogleSheetsService } from '../services/google_sheets.service';
 import { getIo } from '../socket';
 import { AudioService } from '../services/audio.service';
 import { EmailService } from '../services/email.service';
@@ -277,6 +278,16 @@ router.post('/webhook', async (req, res) => {
         text:           messageText,
         metadata:       igMediaMetadata,
       });
+
+      // Sincronizar interação com a folha Google Sheets
+      GoogleSheetsService.syncInteraction({
+        orgId,
+        channel: 'instagram',
+        phoneOrId: senderId,
+        name: `Cliente Instagram (${senderId})`,
+        text: messageText || '[media]',
+        status: 'Ativo',
+      }).catch(() => {});
 
       // Cancelar follow-ups pendentes (cliente voltou a responder)
       FollowupService.cancelPendingForPhone(orgId, senderId).catch(() => {});

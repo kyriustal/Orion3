@@ -5,7 +5,7 @@ import { Button } from "@/src/components/ui/button";
 import { Input } from "@/src/components/ui/input";
 import { Label } from "@/src/components/ui/label";
 import { Switch } from "@/src/components/ui/switch";
-import { Save, Loader2, Key, User, Building2, Bot, ShieldCheck, Mail, Calendar, ExternalLink, CheckCircle2, XCircle, Clock, RefreshCw, Unlink, MessageSquare, Eye, EyeOff, Smartphone, Send } from "lucide-react";
+import { Save, Loader2, Key, User, Building2, Bot, ShieldCheck, Mail, Calendar, ExternalLink, CheckCircle2, XCircle, Clock, RefreshCw, Unlink, MessageSquare, Eye, EyeOff, Smartphone, Send, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 
 export default function Settings() {
@@ -126,9 +126,21 @@ export default function Settings() {
       });
       if (!response.ok) throw new Error("Erro ao carregar configurações");
       const data = await response.json();
+      let resolvedOwnerEmail = data.owner_email || "";
+      if (!resolvedOwnerEmail) {
+        try {
+          const token = localStorage.getItem("token");
+          if (token) {
+            const payload = JSON.parse(atob(token.split('.')[1]));
+            resolvedOwnerEmail = payload.email || "";
+          }
+        } catch (_) {}
+      }
+
       setSettings(prev => ({
         ...prev,
         ...data,
+        owner_email: resolvedOwnerEmail,
         emoji_mode: data.emoji_mode || 'moderate' // garantir valor padrão
       }));
 
@@ -269,8 +281,18 @@ export default function Settings() {
       }
       toast.success(`Google Calendar conectado com sucesso! Calendário: ${data.calendar?.summary || data.calendar?.id || 'Principal'}`);
       setCalendarConnected(prev => ({ ...prev, google: true }));
+      setCalendarStatus((prev: any) => ({
+        ...prev,
+        google_valid: true,
+        google_token_error: null
+      }));
     } catch (error: any) {
       toast.error(error.message);
+      setCalendarStatus((prev: any) => ({
+        ...prev,
+        google_valid: false,
+        google_token_error: error.message
+      }));
     } finally {
       setIsTestingGoogle(false);
     }
@@ -472,6 +494,23 @@ export default function Settings() {
                 />
                 <p className="text-xs text-zinc-400">
                   Este é o nome oficial exibido nos e-mails, SMS e nas respostas da Inteligência Artificial.
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="company_email">E-mail da Empresa (Notificações de Agendamentos e Alertas)</Label>
+                <div className="flex items-center gap-2">
+                  <Input
+                    id="company_email"
+                    type="email"
+                    placeholder="Ex: contacto@empresa.com"
+                    value={settings.owner_email || ""}
+                    onChange={(e) => setSettings({ ...settings, owner_email: e.target.value })}
+                  />
+                  <Mail className="w-4 h-4 text-zinc-400 shrink-0" />
+                </div>
+                <p className="text-xs text-zinc-400">
+                  Este e-mail recebe notificações imediatas da plataforma quando clientes realizam agendamentos, remarcações ou em caso de alertas de atendimento.
                 </p>
               </div>
 
@@ -952,10 +991,17 @@ export default function Settings() {
                 {(settings as any).calendar_provider === 'google' && (
                   <div className="flex flex-col items-end gap-2">
                     {calendarConnected.google ? (
-                      <div className="flex items-center gap-1.5 text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-1 rounded-full">
-                        <CheckCircle2 className="w-3.5 h-3.5" />
-                        Conectado
-                      </div>
+                      calendarStatus && calendarStatus.google_valid === false ? (
+                        <div className="flex items-center gap-1.5 text-xs text-amber-700 bg-amber-50 border border-amber-300 px-2 py-1 rounded-full font-medium">
+                          <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                          Token Expirado
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-1.5 text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-1 rounded-full">
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          Conectado
+                        </div>
+                      )
                     ) : (
                       <div className="flex items-center gap-1.5 text-xs text-amber-600 bg-amber-50 border border-amber-200 px-2 py-1 rounded-full">
                         <XCircle className="w-3.5 h-3.5" />
@@ -1002,6 +1048,20 @@ export default function Settings() {
               {(settings as any).calendar_provider === 'google' && (
                 <Card className="border-emerald-200 bg-emerald-50/50">
                   <CardContent className="pt-4 space-y-4">
+                    {/* Alerta se o token estiver expirado */}
+                    {calendarConnected.google && calendarStatus && calendarStatus.google_valid === false && (
+                      <div className="flex items-start gap-3 p-3 bg-amber-50 border border-amber-300 rounded-xl">
+                        <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                        <div className="text-xs text-amber-900 space-y-1">
+                          <p className="font-bold">⚠️ Autorização Expirada no Google Calendar</p>
+                          <p className="text-amber-800 leading-relaxed">
+                            {calendarStatus.google_token_error || "O token de autorização do Google Calendar expirou (em modo de teste, a Google revoga o token após 7 dias)."}
+                            {" "}Para voltar a sincronizar eventos automaticamente, clique no botão <strong>Reconectar</strong> acima.
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
                     {/* Info: como funciona */}
                     <div className="flex items-start gap-3 p-3 bg-white border border-emerald-200 rounded-xl">
                       <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />

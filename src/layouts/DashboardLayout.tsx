@@ -26,6 +26,7 @@ const navItems = [
   { name: 'Automações',           path: '/dashboard/automations', icon: Zap },
   { name: 'Templates (HSM)', path: '/dashboard/templates', icon: MessageSquare },
   { name: 'Insights & Sentimento', path: '/dashboard/insights', icon: BarChart },
+  { name: 'Relatorios & Analytics', path: '/dashboard/reports', icon: BarChart },
   { name: 'Equipe', path: '/dashboard/team', icon: Users },
   { name: 'Assinatura', path: '/dashboard/billing', icon: CreditCard },
   { name: 'Configurações', path: '/dashboard/settings', icon: Settings },

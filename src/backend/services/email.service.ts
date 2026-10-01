@@ -347,6 +347,55 @@ export class EmailService {
   }
 
   /**
+   * Resolve a lista consolidada de destinatários da empresa para notificações
+   * (E-mail da empresa/owner, membros da equipa autorizados, SMTP_USER e VIPs)
+   */
+  static async resolveCompanyRecipients(orgId: string): Promise<{ emails: string[]; orgName: string }> {
+    try {
+      const { data: orgData } = await supabaseAdmin
+        .from('organizations')
+        .select('name, owner_email')
+        .eq('id', orgId)
+        .maybeSingle();
+
+      const { data: teamMembers } = await supabaseAdmin
+        .from('team_members')
+        .select('email, role')
+        .eq('org_id', orgId)
+        .in('role', ['OWNER', 'ADMIN', 'AGENT']);
+
+      let ownerEmail = orgData?.owner_email?.trim() || '';
+
+      // Fallback: se owner_email estiver vazio, tentar recuperar do auth.users pelo ID
+      if (!ownerEmail && orgId) {
+        try {
+          const { data: authUser } = await supabaseAdmin.auth.admin.getUserById(orgId);
+          if (authUser?.user?.email) {
+            ownerEmail = authUser.user.email.trim();
+          }
+        } catch (_) {}
+      }
+
+      const teamEmails = (teamMembers || []).map(m => m.email?.trim()).filter(Boolean);
+      const orgEmailList = [ownerEmail].filter(Boolean);
+      const smtpUser = process.env.SMTP_USER?.trim();
+      const smtpList = (smtpUser && smtpUser.includes('@')) ? [smtpUser] : [];
+      const vipEmails = (process.env.VIP_EMAILS || '')
+        .split(',')
+        .map(e => e.trim())
+        .filter(e => e.includes('@'));
+
+      const allRecipients = Array.from(new Set([...orgEmailList, ...teamEmails, ...smtpList, ...vipEmails]));
+      const orgName = orgData?.name || 'sua organização';
+
+      return { emails: allRecipients, orgName };
+    } catch (err: any) {
+      console.error('[EmailService] Erro ao resolver destinatários da empresa:', err.message);
+      return { emails: [], orgName: 'sua organização' };
+    }
+  }
+
+  /**
    * Envia um Email de URGÊNCIA MÁXIMA para intervenção imediata da empresa quando as 3 tentativas da IA falham.
    */
   static async sendUrgentInterventionAlert(params: {
@@ -360,33 +409,13 @@ export class EmailService {
     const { orgId, customerPhone, customerName = 'Cliente', errorMessage, customerMessage = '', platform = 'WhatsApp' } = params;
 
     try {
-      const { data: orgData } = await supabaseAdmin
-        .from('organizations')
-        .select('name')
-        .eq('id', orgId)
-        .maybeSingle();
+      const { emails: allRecipients, orgName } = await EmailService.resolveCompanyRecipients(orgId);
 
-      const { data: teamMembers } = await supabaseAdmin
-        .from('team_members')
-        .select('email, role')
-        .eq('org_id', orgId)
-        .in('role', ['OWNER', 'ADMIN', 'AGENT']);
-
-      const orgName = orgData?.name || 'sua organização';
       const host = process.env.SMTP_HOST;
       const port = parseInt(process.env.SMTP_PORT || '587', 10);
       const user = process.env.SMTP_USER;
       const pass = process.env.SMTP_PASS;
-      const from = process.env.SMTP_FROM || 'Orion Platform <urgencias@orion.com>';
-
-      // Lista consolidada de destinatários (Equipa + VIPs)
-      const teamEmails = (teamMembers || []).map(m => m.email).filter(Boolean);
-      const vipEmails = (process.env.VIP_EMAILS || '')
-        .split(',')
-        .map(e => e.trim())
-        .filter(e => e.includes('@'));
-
-      const allRecipients = Array.from(new Set([...teamEmails, ...vipEmails]));
+      const from = process.env.SMTP_FROM || `${orgName} <${user || 'urgencias@orion.com'}>`;
 
       if (allRecipients.length === 0) {
         console.warn(`[EmailService] Nenhum destinatário para email de urgência na org ${orgId}`);
@@ -818,27 +847,8 @@ export class EmailService {
     const { orgId, customerName, customerPhone, customerEmail, date, time, subject, companyName, channelOrigin, isReschedule } = params;
 
     try {
-      const { data: teamMembers } = await supabaseAdmin
-        .from('team_members')
-        .select('email, role')
-        .eq('org_id', orgId)
-        .in('role', ['OWNER', 'ADMIN', 'AGENT']);
-
-      const { data: orgData } = await supabaseAdmin
-        .from('organizations')
-        .select('name, email')
-        .eq('id', orgId)
-        .maybeSingle();
-
-      const resolvedOrgName = companyName || orgData?.name || 'sua organização';
-      const teamEmails = (teamMembers || []).map(m => m.email).filter(Boolean);
-      const orgEmail = orgData?.email ? [orgData.email] : [];
-      const vipEmails = (process.env.VIP_EMAILS || '')
-        .split(',')
-        .map(e => e.trim())
-        .filter(e => e.includes('@'));
-
-      const allRecipients = Array.from(new Set([...teamEmails, ...orgEmail, ...vipEmails]));
+      const { emails: allRecipients, orgName: resolvedOrgNameFromDb } = await EmailService.resolveCompanyRecipients(orgId);
+      const resolvedOrgName = companyName || resolvedOrgNameFromDb || 'sua organização';
 
       if (allRecipients.length === 0) {
         console.warn(`[EmailService] ⚠️ Nenhum destinatário para email de novo agendamento na org ${orgId}`);

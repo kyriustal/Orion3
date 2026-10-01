@@ -267,7 +267,7 @@ router.get('/microsoft/callback', async (req, res) => {
   }
 });
 
-import { testGoogleCalendarConnection } from '../services/calendar.service';
+import { testGoogleCalendarConnection, getGoogleAccessToken } from '../services/calendar.service';
 
 // ─── POST /api/settings/calendar/google/test ─────────────────────────────────
 // Testa a conexão ativa com o Google Calendar
@@ -362,9 +362,28 @@ router.get('/status', requireAuth, async (req: AuthRequest, res) => {
     const hasGoogleOrg = !!(data?.google_client_id && data?.google_client_secret);
     const hasMicrosoftOrg = !!(data?.microsoft_client_id && data?.microsoft_client_secret);
 
+    const hasGoogleToken = !!(data?.google_refresh_token || data?.google_user_refresh_token);
+    let googleValid = false;
+    let googleTokenError: string | null = null;
+
+    if (hasGoogleToken && orgId) {
+      try {
+        const tokenCheck = await getGoogleAccessToken(orgId);
+        if (tokenCheck.accessToken) {
+          googleValid = true;
+        } else {
+          googleTokenError = tokenCheck.error || 'Token expirado ou inválido';
+        }
+      } catch (checkErr: any) {
+        googleTokenError = checkErr.message;
+      }
+    }
+
     res.json({
       provider: data?.calendar_provider || 'none',
-      google_connected: !!(data?.google_refresh_token || data?.google_user_refresh_token),
+      google_connected: hasGoogleToken,
+      google_valid: googleValid,
+      google_token_error: googleTokenError,
       microsoft_connected: !!(data?.microsoft_refresh_token),
       google_direct_url: data?.google_direct_url || '',
       google_user_refresh_token: data?.google_user_refresh_token || data?.google_refresh_token || '',

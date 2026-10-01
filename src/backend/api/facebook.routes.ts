@@ -7,6 +7,7 @@ import { EmailService } from '../services/email.service';
 import { PushService } from '../services/push.service';
 import { FollowupService } from '../services/followup.service';
 import { BookingService } from '../services/booking.service';
+import { GoogleSheetsService } from '../services/google_sheets.service';
 import { getIo } from '../socket';
 import { AudioService } from '../services/audio.service';
 import axios from 'axios';
@@ -224,6 +225,16 @@ router.post('/webhook', async (req, res) => {
         text: userText || '[media]',
         metadata: { platform: 'facebook', referral: referral || undefined },
       });
+
+      // Sincronizar interação com a folha Google Sheets
+      GoogleSheetsService.syncInteraction({
+        orgId,
+        channel: 'facebook',
+        phoneOrId: senderId,
+        name: `Cliente Facebook (${senderId})`,
+        text: userText || '[media]',
+        status: 'Ativo',
+      }).catch(() => {});
 
       // Cancelar follow-ups pendentes (cliente voltou a responder)
       FollowupService.cancelPendingForPhone(orgId, senderId).catch(() => {});

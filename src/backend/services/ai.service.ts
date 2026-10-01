@@ -128,7 +128,7 @@ export async function postGeminiWithRetry(
     throw new Error('[GeminiRetry] Nenhuma GEMINI_API_KEY configurada no .env.');
   }
 
-  const candidateModels = [GEMINI_MODEL, 'gemini-flash-latest'];
+  const candidateModels = [GEMINI_MODEL, 'gemini-3.8-flash'];
   const uniqueCandidateModels = Array.from(new Set(candidateModels));
 
   let lastError = '';
