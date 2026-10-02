@@ -162,6 +162,7 @@ router.post('/settings/org', requireAuth, async (req: AuthRequest, res) => {
       'google_client_id', 'google_client_secret', 'google_refresh_token', 'google_direct_url', 'google_user_refresh_token',
       'microsoft_client_id', 'microsoft_client_secret', 'microsoft_refresh_token',
       'telcosms_api_key', 'telcosms_sender_id',
+      'google_sheets_webhook_url', 'daily_report_email',
       'handover_mode', 'ai_tone', 'ai_prompt'
     ];
 

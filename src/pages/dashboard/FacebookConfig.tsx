@@ -7,7 +7,7 @@ import { toast } from 'sonner';
 
 export default function FacebookConfig() {
   const [webhookUrl] = useState(`${window.location.origin}/api/facebook/webhook`);
-  const [verifyToken] = useState("orion_fb_secure_token");
+  const [verifyToken] = useState("orion_secure_token_123");
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [config, setConfig] = useState<any>(null);
