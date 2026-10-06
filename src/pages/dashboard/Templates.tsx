@@ -19,9 +19,7 @@ export default function Templates() {
     content: ""
   });
 
-  useEffect(() => {
-    fetchTemplates();
-  }, []);
+  const [isSyncing, setIsSyncing] = useState(false);
 
   const fetchTemplates = async () => {
     try {
@@ -71,9 +69,7 @@ export default function Templates() {
     }
   };
 
-  const [isSyncing, setIsSyncing] = useState(false);
-
-  const handleSync = async () => {
+  const handleSync = async (silent = false) => {
     setIsSyncing(true);
     try {
       const response = await fetch("/api/templates/sync", {
@@ -82,14 +78,21 @@ export default function Templates() {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Erro ao sincronizar");
-      toast.success(data.message);
+      if (!silent) toast.success(data.message);
       fetchTemplates();
     } catch (error: any) {
-      toast.error(error.message);
+      // Silencioso na sincronização automática (pode não ter WhatsApp configurado)
+      if (!silent) toast.error(error.message);
     } finally {
       setIsSyncing(false);
     }
   };
+
+  useEffect(() => {
+    // Carrega templates e sincroniza automaticamente com a Meta ao abrir a página
+    fetchTemplates();
+    handleSync(true);
+  }, []);
 
   if (isLoading) {
     return (
@@ -130,38 +133,45 @@ export default function Templates() {
               </div>
             ) : (
               templates.map(template => (
-                <div key={template.id} className="flex items-center justify-between p-4 rounded-xl border border-zinc-200 bg-white hover:bg-zinc-50 transition-colors">
-                  <div className="flex items-center gap-4">
-                    <div className="w-10 h-10 rounded-lg bg-emerald-50 flex items-center justify-center">
-                      <MessageSquare className="w-5 h-5 text-emerald-600" />
-                    </div>
-                    <div>
-                      <p className="font-semibold text-zinc-900">{template.name}</p>
-                      <div className="flex items-center gap-2 mt-1">
-                        <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-zinc-100 text-zinc-600 uppercase tracking-widest">
-                          {template.category}
-                        </span>
-                        <span className="text-[10px] text-zinc-400 flex items-center gap-1">
-                          <Globe className="w-3 h-3" /> {template.language}
-                        </span>
+                <div key={template.id} className="flex flex-col gap-3 p-4 rounded-xl border border-zinc-200 bg-white hover:bg-zinc-50 transition-colors">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                      <div className="w-10 h-10 rounded-lg bg-emerald-50 flex items-center justify-center flex-shrink-0">
+                        <MessageSquare className="w-5 h-5 text-emerald-600" />
+                      </div>
+                      <div>
+                        <p className="font-semibold text-zinc-900">{template.name}</p>
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-zinc-100 text-zinc-600 uppercase tracking-widest">
+                            {template.category}
+                          </span>
+                          <span className="text-[10px] text-zinc-400 flex items-center gap-1">
+                            <Globe className="w-3 h-3" /> {template.language}
+                          </span>
+                        </div>
                       </div>
                     </div>
+                    <div>
+                      {template.status === 'approved' ? (
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-700">
+                          <CheckCircle2 className="w-3.5 h-3.5" /> Aprovado
+                        </span>
+                      ) : template.status === 'rejected' ? (
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-red-100 text-red-700">
+                          <XCircle className="w-3.5 h-3.5" /> Rejeitado
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-700">
+                          <Clock className="w-3.5 h-3.5" /> Em Análise
+                        </span>
+                      )}
+                    </div>
                   </div>
-                  <div>
-                    {template.status === 'approved' ? (
-                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-700">
-                        <CheckCircle2 className="w-3.5 h-3.5" /> Aprovado
-                      </span>
-                    ) : template.status === 'rejected' ? (
-                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-red-100 text-red-700">
-                        <XCircle className="w-3.5 h-3.5" /> Rejeitado
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-700">
-                        <Clock className="w-3.5 h-3.5" /> Em Análise
-                      </span>
-                    )}
-                  </div>
+                  {template.content && (
+                    <div className="ml-14 bg-zinc-50 border border-zinc-100 rounded-md px-3 py-2">
+                      <p className="text-xs text-zinc-500 line-clamp-2">{template.content}</p>
+                    </div>
+                  )}
                 </div>
               ))
             )}

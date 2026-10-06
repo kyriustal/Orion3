@@ -9,12 +9,14 @@ import { toast } from "sonner";
 export default function Campaigns() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
-
   const [campaigns, setCampaigns] = useState<any[]>([]);
+  const [approvedTemplates, setApprovedTemplates] = useState<any[]>([]);
+  const [selectedTemplate, setSelectedTemplate] = useState<any>(null);
+  const [templateVars, setTemplateVars] = useState<Record<string, string>>({});
 
   const [newCampaign, setNewCampaign] = useState({
     name: "",
-    template: "oferta_01",
+    template: "",
     audience: "all",
     filters: "",
     delay_seconds: 5
@@ -22,6 +24,7 @@ export default function Campaigns() {
 
   useEffect(() => {
     fetchCampaigns();
+    fetchApprovedTemplates();
   }, []);
 
   const fetchCampaigns = async () => {
@@ -38,10 +41,46 @@ export default function Campaigns() {
     }
   };
 
+  const fetchApprovedTemplates = async () => {
+    try {
+      const response = await fetch("/api/templates", {
+        headers: { "Authorization": `Bearer ${localStorage.getItem("token")}` }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        const approved = (data || []).filter((t: any) => t.status === 'approved');
+        setApprovedTemplates(approved);
+        if (approved.length > 0) {
+          setNewCampaign(prev => ({ ...prev, template: approved[0].name }));
+          setSelectedTemplate(approved[0]);
+        }
+      }
+    } catch (error) {
+      console.error("Erro ao buscar templates", error);
+    }
+  };
+
+  // Extrai variáveis {{1}}, {{2}}, etc. do conteúdo do template
+  const extractVariables = (content: string): string[] => {
+    const matches = content.match(/\{\{\d+\}\}/g) || [];
+    return [...new Set(matches)].sort();
+  };
+
+  const handleTemplateChange = (templateName: string) => {
+    const tmpl = approvedTemplates.find(t => t.name === templateName);
+    setSelectedTemplate(tmpl || null);
+    setTemplateVars({});
+    setNewCampaign(prev => ({ ...prev, template: templateName }));
+  };
+
   const handleStartCampaign = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newCampaign.name) {
       toast.error("Dê um nome à campanha.");
+      return;
+    }
+    if (!newCampaign.template) {
+      toast.error("Selecione um template aprovado.");
       return;
     }
 
@@ -53,10 +92,16 @@ export default function Campaigns() {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${localStorage.getItem("token")}`
         },
-        body: JSON.stringify(newCampaign)
+        body: JSON.stringify({
+          ...newCampaign,
+          template_variables: templateVars
+        })
       });
 
-      if (!response.ok) throw new Error("Erro ao iniciar campanha");
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.error || "Erro ao iniciar campanha");
+      }
 
       const data = await response.json();
 
@@ -74,13 +119,16 @@ export default function Campaigns() {
 
       toast.success(data.message);
       setIsModalOpen(false);
-      setNewCampaign({ name: "", template: "oferta_01", audience: "all", filters: "", delay_seconds: 5 });
-    } catch (error) {
-      toast.error("Erro ao iniciar a campanha.");
+      setNewCampaign({ name: "", template: approvedTemplates[0]?.name || "", audience: "all", filters: "", delay_seconds: 5 });
+      setTemplateVars({});
+    } catch (error: any) {
+      toast.error(error.message || "Erro ao iniciar a campanha.");
     } finally {
       setIsSubmitting(false);
     }
   };
+
+  const templateVariables = selectedTemplate?.content ? extractVariables(selectedTemplate.content) : [];
 
   return (
     <div className="space-y-6 max-w-6xl mx-auto">
@@ -89,10 +137,21 @@ export default function Campaigns() {
           <h2 className="text-2xl font-bold tracking-tight text-zinc-900">Campanhas em Massa</h2>
           <p className="text-zinc-500">Envie mensagens proativas usando Templates Oficiais da Meta.</p>
         </div>
-        <Button onClick={() => setIsModalOpen(true)} className="gap-2">
+        <Button
+          onClick={() => setIsModalOpen(true)}
+          disabled={approvedTemplates.length === 0}
+          className="gap-2"
+          title={approvedTemplates.length === 0 ? "Nenhum template aprovado disponível" : ""}
+        >
           <Plus className="w-4 h-4" /> Nova Campanha
         </Button>
       </div>
+
+      {approvedTemplates.length === 0 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-sm text-amber-800">
+          ⚠️ Você não possui templates aprovados. Vá em <strong>Templates</strong>, sincronize com a Meta e aguarde a aprovação de ao menos um template antes de criar uma campanha.
+        </div>
+      )}
 
       <Card>
         <CardHeader>
@@ -174,13 +233,46 @@ export default function Campaigns() {
                     id="template"
                     className="flex h-10 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-950"
                     value={newCampaign.template}
-                    onChange={(e) => setNewCampaign({ ...newCampaign, template: e.target.value })}
+                    onChange={(e) => handleTemplateChange(e.target.value)}
                   >
-                    <option value="oferta_01">oferta_01 (Marketing)</option>
-                    <option value="aviso_geral">aviso_geral (Utilitário)</option>
-                    <option value="boas_vindas">boas_vindas (Marketing)</option>
+                    {approvedTemplates.map(t => (
+                      <option key={t.id} value={t.name}>
+                        {t.name} ({t.category})
+                      </option>
+                    ))}
                   </select>
                 </div>
+
+                {/* Preview do conteúdo do template */}
+                {selectedTemplate?.content && (
+                  <div className="bg-zinc-50 border border-zinc-200 rounded-md p-3">
+                    <p className="text-[10px] font-semibold text-zinc-500 uppercase tracking-widest mb-1">Preview do Template</p>
+                    <p className="text-sm text-zinc-700 whitespace-pre-wrap">{selectedTemplate.content}</p>
+                  </div>
+                )}
+
+                {/* Campos de variáveis dinamicamente */}
+                {templateVariables.length > 0 && (
+                  <div className="space-y-3">
+                    <p className="text-sm font-medium text-zinc-700">Variáveis do Template (Copy)</p>
+                    {templateVariables.map((varToken) => {
+                      const varIndex = varToken.replace(/\{\{|\}\}/g, '');
+                      return (
+                        <div key={varToken} className="space-y-1">
+                          <Label htmlFor={`var_${varIndex}`}>
+                            Variável {varToken}
+                          </Label>
+                          <Input
+                            id={`var_${varIndex}`}
+                            placeholder={`Ex: valor para ${varToken}`}
+                            value={templateVars[varIndex] || ''}
+                            onChange={(e) => setTemplateVars(prev => ({ ...prev, [varIndex]: e.target.value }))}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
 
                 <div className="space-y-2">
                   <Label htmlFor="audience">Público Alvo (Tipos de Contatos)</Label>

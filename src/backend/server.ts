@@ -61,6 +61,8 @@ import pushRoutes from './api/push.routes';
 import calendarRoutes from './api/calendar.routes';
 import businessHoursRoutes from './api/business_hours.routes';
 import reportsRoutes from './api/reports.routes';
+import tiktokRoutes from './api/tiktok.routes';
+import emailInboxRoutes from './api/email_inbox.routes';
 
 app.use('/api/auth',        authRoutes);
 app.use('/api/knowledge',   knowledgeRoutes);
@@ -70,6 +72,8 @@ app.use('/api/orion-web',   chatRoutes);
 app.use('/api/whatsapp',    whatsappRoutes);
 app.use('/api/facebook',    facebookRoutes);
 app.use('/api/instagram',   instagramRoutes);
+app.use('/api/tiktok',      tiktokRoutes);
+app.use('/api/email-inbox', emailInboxRoutes);
 app.use('/api/bookings',    bookingsRoutes);
 app.use('/api/automations', automationsRoutes);
 app.use('/api/templates',   templatesRoutes);
@@ -119,5 +123,15 @@ httpServer.listen(PORT, () => {
   // Iniciar worker de relatório diário às 23:59 (WAT / Horário de Angola)
   import('./workers/daily_report.worker').catch(err =>
     console.error('[DAILY-REPORT-BOOT] Erro ao iniciar worker de relatório diário:', err.message)
+  );
+
+  // Iniciar worker de comentários multicanal (Facebook, Instagram, TikTok)
+  import('./workers/comments.worker').catch(err =>
+    console.error('[COMMENTS-WORKER-BOOT] Erro ao iniciar worker de comentários:', err.message)
+  );
+
+  // Iniciar worker de respostas automáticas de e-mail (IMAP / SMTP)
+  import('./workers/email_inbox.worker').catch(err =>
+    console.error('[EMAIL-INBOX-BOOT] Erro ao iniciar worker de e-mails:', err.message)
   );
 });

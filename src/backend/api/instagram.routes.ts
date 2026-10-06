@@ -467,4 +467,28 @@ router.post('/webhook', async (req, res) => {
   }
 });
 
+// ─── POST /api/instagram/comment-automation ───────────────────────────────────
+router.post('/comment-automation', requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const orgId = req.user?.orgId;
+    const { enabled, prompt } = req.body;
+
+    const { data, error } = await supabaseAdmin
+      .from('instagram_config')
+      .update({
+        comment_automation_enabled: enabled,
+        comment_prompt: prompt || null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('org_id', orgId)
+      .select()
+      .maybeSingle();
+
+    if (error) throw error;
+    res.json({ success: true, data });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;

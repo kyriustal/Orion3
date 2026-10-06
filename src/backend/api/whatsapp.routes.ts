@@ -125,81 +125,86 @@ router.get('/chats', requireAuth, async (req: AuthRequest, res) => {
   try {
     const orgId = req.user?.orgId;
 
-    const { data: history, error } = await supabaseAdmin
+    // ── 1. Buscar a última mensagem de cada conversa (sem limite) ──────────────
+    // Para garantir que TODAS as conversas aparecem, fazemos duas queries:
+    //   a) A última mensagem de cada customer_phone (para preview e timestamp)
+    //   b) Todos os registos de status (attended, booking, error) para calcular badges
+
+    // a) Última mensagem por conversa — busca apenas a linha mais recente de cada phone
+    //    Supabase não suporta DISTINCT ON nativo no SDK, por isso buscamos DESC sem limit
+    //    mas apenas os campos mínimos necessários para o preview (sem texto completo).
+    const { data: allRows, error: allErr } = await supabaseAdmin
       .from('conversation_history')
       .select('customer_phone, text, created_at, sender, metadata')
       .eq('org_id', orgId)
-      .order('created_at', { ascending: false })
-      .limit(10000);
+      .not('customer_phone', 'is', null)
+      .neq('customer_phone', 'null')
+      .order('created_at', { ascending: false });
 
-    if (error) throw error;
+    if (allErr) throw allErr;
 
-    const chatsMap = new Map<string, any>();
+    // Construir mapa de última mensagem por phone (primeira ocorrência = mais recente)
+    const lastMsgMap = new Map<string, typeof allRows[0]>();
+    // Construir mapa de status por phone (iterar todos os registos)
     const phoneStatusMap = new Map<string, { needs_confirm: boolean; has_exclamation: boolean; has_error: boolean }>();
 
-    (history || []).forEach(item => {
-      if (!item.customer_phone || item.customer_phone === 'null') return;
+    for (const item of (allRows || [])) {
       const phone = item.customer_phone;
-      
+      if (!phone || phone === 'null') continue;
+
+      // Registar a última mensagem (primeira vez que vemos este phone, pois está DESC)
+      if (!lastMsgMap.has(phone)) {
+        lastMsgMap.set(phone, item);
+      }
+
+      // Acumular status para este phone
       if (!phoneStatusMap.has(phone)) {
-        let isAttended = false;
-        let isBooking = false;
-        let isNoShowReschedule = false;
-        let hasInternalError = false;
+        phoneStatusMap.set(phone, { needs_confirm: false, has_exclamation: false, has_error: false });
+      }
+      const st = phoneStatusMap.get(phone)!;
 
-        const phoneItems = (history || []).filter(h => h.customer_phone === phone);
-        
-        for (const h of phoneItems) {
-          if (h.metadata?.attended === true) {
-            isAttended = true;
-            break; // Já foi atendido, limpa o status de agendamento pendente
-          }
-          if (h.metadata?.no_show_reschedule === true || h.metadata?.noShowReschedule === true) {
-            isNoShowReschedule = true;
-          }
-          if (h.metadata?.booking === true || h.metadata?.confirm === true) {
-            isBooking = true;
-          }
-          if (h.metadata?.internal_error === true && !h.metadata?.resolved) {
-            hasInternalError = true;
-          }
+      if (item.metadata?.attended === true) {
+        // Se foi atendido, limpar todos os flags de pendência
+        st.needs_confirm = false;
+        st.has_exclamation = false;
+      } else {
+        if (item.metadata?.booking === true || item.metadata?.confirm === true) {
+          st.needs_confirm = true;
         }
-
-        const needsConfirm = isBooking && !isAttended;
-        const hasExclamation = isNoShowReschedule && !isAttended;
-
-        phoneStatusMap.set(phone, {
-          needs_confirm: needsConfirm,
-          has_exclamation: hasExclamation,
-          has_error: hasInternalError,
-        });
+        if (item.metadata?.no_show_reschedule === true || item.metadata?.noShowReschedule === true) {
+          st.has_exclamation = true;
+        }
       }
-
-      if (!chatsMap.has(phone)) {
-        const platform = item.metadata?.platform || 'whatsapp';
-        let nameDisplay = `WhatsApp (${phone})`;
-        if (platform === 'instagram') nameDisplay = `Instagram (@${phone})`;
-        else if (platform === 'facebook') nameDisplay = `Messenger (${phone.slice(-6)})`;
-
-        const st = phoneStatusMap.get(phone) || { needs_confirm: false, has_exclamation: false, has_error: false };
-
-        chatsMap.set(phone, {
-          id: phone,
-          phone: phone,
-          name: nameDisplay,
-          lastMessage: item.text,
-          time: new Date(item.created_at).toLocaleTimeString('pt-PT', { timeZone: 'Africa/Luanda', hour: '2-digit', minute: '2-digit' }),
-          timestamp: item.created_at,
-          lastSender: item.sender,
-          platform: platform,
-          needs_confirm: st.needs_confirm,
-          has_exclamation: st.has_exclamation,
-          has_error: st.has_error,
-        });
+      if (item.metadata?.internal_error === true && !item.metadata?.resolved) {
+        st.has_error = true;
       }
+    }
+
+    // ── 2. Montar o array de chats a partir do mapa de última mensagem ─────────
+    const chats = Array.from(lastMsgMap.entries()).map(([phone, item]) => {
+      const platform = item.metadata?.platform || 'whatsapp';
+      let nameDisplay = `WhatsApp (${phone})`;
+      if (platform === 'instagram') nameDisplay = `Instagram (@${phone})`;
+      else if (platform === 'facebook') nameDisplay = `Messenger (${phone.slice(-6)})`;
+
+      const st = phoneStatusMap.get(phone) || { needs_confirm: false, has_exclamation: false, has_error: false };
+
+      return {
+        id: phone,
+        phone,
+        name: nameDisplay,
+        lastMessage: item.text,
+        time: new Date(item.created_at).toLocaleTimeString('pt-PT', { timeZone: 'Africa/Luanda', hour: '2-digit', minute: '2-digit' }),
+        timestamp: item.created_at,
+        lastSender: item.sender,
+        platform,
+        needs_confirm: st.needs_confirm,
+        has_exclamation: st.has_exclamation,
+        has_error: st.has_error,
+      };
     });
 
-    res.json(Array.from(chatsMap.values()));
+    res.json(chats);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

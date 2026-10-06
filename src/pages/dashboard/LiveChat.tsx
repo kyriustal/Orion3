@@ -1005,11 +1005,10 @@ export default function LiveChat() {
               {/* Botão Nova Conversa com Estrutura Completa */}
               <button
                 onClick={() => { setIsNewChatOpen(true); setNewChatError(""); }}
-                title="Iniciar conversa com a estrutura completa"
-                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold transition-all shadow-sm"
+                title="Nova Conversa"
+                className="flex items-center justify-center w-7 h-7 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white transition-all shadow-sm"
               >
-                <Plus className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Nova Conversa</span>
+                <Plus className="w-4 h-4" />
               </button>
               <span className={`flex items-center gap-1 text-xs px-2 py-1 rounded-full font-medium ${
                 isConnected ? "bg-emerald-50 text-emerald-600" : "bg-zinc-100 text-zinc-400"
