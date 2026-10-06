@@ -51,7 +51,7 @@ async function saveComment(orgId: string, commenterId: string, platform: string,
     sender,
     text,
     metadata: { platform, comment_automation: true, ...meta },
-  }).catch(() => {});
+  });
 }
 
 async function emitToPanel(orgId: string, platform: string, commenterId: string, text: string, sender: 'user' | 'bot') {

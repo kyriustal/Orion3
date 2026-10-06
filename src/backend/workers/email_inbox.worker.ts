@@ -89,7 +89,7 @@ async function pollEmailInboxes() {
               from_name: email.from,
               from_address: emailerId,
             },
-          }).catch(() => {});
+          });
 
           // Emitir para o Live Chat
           try {
@@ -154,7 +154,7 @@ async function pollEmailInboxes() {
                 to_address: emailerId,
                 in_reply_to: email.messageId,
               },
-            }).catch(() => {});
+            });
 
             // Emitir para Live Chat
             try {
