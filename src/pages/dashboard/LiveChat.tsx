@@ -12,8 +12,8 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { io, Socket } from "socket.io-client";
 import { toast } from "sonner";
 
-type Message = { id: number; sender: "user" | "bot" | "human"; text: string; time: string; timestamp?: string; botName?: string; agentName?: string; metadata?: any; };
-type Chat = { id: string; phone: string; name: string; lastMessage: string; time: string; timestamp: string; platform?: string; unread?: number; needs_confirm?: boolean; has_exclamation?: boolean; has_error?: boolean; };
+type Message = { id: number; sender: "user" | "bot" | "human" | "system"; text: string; time: string; timestamp?: string; botName?: string; agentName?: string; metadata?: any; };
+type Chat = { id: string; phone: string; name: string; lastMessage: string; time: string; timestamp: string; platform?: string; unread?: number; needs_confirm?: boolean; has_exclamation?: boolean; has_error?: boolean; attended?: boolean; concluded?: boolean; };
 
 const ANGOLA_TZ = 'Africa/Luanda';
 
@@ -712,10 +712,12 @@ export default function LiveChat() {
       setChats(prev => prev.map(c => c.phone === data.phone ? { ...c, has_error: false } : c));
     });
 
-    // Atualização de status de atendimento / agendamento / remarcação
-    sock.on("chat_status_updated", (data: { phone: string; attended?: boolean; needs_confirm?: boolean; has_exclamation?: boolean }) => {
+    // Atualização de status de atendimento / agendamento / remarcação / conclusão
+    sock.on("chat_status_updated", (data: { phone: string; attended?: boolean; needs_confirm?: boolean; has_exclamation?: boolean; concluded?: boolean }) => {
       setChats(prev => prev.map(c => c.phone === data.phone ? {
         ...c,
+        attended: data.attended !== undefined ? data.attended : c.attended,
+        concluded: data.concluded !== undefined ? data.concluded : c.concluded,
         needs_confirm: data.needs_confirm !== undefined ? data.needs_confirm : !data.attended,
         has_exclamation: data.has_exclamation !== undefined ? data.has_exclamation : false,
       } : c));
@@ -1088,6 +1090,10 @@ export default function LiveChat() {
                       <span className="text-[9px] bg-orange-100 text-orange-800 font-bold px-1.5 py-0.5 rounded">
                         Agendado
                       </span>
+                    ) : (chat.concluded || chat.attended) ? (
+                      <span className="text-[9px] bg-zinc-100 text-zinc-600 font-bold px-1.5 py-0.5 rounded border border-zinc-200">
+                        Concluído
+                      </span>
                     ) : null}
                   </div>
                   <div className="flex items-center gap-1 shrink-0 ml-1">
@@ -1126,6 +1132,11 @@ export default function LiveChat() {
                       activeChat.has_exclamation ? "bg-amber-100 text-amber-800 border border-amber-300 flex items-center gap-1" : "bg-orange-100 text-orange-800"
                     }`}>
                       {activeChat.has_exclamation ? <><AlertCircle className="w-3 h-3 text-amber-700" /> Remarcação por Falta</> : "📅 Agendamento Pendente"}
+                    </span>
+                  )}
+                  {(activeChat.concluded || activeChat.attended) && !activeChat.needs_confirm && !activeChat.has_error && (
+                    <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1">
+                      <Check className="w-3 h-3 text-emerald-600" /> Concluído
                     </span>
                   )}
                 </CardTitle>
@@ -1233,31 +1244,40 @@ export default function LiveChat() {
                       </div>
                     </div>
                   )}
-                  <div className={`flex ${msg.sender === "user" ? "justify-start" : "justify-end"} animate-in fade-in`}>
-                    <div className={`max-w-[72%] rounded-2xl px-4 py-2.5 text-sm shadow-sm transition-all ${isSearchTarget ? "ring-2 ring-amber-400 ring-offset-2 scale-[1.01]" : ""} ${msg.sender === "user" ? "bg-white border border-zinc-100 text-zinc-900 rounded-tl-sm" : msg.sender === "bot" ? "bg-emerald-50 border border-emerald-100 text-emerald-900 rounded-tr-sm" : "bg-zinc-800 text-white rounded-tr-sm"}`}>
-                      <div className="flex items-center gap-1.5 mb-1 opacity-60">
-                        {msg.sender === "user" ? <User className="w-3 h-3" /> : (msg.sender === "bot" ? <Bot className="w-3 h-3" /> : <User className="w-3 h-3" />)}
-                        <span className="text-[10px] font-semibold uppercase tracking-wider">
-                          {msg.sender === "user" ? "Cliente" : msg.sender === "bot" ? (msg.botName || "IA") : (msg.agentName || "Você")}
-                        </span>
-                      </div>
-                      {renderMessageContent(msg.text, msg.metadata)}
-                      <div className="flex items-center justify-end gap-1 mt-1 opacity-70">
-                        <span className="text-[10px]">{formatMessageTime(msg.timestamp, msg.time)}</span>
-                        {msg.sender !== "user" && (
-                          <span title={msg.metadata?.status === "read" ? "Lida / Visualizada" : msg.metadata?.status === "delivered" ? "Entregue" : "Enviada"}>
-                            {msg.metadata?.status === "read" ? (
-                              <CheckCheck className="w-3.5 h-3.5 text-sky-400 font-bold" />
-                            ) : msg.metadata?.status === "delivered" ? (
-                              <CheckCheck className="w-3.5 h-3.5 opacity-80" />
-                            ) : (
-                              <Check className="w-3.5 h-3.5 opacity-80" />
-                            )}
-                          </span>
-                        )}
+                  {msg.sender === "system" || msg.metadata?.internal_note ? (
+                    <div className="flex justify-center my-3 animate-in fade-in">
+                      <div className="bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 text-xs px-3.5 py-1.5 rounded-full border border-zinc-200 dark:border-zinc-700 flex items-center gap-1.5 shadow-sm font-medium">
+                        <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                        <span>{msg.text.replace(/^\[|\]$/g, '')}</span>
                       </div>
                     </div>
-                  </div>
+                  ) : (
+                    <div className={`flex ${msg.sender === "user" ? "justify-start" : "justify-end"} animate-in fade-in`}>
+                      <div className={`max-w-[72%] rounded-2xl px-4 py-2.5 text-sm shadow-sm transition-all ${isSearchTarget ? "ring-2 ring-amber-400 ring-offset-2 scale-[1.01]" : ""} ${msg.sender === "user" ? "bg-white border border-zinc-100 text-zinc-900 rounded-tl-sm" : msg.sender === "bot" ? "bg-emerald-50 border border-emerald-100 text-emerald-900 rounded-tr-sm" : "bg-zinc-800 text-white rounded-tr-sm"}`}>
+                        <div className="flex items-center gap-1.5 mb-1 opacity-60">
+                          {msg.sender === "user" ? <User className="w-3 h-3" /> : (msg.sender === "bot" ? <Bot className="w-3 h-3" /> : <User className="w-3 h-3" />)}
+                          <span className="text-[10px] font-semibold uppercase tracking-wider">
+                            {msg.sender === "user" ? "Cliente" : msg.sender === "bot" ? (msg.botName || "IA") : (msg.agentName || "Você")}
+                          </span>
+                        </div>
+                        {renderMessageContent(msg.text, msg.metadata)}
+                        <div className="flex items-center justify-end gap-1 mt-1 opacity-70">
+                          <span className="text-[10px]">{formatMessageTime(msg.timestamp, msg.time)}</span>
+                          {msg.sender !== "user" && (
+                            <span title={msg.metadata?.status === "read" ? "Lida / Visualizada" : msg.metadata?.status === "delivered" ? "Entregue" : "Enviada"}>
+                              {msg.metadata?.status === "read" ? (
+                                <CheckCheck className="w-3.5 h-3.5 text-sky-400 font-bold" />
+                              ) : msg.metadata?.status === "delivered" ? (
+                                <CheckCheck className="w-3.5 h-3.5 opacity-80" />
+                              ) : (
+                                <Check className="w-3.5 h-3.5 opacity-80" />
+                              )}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             })}

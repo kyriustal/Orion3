@@ -230,4 +230,58 @@ export class WhatsAppService {
             return [];
         }
     }
+
+    /**
+     * Envia uma mensagem interativa com botões de resposta rápida (máximo 3 botões)
+     */
+    static async sendInteractiveButtons(
+        phoneNumberId: string,
+        to: string,
+        bodyText: string,
+        buttons: { id: string; title: string }[],
+        accessToken?: string
+    ): Promise<string | null> {
+        const token = accessToken || process.env.META_ACCESS_TOKEN;
+        if (!token) {
+            console.error('WhatsApp Access Token não configurado.');
+            return null;
+        }
+
+        try {
+            const url = `https://graph.facebook.com/v19.0/${phoneNumberId}/messages`;
+
+            const response = await axios.post(url, {
+                messaging_product: "whatsapp",
+                recipient_type: "individual",
+                to,
+                type: "interactive",
+                interactive: {
+                    type: "button",
+                    body: { text: bodyText },
+                    action: {
+                        buttons: buttons.slice(0, 3).map(b => ({
+                            type: "reply",
+                            reply: {
+                                id: b.id,
+                                title: b.title.substring(0, 20), // WhatsApp limita a 20 chars
+                            }
+                        }))
+                    }
+                }
+            }, {
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            console.log(`[WHATSAPP] Mensagem interativa enviada para ${to}`);
+            return response.data?.messages?.[0]?.id || null;
+        } catch (error: any) {
+            console.error('[WHATSAPP] Erro ao enviar mensagem interativa:', error.response?.data || error.message);
+            // Fallback: enviar como texto simples sem botões
+            console.log('[WHATSAPP] Tentando fallback como texto simples...');
+            return this.sendTextMessage(phoneNumberId, to, bodyText, token);
+        }
+    }
 }

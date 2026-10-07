@@ -145,8 +145,14 @@ router.get('/chats', requireAuth, async (req: AuthRequest, res) => {
 
     // Construir mapa de última mensagem por phone (primeira ocorrência = mais recente)
     const lastMsgMap = new Map<string, typeof allRows[0]>();
-    // Construir mapa de status por phone (iterar todos os registos)
-    const phoneStatusMap = new Map<string, { needs_confirm: boolean; has_exclamation: boolean; has_error: boolean }>();
+    // Construir mapa de status por phone (iterar todos os registos em ordem decrescente)
+    const phoneStatusMap = new Map<string, {
+      needs_confirm: boolean;
+      has_exclamation: boolean;
+      has_error: boolean;
+      attended: boolean;
+      concluded: boolean;
+    }>();
 
     for (const item of (allRows || [])) {
       const phone = item.customer_phone;
@@ -159,15 +165,24 @@ router.get('/chats', requireAuth, async (req: AuthRequest, res) => {
 
       // Acumular status para este phone
       if (!phoneStatusMap.has(phone)) {
-        phoneStatusMap.set(phone, { needs_confirm: false, has_exclamation: false, has_error: false });
+        phoneStatusMap.set(phone, {
+          needs_confirm: false,
+          has_exclamation: false,
+          has_error: false,
+          attended: false,
+          concluded: false,
+        });
       }
       const st = phoneStatusMap.get(phone)!;
 
-      if (item.metadata?.attended === true) {
-        // Se foi atendido, limpar todos os flags de pendência
+      if (item.metadata?.attended === true || item.metadata?.concluded === true) {
+        // Se foi atendido ou concluído, limpar flags de pendência
+        st.attended = true;
+        st.concluded = true;
         st.needs_confirm = false;
         st.has_exclamation = false;
-      } else {
+      } else if (!st.attended && !st.concluded) {
+        // Apenas avalia bookings anteriores se não encontrou um status de atendido/concluído mais recente
         if (item.metadata?.booking === true || item.metadata?.confirm === true) {
           st.needs_confirm = true;
         }
@@ -187,7 +202,13 @@ router.get('/chats', requireAuth, async (req: AuthRequest, res) => {
       if (platform === 'instagram') nameDisplay = `Instagram (@${phone})`;
       else if (platform === 'facebook') nameDisplay = `Messenger (${phone.slice(-6)})`;
 
-      const st = phoneStatusMap.get(phone) || { needs_confirm: false, has_exclamation: false, has_error: false };
+      const st = phoneStatusMap.get(phone) || {
+        needs_confirm: false,
+        has_exclamation: false,
+        has_error: false,
+        attended: false,
+        concluded: false,
+      };
 
       return {
         id: phone,
@@ -201,6 +222,8 @@ router.get('/chats', requireAuth, async (req: AuthRequest, res) => {
         needs_confirm: st.needs_confirm,
         has_exclamation: st.has_exclamation,
         has_error: st.has_error,
+        attended: st.attended,
+        concluded: st.concluded,
       };
     });
 
@@ -225,13 +248,14 @@ router.post('/mark-attended', requireAuth, async (req: AuthRequest, res) => {
       customer_phone: phone,
       sender: 'human',
       text: '[ATENDIMENTO CONFIRMADO PELO AGENTE]',
-      metadata: { attended: true, internal_note: true }
+      metadata: { attended: true, concluded: true, internal_note: true }
     });
 
     try {
       getIo().to(`org:${orgId}`).emit('chat_status_updated', {
         phone,
         attended: true,
+        concluded: true,
         needs_confirm: false,
         has_exclamation: false,
       });
@@ -1305,6 +1329,16 @@ router.post('/webhook', async (req, res) => {
 
     if (incomingMsg.type === 'text') {
       userText = incomingMsg.text?.body || '';
+
+    } else if (incomingMsg.type === 'interactive') {
+      const btn = incomingMsg.interactive?.button_reply;
+      const list = incomingMsg.interactive?.list_reply;
+      userText = btn?.title || list?.title || '';
+      console.log(`[WHATSAPP] Resposta interativa de ${fromNumber}: "${userText}" (ID: ${btn?.id || list?.id})`);
+
+    } else if (incomingMsg.type === 'button') {
+      userText = incomingMsg.button?.text || '';
+      console.log(`[WHATSAPP] Botão rápido clicado por ${fromNumber}: "${userText}"`);
 
     } else if (['image', 'video', 'audio', 'document'].includes(incomingMsg.type)) {
       const mediaObj = incomingMsg[incomingMsg.type];
