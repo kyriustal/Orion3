@@ -14,6 +14,7 @@ import {
   fillPlaceholders,
   getObjectionScheduledDate,
   isConversationEndedInFarewell,
+  formatGreeting,
 } from '../services/followup.service';
 import { WhatsAppService } from '../services/whatsapp.service';
 import { FacebookService } from '../services/facebook.service';
@@ -85,7 +86,7 @@ async function buildFollowupMessage(item: any): Promise<string> {
         if (parsed.subject) subject = parsed.subject;
       }
     } catch {}
-    const greeting = name ? `Olá, ${name}!` : 'Olá!';
+    const greeting = formatGreeting(name);
     return `${greeting} Esperamos que tenha corrido tudo bem com a sua consultoria na ${orgName} (${subject}). 😊\n\nGostaríamos muito de saber: como foi o atendimento? A sua avaliação e feedback são muito importantes para nós! ⭐`;
   }
 

@@ -2,15 +2,26 @@ import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/src/components/ui/card";
 import { Button } from "@/src/components/ui/button";
-import { Plus, MessageSquare, CheckCircle2, XCircle, Clock, Loader2, Globe, Tag, RefreshCw } from "lucide-react";
+import { Plus, MessageSquare, CheckCircle2, XCircle, Clock, Loader2, Globe, RefreshCw, Trash2, MousePointer2, Link2, Phone } from "lucide-react";
 import { Input } from "@/src/components/ui/input";
 import { Label } from "@/src/components/ui/label";
+import { ButtonPresetsPicker } from "@/src/components/ui/button-presets";
+import type { ButtonType, PresetButton } from "@/src/components/ui/button-presets";
+
+interface TemplateButton {
+  id: string;
+  type: ButtonType;
+  text: string;
+  url?: string;
+  phone_number?: string;
+}
 
 export default function Templates() {
   const [templates, setTemplates] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
 
   const [newTemplate, setNewTemplate] = useState({
     name: "",
@@ -19,7 +30,7 @@ export default function Templates() {
     content: ""
   });
 
-  const [isSyncing, setIsSyncing] = useState(false);
+  const [buttons, setButtons] = useState<TemplateButton[]>([]);
 
   const fetchTemplates = async () => {
     try {
@@ -42,6 +53,11 @@ export default function Templates() {
       toast.error("Preencha todos os campos obrigatórios.");
       return;
     }
+    for (const btn of buttons) {
+      if (!btn.text.trim()) { toast.error("Todos os botões precisam de um texto."); return; }
+      if (btn.type === "URL" && !btn.url?.trim()) { toast.error("Botões de URL precisam de um link válido."); return; }
+      if (btn.type === "PHONE_NUMBER" && !btn.phone_number?.trim()) { toast.error("Botões de telefone precisam de um número válido."); return; }
+    }
 
     setIsSubmitting(true);
     try {
@@ -51,22 +67,48 @@ export default function Templates() {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${localStorage.getItem("token")}`
         },
-        body: JSON.stringify(newTemplate)
+        body: JSON.stringify({ ...newTemplate, buttons })
       });
 
-      if (!response.ok) throw new Error("Erro ao criar template");
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.error || "Erro ao criar template");
+      }
 
       const created = await response.json();
       setTemplates([...templates, created]);
-
-      toast.success("Template enviado para aprovação!");
-      setIsModalOpen(false);
-      setNewTemplate({ name: "", category: "MARKETING", language: "pt_BR", content: "" });
+      toast.success("Template criado com sucesso!");
+      resetModal();
     } catch (error: any) {
       toast.error(error.message);
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const resetModal = () => {
+    setIsModalOpen(false);
+    setNewTemplate({ name: "", category: "MARKETING", language: "pt_BR", content: "" });
+    setButtons([]);
+  };
+
+  const addButton = () => {
+    if (buttons.length >= 3) { toast.error("Máximo de 3 botões por template (limite da Meta)."); return; }
+    setButtons(prev => [...prev, { id: `btn_${Date.now()}`, type: "QUICK_REPLY", text: "" }]);
+  };
+
+  const applyPreset = (presetButtons: Omit<PresetButton, "id">[]) => {
+    if (presetButtons.length > 3) { toast.error("Este modelo excede o limite de 3 botões da Meta."); return; }
+    setButtons(presetButtons.map((b, i) => ({ ...b, id: `btn_preset_${i}_${Date.now()}` })));
+    toast.success("Modelo de botões aplicado!");
+  };
+
+  const updateButton = (idx: number, field: keyof TemplateButton, value: string) => {
+    setButtons(prev => prev.map((b, i) => i === idx ? { ...b, [field]: value } : b));
+  };
+
+  const removeButton = (idx: number) => {
+    setButtons(prev => prev.filter((_, i) => i !== idx));
   };
 
   const handleSync = async (silent = false) => {
@@ -81,7 +123,6 @@ export default function Templates() {
       if (!silent) toast.success(data.message);
       fetchTemplates();
     } catch (error: any) {
-      // Silencioso na sincronização automática (pode não ter WhatsApp configurado)
       if (!silent) toast.error(error.message);
     } finally {
       setIsSyncing(false);
@@ -89,10 +130,15 @@ export default function Templates() {
   };
 
   useEffect(() => {
-    // Carrega templates e sincroniza automaticamente com a Meta ao abrir a página
     fetchTemplates();
     handleSync(true);
   }, []);
+
+  const buttonTypeIcons: Record<ButtonType, React.ReactNode> = {
+    QUICK_REPLY: <MousePointer2 className="w-3.5 h-3.5" />,
+    URL: <Link2 className="w-3.5 h-3.5" />,
+    PHONE_NUMBER: <Phone className="w-3.5 h-3.5" />
+  };
 
   if (isLoading) {
     return (
@@ -110,7 +156,7 @@ export default function Templates() {
           <p className="text-zinc-500">Crie e gerencie mensagens proativas aprovadas pela Meta.</p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={handleSync} disabled={isSyncing} className="gap-2">
+          <Button variant="outline" onClick={() => handleSync()} disabled={isSyncing} className="gap-2">
             {isSyncing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
             Sincronizar
           </Button>
@@ -148,6 +194,11 @@ export default function Templates() {
                           <span className="text-[10px] text-zinc-400 flex items-center gap-1">
                             <Globe className="w-3 h-3" /> {template.language}
                           </span>
+                          {template.buttons && template.buttons.length > 0 && (
+                            <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-blue-50 text-blue-600 flex items-center gap-1">
+                              <MousePointer2 className="w-3 h-3" /> {template.buttons.length} botão(ões)
+                            </span>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -169,7 +220,17 @@ export default function Templates() {
                   </div>
                   {template.content && (
                     <div className="ml-14 bg-zinc-50 border border-zinc-100 rounded-md px-3 py-2">
-                      <p className="text-xs text-zinc-500 line-clamp-2">{template.content}</p>
+                      <p className="text-xs text-zinc-500 whitespace-pre-wrap line-clamp-2">{template.content}</p>
+                    </div>
+                  )}
+                  {template.buttons && template.buttons.length > 0 && (
+                    <div className="ml-14 flex flex-wrap gap-2">
+                      {template.buttons.map((btn: TemplateButton, i: number) => (
+                        <span key={i} className="inline-flex items-center gap-1 text-xs px-3 py-1 rounded-full border border-zinc-200 bg-white text-zinc-600 font-medium shadow-sm">
+                          {buttonTypeIcons[btn.type] || <MousePointer2 className="w-3.5 h-3.5" />}
+                          {btn.text}
+                        </span>
+                      ))}
                     </div>
                   )}
                 </div>
@@ -182,13 +243,14 @@ export default function Templates() {
       {/* Modal Novo Template */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-zinc-950/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <Card className="w-full max-w-lg shadow-2xl animate-in fade-in zoom-in-95 duration-200">
+          <Card className="w-full max-w-2xl shadow-2xl animate-in fade-in zoom-in-95 duration-200 overflow-y-auto max-h-[92vh]">
             <form onSubmit={handleCreate}>
               <CardHeader>
                 <CardTitle>Criar Novo Template</CardTitle>
-                <CardDescription>O template será enviado para revisão automática da Meta.</CardDescription>
+                <CardDescription>Configure o conteúdo, botões e envie para revisão da Meta.</CardDescription>
               </CardHeader>
-              <CardContent className="space-y-4">
+              <CardContent className="space-y-5">
+                {/* Linha 1: Nome e Categoria */}
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label htmlFor="tName">Identificador (Nome)</Label>
@@ -198,6 +260,7 @@ export default function Templates() {
                       value={newTemplate.name}
                       onChange={(e) => setNewTemplate({ ...newTemplate, name: e.target.value })}
                     />
+                    <p className="text-[10px] text-zinc-400">Apenas letras minúsculas, números e underscore.</p>
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="tCat">Categoria</Label>
@@ -214,25 +277,126 @@ export default function Templates() {
                     </select>
                   </div>
                 </div>
+
+                {/* Conteúdo */}
                 <div className="space-y-2">
-                  <Label htmlFor="tContent">Conteúdo da Mensagem</Label>
+                  <Label htmlFor="tContent">Conteúdo da Mensagem (Corpo)</Label>
                   <textarea
                     id="tContent"
                     rows={4}
                     className="flex w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500"
-                    placeholder="Olá {{1}}, obrigado pelo contato!..."
+                    placeholder={"Olá {{1}}, obrigado pelo contato! Precisa de ajuda?"}
                     value={newTemplate.content}
                     onChange={(e) => setNewTemplate({ ...newTemplate, content: e.target.value })}
                   />
                   <p className="text-[10px] text-zinc-500 italic">Use {"{{1}}"}, {"{{2}}"} para variáveis que serão preenchidas no envio.</p>
                 </div>
+
+                {/* Botões */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label>Botões Interativos</Label>
+                      <p className="text-[10px] text-zinc-400 mt-0.5">Máximo de 3 botões (limite da Meta). Tipos: Resposta rápida, URL ou Telefone.</p>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={addButton}
+                      disabled={buttons.length >= 3}
+                      className="gap-1.5 text-xs"
+                    >
+                      <Plus className="w-3.5 h-3.5" /> Adicionar Botão
+                    </Button>
+                  </div>
+
+                  {/* Modelos Rápidos */}
+                  <ButtonPresetsPicker currentCount={buttons.length} onSelect={applyPreset} />
+
+                  {buttons.length > 0 && (
+                    <div className="pt-1 space-y-1">
+                      <p className="text-[10px] font-semibold text-zinc-400 uppercase tracking-widest">Botões Configurados</p>
+                    </div>
+                  )}
+
+                  {buttons.length === 0 && (
+                    <div className="border-2 border-dashed border-zinc-200 rounded-lg py-3 text-center text-zinc-400 text-xs">
+                      Selecione um modelo acima ou clique em "Adicionar Botão" para criar manualmente.
+                    </div>
+                  )}
+
+                  <div className="space-y-3">
+                    {buttons.map((btn, idx) => (
+                      <div key={btn.id} className="border border-zinc-200 rounded-lg p-3 space-y-3 bg-zinc-50">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-semibold text-zinc-600">Botão {idx + 1}</span>
+                          <button
+                            type="button"
+                            onClick={() => removeButton(idx)}
+                            className="text-red-400 hover:text-red-600 transition-colors"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="space-y-1.5">
+                            <Label className="text-xs">Tipo de Botão</Label>
+                            <select
+                              title="Tipo de botão"
+                              className="flex h-9 w-full rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs focus:ring-2 focus:ring-emerald-500"
+                              value={btn.type}
+                              onChange={(e) => updateButton(idx, "type", e.target.value as ButtonType)}
+                            >
+                              <option value="QUICK_REPLY">💬 Resposta Rápida</option>
+                              <option value="URL">🔗 Abrir URL</option>
+                              <option value="PHONE_NUMBER">📞 Ligar</option>
+                            </select>
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label className="text-xs">Texto do Botão <span className="text-zinc-400">(máx. 25 chars)</span></Label>
+                            <Input
+                              className="h-9 text-xs"
+                              placeholder="ex: Sim, quero saber mais"
+                              maxLength={25}
+                              value={btn.text}
+                              onChange={(e) => updateButton(idx, "text", e.target.value)}
+                            />
+                          </div>
+                        </div>
+                        {btn.type === "URL" && (
+                          <div className="space-y-1.5">
+                            <Label className="text-xs">URL de Destino</Label>
+                            <Input
+                              className="h-9 text-xs"
+                              placeholder="https://seusite.com/pagina"
+                              value={btn.url || ""}
+                              onChange={(e) => updateButton(idx, "url", e.target.value)}
+                            />
+                          </div>
+                        )}
+                        {btn.type === "PHONE_NUMBER" && (
+                          <div className="space-y-1.5">
+                            <Label className="text-xs">Número de Telefone</Label>
+                            <Input
+                              className="h-9 text-xs"
+                              placeholder="+5511999999999"
+                              value={btn.phone_number || ""}
+                              onChange={(e) => updateButton(idx, "phone_number", e.target.value)}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </CardContent>
               <CardFooter className="bg-zinc-50 border-t border-zinc-100 py-4 flex justify-end gap-2 rounded-b-xl">
-                <Button type="button" variant="outline" onClick={() => setIsModalOpen(false)} disabled={isSubmitting}>
+                <Button type="button" variant="outline" onClick={resetModal} disabled={isSubmitting}>
                   Cancelar
                 </Button>
-                <Button type="submit" disabled={isSubmitting} className="min-w-[140px] bg-emerald-600">
-                  {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Enviar p/ Meta'}
+                <Button type="submit" disabled={isSubmitting} className="min-w-[160px] bg-emerald-600">
+                  {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Enviar para Meta'}
                 </Button>
               </CardFooter>
             </form>

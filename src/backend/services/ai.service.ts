@@ -2,6 +2,7 @@ import axios from 'axios';
 import { supabaseAdmin } from '../config/supabase';
 import { DocumentService } from './document.service';
 import { AudioService } from './audio.service';
+import { cleanGreetingName } from './followup.service';
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Tipos
@@ -459,12 +460,11 @@ INSTRUÇÕES CRÍTICAS PARA ATENDIMENTO DE LEADS DE ANÚNCIOS:
 
   // Secção de memória permanente do cliente e contexto
   let customerMemorySection = '';
-  const firstName = customerProfile?.name ? customerProfile.name.trim().split(/\s+/)[0] : '';
-  const fullName = customerProfile?.name ? customerProfile.name.trim() : '';
+  const firstName = cleanGreetingName(customerProfile?.name);
 
   const memoryLines: string[] = [];
-  if (fullName) {
-    memoryLines.push(`- Nome Completo do Cliente: "${fullName}" (Primeiro Nome: "${firstName}")`);
+  if (firstName) {
+    memoryLines.push(`- Primeiro Nome do Cliente: "${firstName}"`);
     memoryLines.push(`- ⚠️ REGRA ABSOLUTA E INEGOCIÁVEL SOBRE O NOME DO CLIENTE: O nome do cliente NUNCA DEVE ser esquecido. Chame o cliente pelo seu primeiro nome ("${firstName}") de forma calorosa. NUNCA pergunte "Qual é o seu nome?", "Como se chama?" ou peça identificação, pois você JÁ SABE o nome dele.`);
   }
   if (customerProfile?.email) {

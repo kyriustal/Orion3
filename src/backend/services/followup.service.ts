@@ -24,14 +24,40 @@ export interface FollowupContext {
   orgName?: string;
 }
 
+/** Limpa o nome de bandeiras/emojis e extrai apenas o primeiro nome com caracteres alfabéticos válidos */
+export function cleanGreetingName(name?: string): string {
+  if (!name) return '';
+  // Remover bandeiras de países (unicode regional indicator symbols)
+  let cleaned = name.replace(/[\uD83C][\uDDE6-\uDDFF]/g, '');
+  // Remover a maioria dos emojis e símbolos unicode
+  cleaned = cleaned.replace(/[\u{1F300}-\u{1F9FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]/gu, '');
+  // Manter apenas letras unicode, espaços e hífens
+  cleaned = cleaned.replace(/[^\p{L}\s-]/gu, '').trim();
+
+  if (!cleaned) return '';
+  const parts = cleaned.split(/\s+/).filter(p => /\p{L}/u.test(p));
+  if (parts.length === 0) return '';
+
+  if (parts.length > 1 && /^(dr|dra|sr|sra|mr|mrs|ms)\.?$/i.test(parts[0])) {
+    return parts[1];
+  }
+  return parts[0];
+}
+
+/** Formata a saudação limpando caracteres inválidos (como emojis/bandeiras isolados) */
+export function formatGreeting(name?: string): string {
+  const clean = cleanGreetingName(name);
+  return clean ? `Olá, ${clean}!` : 'Olá!';
+}
+
 // ─── Mensagens do protocolo padrão de follow-up (condicionados ao contexto) ───
 export const FOLLOWUP_MESSAGES = {
   /** Step 1 — após 12h sem resposta (condicionado ao cenário e contexto) */
   step1: (name: string, scenario: number = 4, ctx?: FollowupContext): string => {
-    const n = name ? `Olá, ${name}!` : 'Olá!';
-    const s = ctx?.service || 'processo';
+    const n = formatGreeting(name);
+    const s = ctx?.service || 'atendimento';
     switch (scenario) {
-      case 1: // 📄 Cenário 1: Aguardava documentos
+      case 1: // 📄 Cenário 1: Aguardava documentos / fotos / dados
         return `${n} Sei que a rotina é corrida, por isso passo só para saber se conseguiu ver a minha última mensagem sobre os documentos para o seu ${s} ou se prefere que conversemos noutro momento. Abraço!`;
       case 2: // 💰 Cenário 2: Enviou orçamento / valores
         return `${n} Sei que a rotina é corrida, por isso passo só para saber se conseguiu analisar a proposta e os valores do seu ${s} ou se prefere que conversemos noutro momento. Abraço!`;
@@ -44,11 +70,11 @@ export const FOLLOWUP_MESSAGES = {
 
   /** Step 2 — após +24h, contextualizado por cenário */
   step2: (name: string, scenario: number = 4, ctx?: FollowupContext): string => {
-    const n = name ? `Olá, ${name}!` : 'Olá!';
-    const s = ctx?.service || 'processo';
+    const n = formatGreeting(name);
+    const s = ctx?.service || 'atendimento';
     switch (scenario) {
       case 1: // 📄 Cenário 1: Aguardava documentos, fotos ou informações do cliente
-        return `${n} Passando para saber se conseguiu verificar os seus documentos ou as informações do seu perfil para darmos seguimento à análise do seu ${s}. Fico à sua disposição!`;
+        return `${n} Passando para saber se conseguiu verificar os seus documentos ou as informações necessárias para darmos seguimento ao seu ${s}. Fico à sua disposição!`;
       case 2: // 💰 Cenário 2: Enviou orçamento / valores / modalidade pós-paga
         return `${n} Tudo bem? Queria saber se conseguiu analisar os valores e as condições da nossa assessoria para o seu ${s} (incluindo as opções de pagamento). Ficou com alguma dúvida sobre o investimento?`;
       case 3: // 📅 Cenário 3: Faltava agendar consultoria
@@ -60,27 +86,27 @@ export const FOLLOWUP_MESSAGES = {
 
   /** Step 3 — após +48h (condicionado ao cenário e contexto) */
   step3: (name: string, scenario: number = 4, ctx?: FollowupContext): string => {
-    const n = name ? `Olá, ${name}!` : 'Olá!';
-    const s = ctx?.service || 'processo';
+    const n = formatGreeting(name);
+    const s = ctx?.service || 'atendimento';
     switch (scenario) {
       case 1: // 📄 Documentos
-        return `${n} Não gostaria que perdesse os prazos da análise documental do seu ${s}. Caso precise de ajuda para reunir os papéis ou queira agendar um atendimento no escritório, avise-me por aqui!`;
+        return `${n} Não gostaria que ficasse com dúvidas sobre a documentação para o seu ${s}. Caso precise de ajuda para reunir os papéis ou queira agendar um atendimento no escritório, avise-me por aqui!`;
       case 2: // 💰 Orçamento
         return `${n} Não gostaria que perdesse as condições e opções de investimento vigentes para o seu ${s}. Caso queira tirar dúvidas sobre valores ou opções flexíveis, avise-me por aqui!`;
       case 3: // 📅 Agendamento
         return `${n} Não gostaria que perdesse as vagas de atendimento desta semana para o seu ${s}. Caso queira que eu lhe sugira outros horários no escritório ou online, avise-me por aqui!`;
       default: // 🌍 Geral
-        return `${n} Não gostaria que perdesse as oportunidades e prazos atuais para o seu ${s}. Caso queira conversar com um dos nossos consultores ou agendar um atendimento no escritório, avise-me por aqui!`;
+        return `${n} Não gostaria que perdesse as oportunidades e informações atuais para o seu ${s}. Caso queira conversar com um dos nossos consultores ou agendar um atendimento no escritório, avise-me por aqui!`;
     }
   },
 
   /** Step 4 — após +72h (condicionado ao cenário e contexto) */
   step4: (name: string, scenario: number = 4, ctx?: FollowupContext): string => {
-    const n = name ? `Olá, ${name}!` : 'Olá!';
-    const s = ctx?.service || 'processo';
+    const n = formatGreeting(name);
+    const s = ctx?.service || 'atendimento';
     switch (scenario) {
       case 1: // 📄 Documentos
-        return `${n} Tudo bem? Passando para deixar uma nota sobre a documentação do seu ${s}. Se ainda tiver interesse em enviar os dados ou tirar dúvidas, basta responder a esta mensagem!`;
+        return `${n} Tudo bem? Passando para deixar uma nota sobre a documentação do seu ${s}. Se ainda tiver interesse em enviar as informações ou tirar dúvidas, basta responder a esta mensagem!`;
       case 2: // 💰 Orçamento
         return `${n} Tudo bem? Passando para deixar uma nota sobre a proposta para o seu ${s}. Se ainda tiver interesse em avançar ou esclarecer condições de pagamento, basta responder a esta mensagem!`;
       case 3: // 📅 Agendamento
@@ -92,7 +118,7 @@ export const FOLLOWUP_MESSAGES = {
 
   /** Step 5 — encerramento cordial (condicionado ao cenário e empresa) */
   step5: (name: string, scenario: number = 4, ctx?: FollowupContext): string => {
-    const n = name ? `Olá, ${name}!` : 'Olá!';
+    const n = formatGreeting(name);
     const company = ctx?.orgName || 'nossa assessoria';
     switch (scenario) {
       case 1:
@@ -194,13 +220,12 @@ export function fillPlaceholders(
 ): string {
   let result = template;
 
-  const rawName = (data.clientName || '').trim();
-  const firstName = rawName ? rawName.split(/\s+/)[0] : '';
+  const firstName = cleanGreetingName(data.clientName);
 
   if (firstName) {
     result = result.replace(/\[Nome\]/g, firstName);
   } else {
-    // Tratar saudações com elegância se o nome não for conhecido
+    // Tratar saudações com elegância se o nome não for conhecido ou for emoji/inválido
     result = result.replace(/(?:Olá|Oi|Bom dia),\s*\[Nome\]([!\.])/g, (_match, punc) => {
       if (_match.startsWith('Bom dia')) return `Bom dia${punc}`;
       if (_match.startsWith('Oi')) return `Oi${punc}`;
@@ -219,7 +244,7 @@ export function fillPlaceholders(
   const service = data.service?.trim() || productOrService;
   result = result.replace(/\[Serviço\]/g, service);
 
-  const benefit = data.benefit?.trim() || 'o seu processo';
+  const benefit = data.benefit?.trim() || 'o seu atendimento';
   result = result.replace(/\[Benefício\]/g, benefit);
 
   return result.replace(/\s{2,}/g, ' ').trim();
@@ -509,13 +534,13 @@ export function inferServiceAndBenefit(
 ): { service: string; product: string; benefit: string } {
   const allText = history.map(h => h.text).join(' ').toLowerCase();
 
-  let service = 'processo de visto';
-  let product = 'processo de visto';
-  let benefit = 'o seu visto';
+  let service = 'atendimento';
+  let product = 'nosso serviço';
+  let benefit = 'o seu atendimento';
 
   if (/(visto|passaporte|nacionalidade|cidadania|consulado|embaixada|turismo|estudo)/i.test(allText)) {
-    service = 'processo de visto';
-    product = 'processo de visto';
+    service = 'pedido de visto';
+    product = 'assessoria de visto';
     benefit = 'o seu visto';
   } else if (/(consultoria|assessoria|consulta)/i.test(allText)) {
     service = 'assessoria especializada';
@@ -532,15 +557,15 @@ export function inferServiceAndBenefit(
   } else if (org?.social_object || org?.product_description) {
     const desc = (org.social_object || org.product_description || '').toLowerCase();
     if (desc.includes('visto')) {
-      service = 'processo de visto';
-      product = 'processo de visto';
+      service = 'pedido de visto';
+      product = 'assessoria de visto';
       benefit = 'o seu visto';
     } else if (desc.includes('consult')) {
       service = 'consultoria';
       product = 'serviço de consultoria';
       benefit = 'a sua consultoria';
     } else {
-      service = org.social_object || 'serviço';
+      service = org.social_object || 'atendimento';
       product = org.product_description?.substring(0, 30) || 'nosso serviço';
     }
   }

@@ -232,6 +232,155 @@ export class WhatsAppService {
     }
 
     /**
+     * Submete um novo template com suporte a botões para a Meta WABA
+     */
+    static async createMetaTemplate(
+        wabaId: string,
+        accessToken: string,
+        template: {
+            name: string;
+            category: string;
+            language: string;
+            content: string;
+            buttons?: { id?: string; type: string; text: string; url?: string; phone_number?: string }[];
+        }
+    ) {
+        try {
+            const components: any[] = [
+                {
+                    type: "BODY",
+                    text: template.content
+                }
+            ];
+
+            if (template.buttons && template.buttons.length > 0) {
+                const formattedButtons = template.buttons.slice(0, 3).map(b => {
+                    const type = (b.type || 'QUICK_REPLY').toUpperCase();
+                    if (type === 'URL') {
+                        return {
+                            type: 'URL',
+                            text: (b.text || 'Acessar Link').substring(0, 25),
+                            url: b.url || 'https://example.com'
+                        };
+                    }
+                    if (type === 'PHONE_NUMBER' || type === 'PHONE') {
+                        return {
+                            type: 'PHONE_NUMBER',
+                            text: (b.text || 'Ligar').substring(0, 25),
+                            phone_number: b.phone_number || '+5511999999999'
+                        };
+                    }
+                    return {
+                        type: 'QUICK_REPLY',
+                        text: (b.text || 'Confirmar').substring(0, 25)
+                    };
+                });
+
+                components.push({
+                    type: "BUTTONS",
+                    buttons: formattedButtons
+                });
+            }
+
+            const url = `https://graph.facebook.com/v19.0/${wabaId}/message_templates`;
+            const response = await axios.post(url, {
+                name: template.name.toLowerCase().replace(/[^a-z0-9_]/g, '_'),
+                category: template.category || 'MARKETING',
+                language: template.language || 'pt_BR',
+                components
+            }, {
+                headers: {
+                    'Authorization': `Bearer ${accessToken}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            return response.data;
+        } catch (error: any) {
+            console.error('[WHATSAPP] Erro ao criar template na Meta:', error.response?.data || error.message);
+            throw error;
+        }
+    }
+
+    /**
+     * Envia uma mensagem baseada em template oficial da Meta ou fallback interativo com botões
+     */
+    static async sendTemplateMessage(
+        phoneNumberId: string,
+        to: string,
+        templateName: string,
+        languageCode: string = 'pt_BR',
+        variables: Record<string, string> = {},
+        buttons: { id?: string; type?: string; text: string; title?: string }[] = [],
+        accessToken?: string,
+        contentFallback?: string
+    ): Promise<string | null> {
+        const token = accessToken || process.env.META_ACCESS_TOKEN;
+        if (!token) {
+            console.error('WhatsApp Access Token não configurado.');
+            return null;
+        }
+
+        try {
+            const url = `https://graph.facebook.com/v19.0/${phoneNumberId}/messages`;
+
+            const bodyParams = Object.keys(variables)
+                .sort((a, b) => parseInt(a) - parseInt(b))
+                .map(key => ({
+                    type: "text",
+                    text: variables[key] || ""
+                }));
+
+            const components: any[] = [];
+            if (bodyParams.length > 0) {
+                components.push({
+                    type: "body",
+                    parameters: bodyParams
+                });
+            }
+
+            const response = await axios.post(url, {
+                messaging_product: "whatsapp",
+                recipient_type: "individual",
+                to,
+                type: "template",
+                template: {
+                    name: templateName,
+                    language: { code: languageCode },
+                    ...(components.length > 0 ? { components } : {})
+                }
+            }, {
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            console.log(`[WHATSAPP] Template ${templateName} enviado para ${to}`);
+            return response.data?.messages?.[0]?.id || null;
+        } catch (error: any) {
+            console.warn(`[WHATSAPP] Falha no disparo do template oficial (${templateName}):`, error.response?.data || error.message);
+            if (contentFallback) {
+                let filledText = contentFallback;
+                Object.keys(variables).forEach(k => {
+                    filledText = filledText.replace(new RegExp(`\\{\\{${k}\\}\\}`, 'g'), variables[k] || '');
+                });
+
+                if (buttons && buttons.length > 0) {
+                    const formattedBtns = buttons.map((b, idx) => ({
+                        id: b.id || `btn_${idx + 1}`,
+                        title: b.text || b.title || `Opção ${idx + 1}`
+                    }));
+                    return this.sendInteractiveButtons(phoneNumberId, to, filledText, formattedBtns, token);
+                } else {
+                    return this.sendTextMessage(phoneNumberId, to, filledText, token);
+                }
+            }
+            return null;
+        }
+    }
+
+    /**
      * Envia uma mensagem interativa com botões de resposta rápida (máximo 3 botões)
      */
     static async sendInteractiveButtons(
@@ -279,7 +428,6 @@ export class WhatsAppService {
             return response.data?.messages?.[0]?.id || null;
         } catch (error: any) {
             console.error('[WHATSAPP] Erro ao enviar mensagem interativa:', error.response?.data || error.message);
-            // Fallback: enviar como texto simples sem botões
             console.log('[WHATSAPP] Tentando fallback como texto simples...');
             return this.sendTextMessage(phoneNumberId, to, bodyText, token);
         }

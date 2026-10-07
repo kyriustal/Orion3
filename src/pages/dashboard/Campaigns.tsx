@@ -2,9 +2,19 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter }
 import { Button } from "@/src/components/ui/button";
 import { Input } from "@/src/components/ui/input";
 import { Label } from "@/src/components/ui/label";
-import { Megaphone, Plus, PlayCircle, PauseCircle, Settings2, Loader2 } from "lucide-react";
+import { Megaphone, Plus, PlayCircle, PauseCircle, Settings2, Loader2, MousePointer2, Link2, Phone, Trash2, ChevronDown, ChevronUp } from "lucide-react";
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
+import { ButtonPresetsPicker } from "@/src/components/ui/button-presets";
+import type { ButtonType, PresetButton } from "@/src/components/ui/button-presets";
+
+interface CampaignButton {
+  id: string;
+  type: ButtonType;
+  text: string;
+  url?: string;
+  phone_number?: string;
+}
 
 export default function Campaigns() {
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -13,6 +23,9 @@ export default function Campaigns() {
   const [approvedTemplates, setApprovedTemplates] = useState<any[]>([]);
   const [selectedTemplate, setSelectedTemplate] = useState<any>(null);
   const [templateVars, setTemplateVars] = useState<Record<string, string>>({});
+  const [buttons, setButtons] = useState<CampaignButton[]>([]);
+  const [useTemplateButtons, setUseTemplateButtons] = useState(true);
+  const [showButtonConfig, setShowButtonConfig] = useState(false);
 
   const [newCampaign, setNewCampaign] = useState({
     name: "",
@@ -70,18 +83,48 @@ export default function Campaigns() {
     const tmpl = approvedTemplates.find(t => t.name === templateName);
     setSelectedTemplate(tmpl || null);
     setTemplateVars({});
+    setButtons([]);
+    setUseTemplateButtons(true);
     setNewCampaign(prev => ({ ...prev, template: templateName }));
+  };
+
+  const addButton = () => {
+    if (buttons.length >= 3) { toast.error("Máximo de 3 botões (limite da Meta)."); return; }
+    setButtons(prev => [...prev, { id: `btn_${Date.now()}`, type: "QUICK_REPLY", text: "" }]);
+  };
+
+  const applyPreset = (presetButtons: Omit<PresetButton, "id">[]) => {
+    if (presetButtons.length > 3) { toast.error("Este modelo excede o limite de 3 botões da Meta."); return; }
+    setUseTemplateButtons(false);
+    setButtons(presetButtons.map((b, i) => ({ ...b, id: `btn_p_${i}_${Date.now()}` })));
+    toast.success("Modelo de botões aplicado!");
+  };
+
+  const updateButton = (idx: number, field: keyof CampaignButton, value: string) => {
+    setButtons(prev => prev.map((b, i) => i === idx ? { ...b, [field]: value } : b));
+  };
+
+  const removeButton = (idx: number) => {
+    setButtons(prev => prev.filter((_, i) => i !== idx));
+  };
+
+  const getEffectiveButtons = (): CampaignButton[] => {
+    if (useTemplateButtons && selectedTemplate?.buttons?.length > 0) {
+      return selectedTemplate.buttons;
+    }
+    return buttons;
   };
 
   const handleStartCampaign = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newCampaign.name) {
-      toast.error("Dê um nome à campanha.");
-      return;
-    }
-    if (!newCampaign.template) {
-      toast.error("Selecione um template aprovado.");
-      return;
+    if (!newCampaign.name) { toast.error("Dê um nome à campanha."); return; }
+    if (!newCampaign.template) { toast.error("Selecione um template aprovado."); return; }
+
+    const effectiveButtons = getEffectiveButtons();
+    for (const btn of effectiveButtons) {
+      if (!btn.text.trim()) { toast.error("Todos os botões precisam de texto."); return; }
+      if (btn.type === "URL" && !btn.url?.trim()) { toast.error("Botões de URL precisam de um link."); return; }
+      if (btn.type === "PHONE_NUMBER" && !btn.phone_number?.trim()) { toast.error("Botões de telefone precisam de um número."); return; }
     }
 
     setIsSubmitting(true);
@@ -94,7 +137,8 @@ export default function Campaigns() {
         },
         body: JSON.stringify({
           ...newCampaign,
-          template_variables: templateVars
+          template_variables: templateVars,
+          buttons: effectiveButtons
         })
       });
 
@@ -121,6 +165,7 @@ export default function Campaigns() {
       setIsModalOpen(false);
       setNewCampaign({ name: "", template: approvedTemplates[0]?.name || "", audience: "all", filters: "", delay_seconds: 5 });
       setTemplateVars({});
+      setButtons([]);
     } catch (error: any) {
       toast.error(error.message || "Erro ao iniciar a campanha.");
     } finally {
@@ -210,7 +255,7 @@ export default function Campaigns() {
       {/* Modal de Nova Campanha */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-zinc-950/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <Card className="w-full max-w-lg shadow-2xl animate-in fade-in zoom-in-95 duration-200 overflow-y-auto max-h-[90vh]">
+          <Card className="w-full max-w-2xl shadow-2xl animate-in fade-in zoom-in-95 duration-200 overflow-y-auto max-h-[92vh]">
             <form onSubmit={handleStartCampaign}>
               <CardHeader>
                 <CardTitle>Criar Nova Campanha</CardTitle>
@@ -273,6 +318,141 @@ export default function Campaigns() {
                     })}
                   </div>
                 )}
+
+                {/* Seção de Botões */}
+                <div className="space-y-3 border border-zinc-200 rounded-lg p-4 bg-zinc-50">
+                  <button
+                    type="button"
+                    className="w-full flex items-center justify-between text-sm font-semibold text-zinc-700"
+                    onClick={() => setShowButtonConfig(v => !v)}
+                  >
+                    <span className="flex items-center gap-2">
+                      <MousePointer2 className="w-4 h-4 text-zinc-500" />
+                      Configurar Botões Interativos
+                      {getEffectiveButtons().length > 0 && (
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">
+                          {getEffectiveButtons().length} configurado(s)
+                        </span>
+                      )}
+                    </span>
+                    {showButtonConfig ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                  </button>
+
+                  {showButtonConfig && (
+                    <div className="space-y-3 pt-1">
+                      {/* Se o template já tiver botões, exibe opção de reutilizá-los */}
+                      {selectedTemplate?.buttons?.length > 0 && (
+                        <div className="flex items-start gap-3 p-3 rounded-md bg-white border border-zinc-200">
+                          <input
+                            id="useTemplateButtons"
+                            type="checkbox"
+                            checked={useTemplateButtons}
+                            onChange={e => {
+                              setUseTemplateButtons(e.target.checked);
+                              if (e.target.checked) setButtons([]);
+                            }}
+                            className="mt-0.5 accent-emerald-600"
+                          />
+                          <div>
+                            <Label htmlFor="useTemplateButtons" className="cursor-pointer">
+                              Usar botões do template selecionado
+                            </Label>
+                            <div className="flex flex-wrap gap-1.5 mt-1.5">
+                              {selectedTemplate.buttons.map((btn: CampaignButton, i: number) => (
+                                <span key={i} className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-zinc-100 text-zinc-600">
+                                  {btn.type === 'URL' ? <Link2 className="w-3 h-3" /> : btn.type === 'PHONE_NUMBER' ? <Phone className="w-3 h-3" /> : <MousePointer2 className="w-3 h-3" />}
+                                  {btn.text}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Configuração de botões customizados */}
+                      {(!useTemplateButtons || !selectedTemplate?.buttons?.length) && (
+                        <>
+                          <div className="flex items-center justify-between">
+                            <p className="text-xs text-zinc-500">Configure botões para esta campanha (máx. 3).</p>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={addButton}
+                              disabled={buttons.length >= 3}
+                              className="gap-1 text-xs"
+                            >
+                              <Plus className="w-3.5 h-3.5" /> Botão
+                            </Button>
+                          </div>
+
+                          {/* Modelos Rápidos */}
+                          <ButtonPresetsPicker currentCount={buttons.length} onSelect={applyPreset} />
+
+                          {buttons.length > 0 && (
+                            <p className="text-[10px] font-semibold text-zinc-400 uppercase tracking-widest pt-1">Botões Configurados</p>
+                          )}
+
+                          {buttons.length === 0 && (
+                            <div className="border-2 border-dashed border-zinc-200 rounded-lg py-3 text-center text-zinc-400 text-xs">
+                              Selecione um modelo acima ou clique em "Botão" para criar manualmente.
+                            </div>
+                          )}
+
+                          <div className="space-y-3">
+                            {buttons.map((btn, idx) => (
+                              <div key={btn.id} className="border border-zinc-200 rounded-lg p-3 space-y-2 bg-white">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-xs font-semibold text-zinc-600">Botão {idx + 1}</span>
+                                  <button type="button" onClick={() => removeButton(idx)} className="text-red-400 hover:text-red-600">
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                                <div className="grid grid-cols-2 gap-2">
+                                  <div className="space-y-1">
+                                    <Label className="text-xs">Tipo</Label>
+                                    <select
+                                      title="Tipo de botão"
+                                      className="flex h-8 w-full rounded-md border border-zinc-200 bg-white px-2 text-xs focus:ring-1 focus:ring-emerald-500"
+                                      value={btn.type}
+                                      onChange={e => updateButton(idx, "type", e.target.value as ButtonType)}
+                                    >
+                                      <option value="QUICK_REPLY">💬 Resposta Rápida</option>
+                                      <option value="URL">🔗 Abrir URL</option>
+                                      <option value="PHONE_NUMBER">📞 Ligar</option>
+                                    </select>
+                                  </div>
+                                  <div className="space-y-1">
+                                    <Label className="text-xs">Texto <span className="text-zinc-400">(máx. 25)</span></Label>
+                                    <Input
+                                      className="h-8 text-xs"
+                                      placeholder="Saiba mais"
+                                      maxLength={25}
+                                      value={btn.text}
+                                      onChange={e => updateButton(idx, "text", e.target.value)}
+                                    />
+                                  </div>
+                                </div>
+                                {btn.type === "URL" && (
+                                  <div className="space-y-1">
+                                    <Label className="text-xs">URL</Label>
+                                    <Input className="h-8 text-xs" placeholder="https://exemplo.com" value={btn.url || ""} onChange={e => updateButton(idx, "url", e.target.value)} />
+                                  </div>
+                                )}
+                                {btn.type === "PHONE_NUMBER" && (
+                                  <div className="space-y-1">
+                                    <Label className="text-xs">Telefone</Label>
+                                    <Input className="h-8 text-xs" placeholder="+5511999999999" value={btn.phone_number || ""} onChange={e => updateButton(idx, "phone_number", e.target.value)} />
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
 
                 <div className="space-y-2">
                   <Label htmlFor="audience">Público Alvo (Tipos de Contatos)</Label>
