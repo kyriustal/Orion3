@@ -127,6 +127,20 @@ async function processCampaign(campaignId: string, orgId: string) {
       if (sentId) sentCount++;
       else failedCount++;
 
+      // Gravar log individual por número de telefone para o relatório
+      try {
+        await supabaseAdmin.from('campaign_logs').insert({
+          campaign_id: campaignId,
+          org_id: orgId,
+          customer_phone: contact.phone,
+          customer_name: contact.name || null,
+          status: sentId ? 'sent' : 'failed',
+          message_id: sentId || null
+        });
+      } catch (logErr: any) {
+        console.warn('[CAMPAIGN LOGS] Erro ao gravar log individual:', logErr.message);
+      }
+
       const progress = Math.round(((i + 1) / targetContacts.length) * 100);
       await supabaseAdmin.from('campaigns').update({
         progress,
@@ -197,6 +211,63 @@ router.post('/send', requireAuth, async (req: any, res) => {
   }
 });
 
+// Obter relatório detalhado da campanha (inclui números que receberam o disparo)
+router.get('/:id/report', requireAuth, async (req: any, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const { id } = req.params;
+
+    const { data: campaign, error: campErr } = await supabaseAdmin
+      .from('campaigns')
+      .select('*')
+      .eq('id', id)
+      .eq('org_id', orgId)
+      .single();
+
+    if (campErr || !campaign) {
+      return res.status(404).json({ error: 'Campanha não encontrada.' });
+    }
+
+    const { data: logs } = await supabaseAdmin
+      .from('campaign_logs')
+      .select('*')
+      .eq('campaign_id', id)
+      .order('created_at', { ascending: false });
+
+    res.json({
+      campaign: {
+        id: campaign.id,
+        name: campaign.name,
+        template: campaign.template,
+        buttons: campaign.buttons || [],
+        status: campaign.status,
+        progress: campaign.progress || 0,
+        sentCount: campaign.sent_count || 0,
+        failedCount: campaign.failed_count || 0,
+        totalContacts: campaign.total_contacts || 0,
+        audience: campaign.audience || 'all',
+        date: new Date(campaign.created_at).toLocaleDateString('pt-BR', {
+          day: '2-digit', month: '2-digit', year: 'numeric',
+          hour: '2-digit', minute: '2-digit'
+        })
+      },
+      logs: (logs || []).map((l: any) => ({
+        id: l.id,
+        phone: l.customer_phone,
+        name: l.customer_name || 'Sem nome',
+        status: l.status,
+        messageId: l.message_id,
+        sentAt: new Date(l.created_at).toLocaleDateString('pt-BR', {
+          day: '2-digit', month: '2-digit', year: 'numeric',
+          hour: '2-digit', minute: '2-digit'
+        })
+      }))
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Listar histórico de campanhas
 router.get('/', requireAuth, async (req: any, res) => {
   try {
@@ -217,6 +288,7 @@ router.get('/', requireAuth, async (req: any, res) => {
       status: c.status,
       progress: c.progress || 0,
       sentCount: c.sent_count || 0,
+      failedCount: c.failed_count || 0,
       totalContacts: c.total_contacts || 0,
       date: new Date(c.created_at).toLocaleDateString('pt-BR', {
         day: '2-digit', month: '2-digit', year: 'numeric',

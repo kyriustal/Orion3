@@ -2,7 +2,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter }
 import { Button } from "@/src/components/ui/button";
 import { Input } from "@/src/components/ui/input";
 import { Label } from "@/src/components/ui/label";
-import { Megaphone, Plus, PlayCircle, PauseCircle, Settings2, Loader2, MousePointer2, Link2, Phone, Trash2, ChevronDown, ChevronUp } from "lucide-react";
+import { Megaphone, Plus, PlayCircle, PauseCircle, Settings2, Loader2, MousePointer2, Link2, Phone, Trash2, ChevronDown, ChevronUp, FileText, CheckCircle2, XCircle, Search, Users } from "lucide-react";
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { ButtonPresetsPicker } from "@/src/components/ui/button-presets";
@@ -27,6 +27,12 @@ export default function Campaigns() {
   const [useTemplateButtons, setUseTemplateButtons] = useState(true);
   const [showButtonConfig, setShowButtonConfig] = useState(false);
 
+  // Estados do Relatório Detalhado da Campanha
+  const [isReportOpen, setIsReportOpen] = useState(false);
+  const [isReportLoading, setIsReportLoading] = useState(false);
+  const [selectedReport, setSelectedReport] = useState<{ campaign: any; logs: any[] } | null>(null);
+  const [reportSearch, setReportSearch] = useState("");
+
   const [newCampaign, setNewCampaign] = useState({
     name: "",
     template: "",
@@ -34,6 +40,24 @@ export default function Campaigns() {
     filters: "",
     delay_seconds: 5
   });
+
+  const handleOpenReport = async (campaignId: string) => {
+    setIsReportOpen(true);
+    setIsReportLoading(true);
+    setReportSearch("");
+    try {
+      const res = await fetch(`/api/campaigns/${campaignId}/report`, {
+        headers: { "Authorization": `Bearer ${localStorage.getItem("token")}` }
+      });
+      if (!res.ok) throw new Error("Erro ao carregar relatório");
+      const data = await res.json();
+      setSelectedReport(data);
+    } catch (err: any) {
+      toast.error(err.message || "Não foi possível carregar o relatório.");
+    } finally {
+      setIsReportLoading(false);
+    }
+  };
 
   useEffect(() => {
     fetchCampaigns();
@@ -242,7 +266,14 @@ export default function Campaigns() {
                       ) : camp.status === 'SCHEDULED' ? (
                         <Button variant="outline" size="icon" title="Iniciar"><PlayCircle className="w-4 h-4 text-emerald-600" /></Button>
                       ) : null}
-                      <Button variant="outline" size="icon" title="Relatório"><Settings2 className="w-4 h-4 text-zinc-600" /></Button>
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        title="Ver Relatório Detalhado"
+                        onClick={() => handleOpenReport(camp.id)}
+                      >
+                        <FileText className="w-4 h-4 text-zinc-600" />
+                      </Button>
                     </div>
                   </div>
                 </div>
@@ -509,6 +540,131 @@ export default function Campaigns() {
                 </Button>
               </CardFooter>
             </form>
+          </Card>
+        </div>
+      )}
+
+      {/* Modal de Relatório Detalhado */}
+      {isReportOpen && (
+        <div className="fixed inset-0 bg-zinc-950/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <Card className="w-full max-w-4xl shadow-2xl animate-in fade-in zoom-in-95 duration-200 overflow-y-auto max-h-[92vh]">
+            <CardHeader className="border-b border-zinc-100 pb-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="text-xl font-bold flex items-center gap-2 text-zinc-900">
+                    <FileText className="w-5 h-5 text-emerald-600" />
+                    Relatório Detalhado da Campanha
+                  </CardTitle>
+                  {selectedReport?.campaign && (
+                    <CardDescription className="mt-1">
+                      Campanha: <strong>{selectedReport.campaign.name}</strong> • Template: <strong>{selectedReport.campaign.template}</strong> • {selectedReport.campaign.date}
+                    </CardDescription>
+                  )}
+                </div>
+                <Button variant="ghost" size="sm" onClick={() => setIsReportOpen(false)}>
+                  ✕ Fechar
+                </Button>
+              </div>
+            </CardHeader>
+
+            <CardContent className="space-y-6 pt-5">
+              {isReportLoading ? (
+                <div className="flex h-48 items-center justify-center">
+                  <Loader2 className="w-8 h-8 animate-spin text-emerald-600" />
+                </div>
+              ) : selectedReport ? (
+                <>
+                  {/* Cards de Métricas */}
+                  <div className="grid grid-cols-4 gap-4">
+                    <div className="bg-zinc-50 border border-zinc-200 rounded-xl p-3.5 text-center">
+                      <p className="text-xs text-zinc-500 font-medium">Total de Alvos</p>
+                      <p className="text-2xl font-bold text-zinc-900 mt-1">{selectedReport.campaign.totalContacts || selectedReport.logs.length}</p>
+                    </div>
+                    <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3.5 text-center">
+                      <p className="text-xs text-emerald-700 font-medium">Enviados com Sucesso</p>
+                      <p className="text-2xl font-bold text-emerald-800 mt-1">{selectedReport.campaign.sentCount}</p>
+                    </div>
+                    <div className="bg-red-50 border border-red-200 rounded-xl p-3.5 text-center">
+                      <p className="text-xs text-red-700 font-medium">Falhas no Envio</p>
+                      <p className="text-2xl font-bold text-red-800 mt-1">{selectedReport.campaign.failedCount}</p>
+                    </div>
+                    <div className="bg-blue-50 border border-blue-200 rounded-xl p-3.5 text-center">
+                      <p className="text-xs text-blue-700 font-medium">Progresso</p>
+                      <p className="text-2xl font-bold text-blue-800 mt-1">{selectedReport.campaign.progress}%</p>
+                    </div>
+                  </div>
+
+                  {/* Tabela de Números Que Receberam o Disparo */}
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-sm font-semibold text-zinc-900 flex items-center gap-2">
+                        <Users className="w-4 h-4 text-zinc-500" />
+                        Números Que Receberam o Disparo ({selectedReport.logs.length})
+                      </h4>
+                      <div className="relative w-64">
+                        <Search className="w-4 h-4 absolute left-3 top-2.5 text-zinc-400" />
+                        <Input
+                          placeholder="Buscar por telefone ou nome..."
+                          className="pl-9 h-9 text-xs"
+                          value={reportSearch}
+                          onChange={(e) => setReportSearch(e.target.value)}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="border border-zinc-200 rounded-xl overflow-hidden bg-white max-h-72 overflow-y-auto">
+                      {selectedReport.logs.length === 0 ? (
+                        <div className="p-8 text-center text-xs text-zinc-500">
+                          Nenhum número registrado para este disparo ainda. Os disparos ao vivo gravam os números à medida que são enviados.
+                        </div>
+                      ) : (
+                        <table className="w-full text-xs text-left">
+                          <thead className="bg-zinc-50 text-zinc-600 border-b border-zinc-200 sticky top-0">
+                            <tr>
+                              <th className="px-4 py-2.5 font-semibold">Contato</th>
+                              <th className="px-4 py-2.5 font-semibold">Telefone</th>
+                              <th className="px-4 py-2.5 font-semibold">Status do Disparo</th>
+                              <th className="px-4 py-2.5 font-semibold">Data / Hora</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-zinc-100">
+                            {selectedReport.logs
+                              .filter(log =>
+                                (log.phone && log.phone.includes(reportSearch)) ||
+                                (log.name && log.name.toLowerCase().includes(reportSearch.toLowerCase()))
+                              )
+                              .map((log) => (
+                                <tr key={log.id} className="hover:bg-zinc-50/80 transition-colors">
+                                  <td className="px-4 py-2.5 font-medium text-zinc-900">{log.name}</td>
+                                  <td className="px-4 py-2.5 font-mono text-zinc-700">{log.phone}</td>
+                                  <td className="px-4 py-2.5">
+                                    {log.status === 'sent' ? (
+                                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-100 text-emerald-700">
+                                        <CheckCircle2 className="w-3 h-3" /> Enviado
+                                      </span>
+                                    ) : (
+                                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-red-100 text-red-700">
+                                        <XCircle className="w-3 h-3" /> Falhou
+                                      </span>
+                                    )}
+                                  </td>
+                                  <td className="px-4 py-2.5 text-zinc-500">{log.sentAt}</td>
+                                </tr>
+                              ))}
+                          </tbody>
+                        </table>
+                      )}
+                    </div>
+                  </div>
+                </>
+              ) : null}
+            </CardContent>
+
+            <CardFooter className="bg-zinc-50 border-t border-zinc-100 py-3.5 flex justify-end rounded-b-xl">
+              <Button variant="outline" onClick={() => setIsReportOpen(false)}>
+                Fechar Relatório
+              </Button>
+            </CardFooter>
           </Card>
         </div>
       )}
