@@ -59,7 +59,7 @@ export default function WhatsAppConfig() {
         const data = await response.json();
 
         // If there's an active waba_id, show it in the UI as a connected number card
-        if (data && data.phone_number_id && data.waba_id) {
+        if (data && data.is_active && data.phone_number_id && data.waba_id) {
           setNumbers([{
             id: '1',
             phone: 'Conta do WhatsApp Business', // Default label since API doesn't store actual phone number string yet
@@ -169,24 +169,25 @@ export default function WhatsAppConfig() {
   };
 
   const handleDisconnect = async (id: string) => {
-    if (window.confirm("Tem certeza que deseja desconectar este número? A IA parará de responder imediatamente.")) {
-      try {
-        const token = localStorage.getItem("token");
-        await fetch("/api/whatsapp/config", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${token}`
-          },
-          body: JSON.stringify({ phone_number_id: '', waba_id: '', access_token: '' })
-        });
-        setNumbers([]);
-        toast.info("Número desconectado.");
-      } catch (error) {
-        toast.error("Erro ao desconectar número.");
+    if (!window.confirm("Tem certeza que deseja desconectar este número? A IA parará de responder imediatamente.")) return;
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch("/api/whatsapp/config", {
+        method: "DELETE",
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      if (!res.ok) {
+        let errMsg = `Erro ${res.status}`;
+        try { const d = await res.json(); errMsg = d.error || d.message || errMsg; } catch {}
+        throw new Error(errMsg);
       }
+      setNumbers([]);
+      toast.success("Número desconectado com sucesso.");
+    } catch (error: any) {
+      toast.error(`Erro ao desconectar: ${error.message}`);
     }
   };
+
 
   const onSubmitNewNumber = async (data: NewNumberFormValues) => {
     setIsSubmitting(true);

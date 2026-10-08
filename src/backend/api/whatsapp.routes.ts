@@ -565,6 +565,27 @@ router.post('/config', requireAuth, async (req: AuthRequest, res) => {
   }
 });
 
+// ─── DELETE /config — Desconectar número WhatsApp ─────────────────────────────
+router.delete('/config', requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const orgId = req.user?.orgId;
+
+    const { error } = await supabaseAdmin
+      .from('whatsapp_config')
+      .update({ is_active: false, access_token: null })
+      .eq('org_id', orgId);
+
+    if (error) throw error;
+
+    console.log(`[WHATSAPP] Número desconectado para org ${orgId}`);
+    res.json({ success: true, message: 'Número desconectado com sucesso.' });
+  } catch (err: any) {
+    console.error('[WHATSAPP] Erro ao desconectar:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
 // ─── Helper: Deteção de Nome do Cliente em Mensagens de Texto ─────────────────
 function extractCustomerNameFromText(text: string): string | null {
   if (!text) return null;
