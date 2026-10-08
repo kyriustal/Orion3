@@ -3,6 +3,7 @@ import { supabaseAdmin } from '../config/supabase';
 import { AIService } from '../services/ai.service';
 import { InstagramService } from '../services/instagram.service';
 import { requireAuth, AuthRequest } from '../middleware/auth';
+import { verifyUserPassword } from '../utils/authVerify';
 import { FollowupService } from '../services/followup.service';
 import { BookingService } from '../services/booking.service';
 import { GoogleSheetsService } from '../services/google_sheets.service';
@@ -24,7 +25,7 @@ router.get('/config', requireAuth, async (req: AuthRequest, res) => {
     const orgId = req.user?.orgId;
     const { data, error } = await supabaseAdmin
       .from('instagram_config')
-      .select('id, instagram_user_id, page_id, display_name, username, is_active, created_at')
+      .select('id, instagram_user_id, page_id, display_name, username, access_token, is_active, created_at')
       .eq('org_id', orgId)
       .maybeSingle();
 
@@ -39,10 +40,24 @@ router.get('/config', requireAuth, async (req: AuthRequest, res) => {
 router.post('/config', requireAuth, async (req: AuthRequest, res) => {
   try {
     const orgId = req.user?.orgId;
-    const { access_token, display_name } = req.body;
+    const { access_token, display_name, password } = req.body;
 
     if (!access_token) {
       return res.status(400).json({ error: 'access_token é obrigatório.' });
+    }
+
+    // Verificar se já existe configuração existente (edição)
+    const { data: existing } = await supabaseAdmin
+      .from('instagram_config')
+      .select('id, is_active')
+      .eq('org_id', orgId)
+      .maybeSingle();
+
+    if (existing) {
+      const authCheck = await verifyUserPassword(req.user?.id, req.user?.email, password);
+      if (!authCheck.valid) {
+        return res.status(401).json({ error: authCheck.error || 'Palavra-passe incorreta. Acesso negado para editar as credenciais.' });
+      }
     }
 
     // Validar token e obter Instagram Business Account ID automaticamente

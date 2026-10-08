@@ -3,6 +3,7 @@ import { supabaseAdmin } from '../config/supabase';
 import { AIService } from '../services/ai.service';
 import { FacebookService } from '../services/facebook.service';
 import { requireAuth, AuthRequest } from '../middleware/auth';
+import { verifyUserPassword } from '../utils/authVerify';
 import { EmailService } from '../services/email.service';
 import { PushService } from '../services/push.service';
 import { FollowupService } from '../services/followup.service';
@@ -75,7 +76,7 @@ router.get('/test', requireAuth, async (req: AuthRequest, res) => {
     const validation = await FacebookService.validatePageToken(config.page_id, token);
 
     // Tentar subscrever automaticamente se ainda não estiver subscrito
-    let subscribeResult = { success: false, error: undefined as string | undefined };
+    let subscribeResult: { success: boolean; error?: string } = { success: false };
     if (validation.valid && validation.hasMessaging) {
       subscribeResult = await FacebookService.subscribePageToApp(config.page_id, token);
     }
@@ -101,7 +102,7 @@ router.get('/test', requireAuth, async (req: AuthRequest, res) => {
 router.post('/config', requireAuth, async (req: AuthRequest, res) => {
   try {
     const orgId = req.user?.orgId;
-    let { page_id, page_access_token, app_id, app_secret, display_name } = req.body;
+    let { page_id, page_access_token, app_id, app_secret, display_name, password } = req.body;
 
     page_id = (page_id || '').toString().trim();
     page_access_token = (page_access_token || '').toString().trim();
@@ -110,6 +111,20 @@ router.post('/config', requireAuth, async (req: AuthRequest, res) => {
 
     if (!page_id || !page_access_token) {
       return res.status(400).json({ error: 'Page ID e Page Access Token são obrigatórios.' });
+    }
+
+    // Verificar se já existe uma configuração para esta org (edição)
+    const { data: existing } = await supabaseAdmin
+      .from('facebook_config')
+      .select('id, is_active')
+      .eq('org_id', orgId)
+      .maybeSingle();
+
+    if (existing) {
+      const authCheck = await verifyUserPassword(req.user?.id, req.user?.email, password);
+      if (!authCheck.valid) {
+        return res.status(401).json({ error: authCheck.error || 'Palavra-passe incorreta. Acesso negado para editar as credenciais.' });
+      }
     }
 
     // Validar token junto da Meta API
@@ -122,13 +137,6 @@ router.post('/config', requireAuth, async (req: AuthRequest, res) => {
       const sub = await FacebookService.subscribePageToApp(page_id, page_access_token);
       subscribed = sub.success;
     }
-
-    // Verificar se já existe uma configuração para esta org
-    const { data: existing } = await supabaseAdmin
-      .from('facebook_config')
-      .select('id')
-      .eq('org_id', orgId)
-      .maybeSingle();
 
     const payload: any = {
       org_id: orgId,

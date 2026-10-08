@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import { supabaseAdmin } from '../config/supabase';
+import { verifyUserPassword } from '../utils/authVerify';
 import { AIService, getUniqueApiKeys, CustomerProfile } from '../services/ai.service';
 import { WhatsAppService } from '../services/whatsapp.service';
 import { AudioService } from '../services/audio.service';
@@ -114,7 +115,29 @@ router.get('/config', requireAuth, async (req: AuthRequest, res) => {
       .maybeSingle();
 
     if (error) throw error;
-    res.json(data || null);
+    if (!data) return res.json(null);
+
+    let phone = '';
+    let extraMeta: any = {};
+    if (data.description) {
+      try {
+        const parsed = JSON.parse(data.description);
+        phone = parsed.phone || '';
+        extraMeta = parsed;
+      } catch (_) {
+        phone = data.description;
+      }
+    }
+
+    res.json({
+      ...data,
+      phone: phone || (data as any).phone || '',
+      business_category: extraMeta.business_category || (data as any).business_category || '',
+      website: extraMeta.website || (data as any).website || '',
+      support_email: extraMeta.support_email || (data as any).support_email || '',
+      app_id: extraMeta.app_id || (data as any).app_id || '',
+      description: extraMeta.about || extraMeta.description || data.description || '',
+    });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -520,10 +543,32 @@ router.post('/send-file', requireAuth, upload.single('file'), async (req: AuthRe
 router.post('/config', requireAuth, async (req: AuthRequest, res) => {
   try {
     const orgId = req.user?.orgId;
-    const { phone_number_id, waba_id, access_token } = req.body;
+    const {
+      phone_number_id,
+      waba_id,
+      access_token,
+      display_name,
+      phone,
+      password,
+    } = req.body;
 
     if (!phone_number_id || !access_token) {
       return res.status(400).json({ error: 'phone_number_id e access_token são obrigatórios.' });
+    }
+
+    // Verificar se já existe configuração existente
+    const { data: existing } = await supabaseAdmin
+      .from('whatsapp_config')
+      .select('id, is_active, phone_number_id, access_token')
+      .eq('org_id', orgId)
+      .maybeSingle();
+
+    // Se já houver configuração existente (edição), exigir palavra-passe
+    if (existing) {
+      const authCheck = await verifyUserPassword(req.user?.id, req.user?.email, password);
+      if (!authCheck.valid) {
+        return res.status(401).json({ error: authCheck.error || 'Palavra-passe incorreta. Acesso negado para editar as credenciais.' });
+      }
     }
 
     try {
@@ -531,10 +576,21 @@ router.post('/config', requireAuth, async (req: AuthRequest, res) => {
       const metaUrl = `https://graph.facebook.com/v19.0/${phone_number_id}?fields=display_phone_number,verified_name,quality_rating&access_token=${access_token}`;
       const metaResponse = await axios.get(metaUrl);
 
-      const verifiedName  = metaResponse.data?.verified_name || null;
-      const displayPhone  = metaResponse.data?.display_phone_number || null;
+      const verifiedName  = display_name || metaResponse.data?.verified_name || null;
+      const displayPhone  = metaResponse.data?.display_phone_number || phone || null;
 
       console.log(`[WHATSAPP] Credenciais válidas para: ${verifiedName} (${displayPhone})`);
+
+      const descriptionPayload = JSON.stringify({
+        phone: displayPhone || '',
+        verified_name: verifiedName || '',
+        business_category: req.body.business_category || '',
+        website: req.body.website || '',
+        support_email: req.body.support_email || '',
+        app_id: req.body.app_id || '',
+        about: req.body.description || '',
+        updated_at: new Date().toISOString()
+      });
 
       const { data, error } = await supabaseAdmin
         .from('whatsapp_config')
@@ -544,6 +600,7 @@ router.post('/config', requireAuth, async (req: AuthRequest, res) => {
           waba_id: waba_id || null,
           access_token,
           display_name: verifiedName,
+          description: descriptionPayload,
           is_active: true,
         }, { onConflict: 'org_id' })
         .select()
@@ -551,7 +608,18 @@ router.post('/config', requireAuth, async (req: AuthRequest, res) => {
 
       if (error) throw error;
 
-      return res.json({ message: `WhatsApp Conectado! Número verificado: ${verifiedName}`, data });
+      return res.json({
+        message: `WhatsApp Conectado! Número verificado: ${verifiedName || displayPhone || 'Sucesso'}`,
+        data: {
+          ...data,
+          phone: displayPhone || '',
+          business_category: req.body.business_category || '',
+          website: req.body.website || '',
+          support_email: req.body.support_email || '',
+          app_id: req.body.app_id || '',
+          description: req.body.description || '',
+        }
+      });
 
     } catch (metaError: any) {
       const msg  = metaError.response?.data?.error?.message || metaError.message;

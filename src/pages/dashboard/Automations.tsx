@@ -4,10 +4,12 @@ import { Input } from "@/src/components/ui/input";
 import { Label } from "@/src/components/ui/label";
 import { 
   Zap, Plus, Power, Facebook, Instagram, Video, Mail, 
-  CheckCircle2, AlertCircle, RefreshCw, Send, Sparkles, Sliders 
+  CheckCircle2, AlertCircle, RefreshCw, Send, Sparkles, Sliders,
+  Eye, EyeOff, Copy, Pencil, Lock, Key, ShieldCheck, Loader2
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
+import { PasswordConfirmationModal } from "@/src/components/auth/PasswordConfirmationModal";
 
 export default function Automations() {
   const [activeTab, setActiveTab] = useState<'rules' | 'social' | 'email'>('rules');
@@ -61,6 +63,10 @@ export default function Automations() {
     is_active: false
   });
   const [isTestingEmail, setIsTestingEmail] = useState(false);
+  const [isEditingEmail, setIsEditingEmail] = useState(false);
+  const [showImapPass, setShowImapPass] = useState(false);
+  const [showSmtpPass, setShowSmtpPass] = useState(false);
+  const [isEmailPasswordModalOpen, setIsEmailPasswordModalOpen] = useState(false);
 
   useEffect(() => {
     fetchAutomations();
@@ -148,9 +154,16 @@ export default function Automations() {
           setEmailConfig(prev => ({
             ...prev,
             ...data,
-            imap_password: "",
-            smtp_password: ""
+            imap_password: data.imap_password || prev.imap_password || "",
+            smtp_password: data.smtp_password || prev.smtp_password || "",
           }));
+          if (data.is_active && data.imap_host) {
+            setIsEditingEmail(false);
+          } else {
+            setIsEditingEmail(true);
+          }
+        } else {
+          setIsEditingEmail(true);
         }
       }
     } catch (err) {
@@ -242,21 +255,41 @@ export default function Automations() {
     }
   };
 
-  const handleSaveEmailConfig = async (e: React.FormEvent) => {
+  const handleSaveEmailConfig = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!emailConfig.imap_host || !emailConfig.imap_user || !emailConfig.imap_password) {
+      toast.error("Host, Usuário e Senha IMAP são obrigatórios.");
+      return;
+    }
+
+    if (emailConfig.is_active) {
+      // Requer palavra-passe para editar dados existentes
+      setIsEmailPasswordModalOpen(true);
+    } else {
+      executeSaveEmailConfig();
+    }
+  };
+
+  const executeSaveEmailConfig = async (password?: string) => {
     setIsTestingEmail(true);
     try {
       const res = await fetch("/api/email-inbox/config", {
         method: "POST",
         headers: getAuthHeaders(),
-        body: JSON.stringify(emailConfig)
+        body: JSON.stringify({
+          ...emailConfig,
+          password
+        })
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Falha na conexão");
-      toast.success("Caixa de entrada configurada e testada com sucesso!");
+      toast.success(data.message || "Caixa de entrada configurada e testada com sucesso!");
+      setIsEmailPasswordModalOpen(false);
+      setIsEditingEmail(false);
       fetchEmailConfig();
     } catch (err: any) {
       toast.error(`Falha: ${err.message}`);
+      throw err;
     } finally {
       setIsTestingEmail(false);
     }
@@ -559,184 +592,442 @@ export default function Automations() {
 
       {/* TAB 3: E-mail Inbox (IMAP / SMTP) */}
       {activeTab === 'email' && (
-        <Card className="border-zinc-200 shadow-sm">
-          <form onSubmit={handleSaveEmailConfig}>
-            <CardHeader className="flex flex-row items-center justify-between">
-              <div>
-                <CardTitle className="text-lg flex items-center gap-2">
-                  <Mail className="w-5 h-5 text-emerald-600" />
-                  Automação de E-mails Recebidos (Inbox Inteligente)
-                </CardTitle>
-                <CardDescription>
-                  Conecte sua caixa postal corporativa (Gmail, Outlook, Hostinger, cPanel) para a IA ler e responder e-mails recebidos.
-                </CardDescription>
-              </div>
-              <div className="flex items-center gap-3">
-                <span className="text-xs font-semibold text-zinc-600">Auto-resposta Ativa</span>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant={emailConfig.automation_enabled ? "default" : "outline"}
-                  className={emailConfig.automation_enabled ? "bg-emerald-600 hover:bg-emerald-700" : ""}
-                  onClick={handleToggleEmailAutomation}
-                >
-                  <Power className="w-4 h-4 mr-1" />
-                  {emailConfig.automation_enabled ? "Ativada" : "Desativada"}
-                </Button>
-              </div>
-            </CardHeader>
+        <>
+          {emailConfig.is_active && !isEditingEmail ? (
+            /* PAINEL DE PRÉ-VISUALIZAÇÃO DE E-MAIL CONECTADO */
+            <Card className="border-zinc-200/90 shadow-sm overflow-hidden">
+              <CardHeader className="bg-zinc-50/50 border-b border-zinc-100 pb-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center shadow-xs">
+                      <Mail className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <CardTitle className="text-base text-zinc-900 flex items-center gap-2">
+                        Caixa de Entrada Corporativa Conectada
+                      </CardTitle>
+                      <CardDescription className="text-xs flex items-center gap-1.5 mt-0.5 text-emerald-600 font-medium">
+                        <CheckCircle2 className="w-3.5 h-3.5" /> Conexão Ativa & Integrada com a IA
+                      </CardDescription>
+                    </div>
+                  </div>
 
-            <CardContent className="space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {/* Lado IMAP (Entrada) */}
-                <div className="space-y-4 p-4 rounded-xl bg-zinc-50/70 border border-zinc-200/80">
-                  <h4 className="font-semibold text-sm text-zinc-900 flex items-center gap-2">
-                    <RefreshCw className="w-4 h-4 text-blue-600" /> Recepção de E-mails (IMAP)
-                  </h4>
-                  <div className="space-y-3">
-                    <div>
-                      <Label className="text-xs">Servidor IMAP (Host)</Label>
-                      <Input
-                        placeholder="Ex: imap.hostinger.com ou imap.gmail.com"
-                        value={emailConfig.imap_host}
-                        onChange={e => setEmailConfig({ ...emailConfig, imap_host: e.target.value })}
-                        required
-                      />
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <Label className="text-xs">Porta IMAP</Label>
-                        <Input
-                          type="number"
-                          value={emailConfig.imap_port}
-                          onChange={e => setEmailConfig({ ...emailConfig, imap_port: parseInt(e.target.value) || 993 })}
-                        />
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-semibold text-zinc-600 hidden sm:inline">Auto-resposta:</span>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={emailConfig.automation_enabled ? "default" : "outline"}
+                      className={`text-xs font-semibold ${emailConfig.automation_enabled ? "bg-emerald-600 hover:bg-emerald-700 text-white" : ""}`}
+                      onClick={handleToggleEmailAutomation}
+                    >
+                      <Power className="w-3.5 h-3.5 mr-1" />
+                      {emailConfig.automation_enabled ? "Ativada" : "Desativada"}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setIsEditingEmail(true)}
+                      className="text-xs font-semibold text-emerald-700 bg-emerald-50 border-emerald-200 hover:bg-emerald-100"
+                    >
+                      <Pencil className="w-3.5 h-3.5 mr-1.5" />
+                      Editar Parâmetros
+                    </Button>
+                  </div>
+                </div>
+              </CardHeader>
+
+              <CardContent className="p-6 space-y-6">
+                <div className="flex items-center justify-between border-b border-zinc-200 pb-2">
+                  <div className="flex items-center gap-2">
+                    <Key className="w-4 h-4 text-emerald-600" />
+                    <span className="text-xs font-bold uppercase tracking-wider text-zinc-700">
+                      Pré-visualização de Credenciais & Servidores de Correio
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5 text-xs text-zinc-400">
+                    <Lock className="w-3.5 h-3.5" />
+                    <span>Edição Requer Palavra-passe</span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* Bloco IMAP (Recepção) */}
+                  <div className="p-4 rounded-xl bg-zinc-50/80 border border-zinc-200/90 space-y-3">
+                    <h4 className="font-semibold text-xs text-zinc-900 flex items-center justify-between">
+                      <span className="flex items-center gap-1.5">
+                        <RefreshCw className="w-3.5 h-3.5 text-blue-600" /> Recepção de E-mails (IMAP)
+                      </span>
+                      <span className="text-[11px] font-mono font-medium px-2 py-0.5 rounded bg-blue-100/60 text-blue-800">
+                        Porta {emailConfig.imap_port} {emailConfig.imap_tls ? "(TLS/SSL)" : ""}
+                      </span>
+                    </h4>
+
+                    <div className="space-y-2 text-xs">
+                      <div className="bg-white p-2.5 rounded-lg border border-zinc-200/80">
+                        <span className="text-[11px] text-zinc-400 block font-medium">Servidor IMAP (Host)</span>
+                        <span className="font-mono font-bold text-zinc-800 select-all">{emailConfig.imap_host || "Não configurado"}</span>
                       </div>
-                      <div className="flex items-end pb-2">
-                        <label className="flex items-center gap-2 text-xs font-medium cursor-pointer">
-                          <input
-                            type="checkbox"
-                            className="rounded text-emerald-600"
-                            checked={emailConfig.imap_tls}
-                            onChange={e => setEmailConfig({ ...emailConfig, imap_tls: e.target.checked })}
-                          />
-                          Usar SSL/TLS (993)
-                        </label>
+
+                      <div className="bg-white p-2.5 rounded-lg border border-zinc-200/80 flex items-center justify-between">
+                        <div className="min-w-0 pr-2">
+                          <span className="text-[11px] text-zinc-400 block font-medium">Usuário / E-mail</span>
+                          <span className="font-mono font-bold text-zinc-800 truncate block select-all">{emailConfig.imap_user || "Não configurado"}</span>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => { navigator.clipboard.writeText(emailConfig.imap_user); toast.success("Copiado!"); }}
+                          className="h-6 w-6 text-zinc-400 hover:text-zinc-700 shrink-0"
+                        >
+                          <Copy className="w-3 h-3" />
+                        </Button>
+                      </div>
+
+                      <div className="bg-white p-2.5 rounded-lg border border-zinc-200/80 flex items-center justify-between">
+                        <div className="min-w-0 pr-2">
+                          <span className="text-[11px] text-zinc-400 block font-medium">Senha IMAP / App Password</span>
+                          <span className="font-mono text-zinc-800 font-semibold truncate block select-all">
+                            {showImapPass 
+                              ? (emailConfig.imap_password || "••••••••••••") 
+                              : (emailConfig.imap_password ? "••••••••••••••••" : "••••••••••••")}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => setShowImapPass(!showImapPass)}
+                            className="p-1 text-zinc-400 hover:text-zinc-700 rounded hover:bg-zinc-100"
+                            title={showImapPass ? "Ocultar" : "Mostrar"}
+                          >
+                            {showImapPass ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                          </button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => { navigator.clipboard.writeText(emailConfig.imap_password); toast.success("Copiado!"); }}
+                            className="h-6 w-6 text-zinc-400 hover:text-zinc-700"
+                          >
+                            <Copy className="w-3 h-3" />
+                          </Button>
+                        </div>
                       </div>
                     </div>
-                    <div>
-                      <Label className="text-xs">Usuário / E-mail de Entrada</Label>
-                      <Input
-                        type="email"
-                        placeholder="contato@suaempresa.com"
-                        value={emailConfig.imap_user}
-                        onChange={e => setEmailConfig({ ...emailConfig, imap_user: e.target.value })}
-                        required
-                      />
-                    </div>
-                    <div>
-                      <Label className="text-xs">Senha IMAP / Senha de App</Label>
-                      <Input
-                        type="password"
-                        placeholder="••••••••••••"
-                        value={emailConfig.imap_password}
-                        onChange={e => setEmailConfig({ ...emailConfig, imap_password: e.target.value })}
-                      />
+                  </div>
+
+                  {/* Bloco SMTP (Envio) */}
+                  <div className="p-4 rounded-xl bg-zinc-50/80 border border-zinc-200/90 space-y-3">
+                    <h4 className="font-semibold text-xs text-zinc-900 flex items-center justify-between">
+                      <span className="flex items-center gap-1.5">
+                        <Send className="w-3.5 h-3.5 text-emerald-600" /> Envio de Respostas (SMTP)
+                      </span>
+                      <span className="text-[11px] font-mono font-medium px-2 py-0.5 rounded bg-emerald-100/60 text-emerald-800">
+                        Porta {emailConfig.smtp_port}
+                      </span>
+                    </h4>
+
+                    <div className="space-y-2 text-xs">
+                      <div className="bg-white p-2.5 rounded-lg border border-zinc-200/80">
+                        <span className="text-[11px] text-zinc-400 block font-medium">Servidor SMTP (Host)</span>
+                        <span className="font-mono font-bold text-zinc-800 select-all">{emailConfig.smtp_host || emailConfig.imap_host || "Não configurado"}</span>
+                      </div>
+
+                      <div className="bg-white p-2.5 rounded-lg border border-zinc-200/80 flex items-center justify-between">
+                        <div className="min-w-0 pr-2">
+                          <span className="text-[11px] text-zinc-400 block font-medium">Remetente (From) / Usuário</span>
+                          <span className="font-mono font-bold text-zinc-800 truncate block select-all">
+                            {emailConfig.smtp_from || emailConfig.smtp_user || emailConfig.imap_user || "Não configurado"}
+                          </span>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => { navigator.clipboard.writeText(emailConfig.smtp_from || emailConfig.smtp_user || ""); toast.success("Copiado!"); }}
+                          className="h-6 w-6 text-zinc-400 hover:text-zinc-700 shrink-0"
+                        >
+                          <Copy className="w-3 h-3" />
+                        </Button>
+                      </div>
+
+                      <div className="bg-white p-2.5 rounded-lg border border-zinc-200/80 flex items-center justify-between">
+                        <div className="min-w-0 pr-2">
+                          <span className="text-[11px] text-zinc-400 block font-medium">Senha SMTP</span>
+                          <span className="font-mono text-zinc-800 font-semibold truncate block select-all">
+                            {showSmtpPass 
+                              ? (emailConfig.smtp_password || emailConfig.imap_password || "••••••••••••") 
+                              : (emailConfig.smtp_password ? "••••••••••••••••" : "••••••••••••")}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => setShowSmtpPass(!showSmtpPass)}
+                            className="p-1 text-zinc-400 hover:text-zinc-700 rounded hover:bg-zinc-100"
+                            title={showSmtpPass ? "Ocultar" : "Mostrar"}
+                          >
+                            {showSmtpPass ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                          </button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => { navigator.clipboard.writeText(emailConfig.smtp_password || emailConfig.imap_password); toast.success("Copiado!"); }}
+                            className="h-6 w-6 text-zinc-400 hover:text-zinc-700"
+                          >
+                            <Copy className="w-3 h-3" />
+                          </Button>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
 
-                {/* Lado SMTP (Envio) */}
-                <div className="space-y-4 p-4 rounded-xl bg-zinc-50/70 border border-zinc-200/80">
-                  <h4 className="font-semibold text-sm text-zinc-900 flex items-center gap-2">
-                    <Send className="w-4 h-4 text-emerald-600" /> Envio de Respostas (SMTP)
-                  </h4>
-                  <div className="space-y-3">
-                    <div>
-                      <Label className="text-xs">Servidor SMTP (Host)</Label>
-                      <Input
-                        placeholder="Ex: smtp.hostinger.com ou smtp.gmail.com"
-                        value={emailConfig.smtp_host}
-                        onChange={e => setEmailConfig({ ...emailConfig, smtp_host: e.target.value })}
-                      />
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <Label className="text-xs">Porta SMTP</Label>
-                        <Input
-                          type="number"
-                          value={emailConfig.smtp_port}
-                          onChange={e => setEmailConfig({ ...emailConfig, smtp_port: parseInt(e.target.value) || 587 })}
-                        />
-                      </div>
-                      <div>
-                        <Label className="text-xs">E-mail de Remetente (From)</Label>
-                        <Input
-                          placeholder="Orion &lt;contato@empresa.com&gt;"
-                          value={emailConfig.smtp_from}
-                          onChange={e => setEmailConfig({ ...emailConfig, smtp_from: e.target.value })}
-                        />
-                      </div>
-                    </div>
-                    <div>
-                      <Label className="text-xs">Usuário SMTP</Label>
-                      <Input
-                        type="email"
-                        placeholder="Igual ao IMAP se em branco"
-                        value={emailConfig.smtp_user}
-                        onChange={e => setEmailConfig({ ...emailConfig, smtp_user: e.target.value })}
-                      />
-                    </div>
-                    <div>
-                      <Label className="text-xs">Senha SMTP</Label>
-                      <Input
-                        type="password"
-                        placeholder="Igual à senha IMAP se em branco"
-                        value={emailConfig.smtp_password}
-                        onChange={e => setEmailConfig({ ...emailConfig, smtp_password: e.target.value })}
-                      />
-                    </div>
+                {/* Bloco de Instruções de IA */}
+                {emailConfig.auto_reply_prompt && (
+                  <div className="bg-zinc-50 p-4 rounded-xl border border-zinc-200 space-y-1">
+                    <span className="text-xs font-semibold text-zinc-700 flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                      Instruções & Tom das Respostas por IA:
+                    </span>
+                    <p className="text-xs text-zinc-600 italic bg-white p-3 rounded-lg border border-zinc-200/70">
+                      "{emailConfig.auto_reply_prompt}"
+                    </p>
                   </div>
-                </div>
-              </div>
-
-              {/* Prompt de E-mail */}
-              <div className="space-y-2">
-                <Label className="text-sm font-semibold flex items-center gap-2">
-                  <Sparkles className="w-4 h-4 text-amber-500" />
-                  Instruções & Tom para Respostas por E-mail
-                </Label>
-                <textarea
-                  className="w-full text-sm p-3 rounded-lg border border-zinc-200 focus:ring-2 focus:ring-emerald-500 min-h-[90px]"
-                  placeholder="Ex: Responda de forma profissional e formal. Assine com a equipa de apoio ao cliente. Caso a dúvida seja sobre orçamentos, solicite o número de telefone para contacto imediato."
-                  value={emailConfig.auto_reply_prompt}
-                  onChange={e => setEmailConfig({ ...emailConfig, auto_reply_prompt: e.target.value })}
-                />
-              </div>
-            </CardContent>
-
-            <CardFooter className="border-t p-4 flex items-center justify-between bg-zinc-50/50 rounded-b-xl">
-              <div className="text-xs text-zinc-500 flex items-center gap-1.5">
-                <AlertCircle className="w-4 h-4 text-amber-600" />
-                Respostas mantêm o histórico da conversa e cabeçalhos de threading (In-Reply-To).
-              </div>
-              <Button type="submit" disabled={isTestingEmail} className="bg-emerald-600 hover:bg-emerald-700">
-                {isTestingEmail ? (
-                  <>
-                    <RefreshCw className="w-4 h-4 animate-spin mr-2" />
-                    Testando & Salvando...
-                  </>
-                ) : (
-                  <>
-                    <CheckCircle2 className="w-4 h-4 mr-2" />
-                    Testar Conexão & Salvar
-                  </>
                 )}
-              </Button>
-            </CardFooter>
-          </form>
-        </Card>
+              </CardContent>
+
+              <CardFooter className="border-t p-4 flex items-center justify-between bg-zinc-50/50">
+                <span className="text-xs text-zinc-500 flex items-center gap-1.5">
+                  <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                  Conexão segura com criptografia TLS/SSL
+                </span>
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => executeSaveEmailConfig()}
+                    disabled={isTestingEmail}
+                    className="bg-white"
+                  >
+                    {isTestingEmail ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <RefreshCw className="w-3.5 h-3.5 mr-1.5" />}
+                    Testar Conexão
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() => setIsEditingEmail(true)}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-medium text-xs gap-1.5"
+                  >
+                    <Pencil className="w-3.5 h-3.5" /> Editar Parâmetros
+                  </Button>
+                </div>
+              </CardFooter>
+            </Card>
+          ) : (
+            /* FORMULÁRIO DE EDIÇÃO / CONFIGURAÇÃO DE E-MAIL */
+            <Card className="border-zinc-200 shadow-sm">
+              <form onSubmit={handleSaveEmailConfig}>
+                <CardHeader className="flex flex-row items-center justify-between pb-4 border-b border-zinc-100">
+                  <div>
+                    <CardTitle className="text-lg flex items-center gap-2">
+                      <Mail className="w-5 h-5 text-emerald-600" />
+                      {emailConfig.is_active ? "Editar Configuração de E-mail" : "Automação de E-mails Recebidos (Inbox Inteligente)"}
+                    </CardTitle>
+                    <CardDescription className="text-xs mt-0.5">
+                      {emailConfig.is_active 
+                        ? "Altere os parâmetros da sua caixa postal corporativa. A sua palavra-passe será exigida ao guardar."
+                        : "Conecte sua caixa postal corporativa (Gmail, Outlook, Hostinger, cPanel) para a IA ler e responder e-mails recebidos."}
+                    </CardDescription>
+                  </div>
+                  {emailConfig.is_active && (
+                    <Button 
+                      type="button" 
+                      variant="ghost" 
+                      size="sm" 
+                      onClick={() => setIsEditingEmail(false)}
+                      className="text-xs text-zinc-500"
+                    >
+                      Cancelar Edição
+                    </Button>
+                  )}
+                </CardHeader>
+
+                <CardContent className="space-y-6 pt-6">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {/* Lado IMAP (Entrada) */}
+                    <div className="space-y-4 p-4 rounded-xl bg-zinc-50/70 border border-zinc-200/80">
+                      <h4 className="font-semibold text-sm text-zinc-900 flex items-center gap-2">
+                        <RefreshCw className="w-4 h-4 text-blue-600" /> Recepção de E-mails (IMAP)
+                      </h4>
+                      <div className="space-y-3">
+                        <div>
+                          <Label className="text-xs">Servidor IMAP (Host)</Label>
+                          <Input
+                            placeholder="Ex: imap.hostinger.com ou imap.gmail.com"
+                            value={emailConfig.imap_host}
+                            onChange={e => setEmailConfig({ ...emailConfig, imap_host: e.target.value })}
+                            required
+                          />
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <Label className="text-xs">Porta IMAP</Label>
+                            <Input
+                              type="number"
+                              value={emailConfig.imap_port}
+                              onChange={e => setEmailConfig({ ...emailConfig, imap_port: parseInt(e.target.value) || 993 })}
+                            />
+                          </div>
+                          <div className="flex items-end pb-2">
+                            <label className="flex items-center gap-2 text-xs font-medium cursor-pointer">
+                              <input
+                                type="checkbox"
+                                className="rounded text-emerald-600"
+                                checked={emailConfig.imap_tls}
+                                onChange={e => setEmailConfig({ ...emailConfig, imap_tls: e.target.checked })}
+                              />
+                              Usar SSL/TLS (993)
+                            </label>
+                          </div>
+                        </div>
+                        <div>
+                          <Label className="text-xs">Usuário / E-mail de Entrada</Label>
+                          <Input
+                            type="email"
+                            placeholder="contato@suaempresa.com"
+                            value={emailConfig.imap_user}
+                            onChange={e => setEmailConfig({ ...emailConfig, imap_user: e.target.value })}
+                            required
+                          />
+                        </div>
+                        <div>
+                          <Label className="text-xs">Senha IMAP / Senha de App</Label>
+                          <Input
+                            type="password"
+                            placeholder="••••••••••••"
+                            value={emailConfig.imap_password}
+                            onChange={e => setEmailConfig({ ...emailConfig, imap_password: e.target.value })}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Lado SMTP (Envio) */}
+                    <div className="space-y-4 p-4 rounded-xl bg-zinc-50/70 border border-zinc-200/80">
+                      <h4 className="font-semibold text-sm text-zinc-900 flex items-center gap-2">
+                        <Send className="w-4 h-4 text-emerald-600" /> Envio de Respostas (SMTP)
+                      </h4>
+                      <div className="space-y-3">
+                        <div>
+                          <Label className="text-xs">Servidor SMTP (Host)</Label>
+                          <Input
+                            placeholder="Ex: smtp.hostinger.com ou smtp.gmail.com"
+                            value={emailConfig.smtp_host}
+                            onChange={e => setEmailConfig({ ...emailConfig, smtp_host: e.target.value })}
+                          />
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <Label className="text-xs">Porta SMTP</Label>
+                            <Input
+                              type="number"
+                              value={emailConfig.smtp_port}
+                              onChange={e => setEmailConfig({ ...emailConfig, smtp_port: parseInt(e.target.value) || 587 })}
+                            />
+                          </div>
+                          <div>
+                            <Label className="text-xs">E-mail de Remetente (From)</Label>
+                            <Input
+                              placeholder="Orion <contato@empresa.com>"
+                              value={emailConfig.smtp_from}
+                              onChange={e => setEmailConfig({ ...emailConfig, smtp_from: e.target.value })}
+                            />
+                          </div>
+                        </div>
+                        <div>
+                          <Label className="text-xs">Usuário SMTP</Label>
+                          <Input
+                            type="email"
+                            placeholder="Igual ao IMAP se em branco"
+                            value={emailConfig.smtp_user}
+                            onChange={e => setEmailConfig({ ...emailConfig, smtp_user: e.target.value })}
+                          />
+                        </div>
+                        <div>
+                          <Label className="text-xs">Senha SMTP</Label>
+                          <Input
+                            type="password"
+                            placeholder="Igual à senha IMAP se em branco"
+                            value={emailConfig.smtp_password}
+                            onChange={e => setEmailConfig({ ...emailConfig, smtp_password: e.target.value })}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Prompt de E-mail */}
+                  <div className="space-y-2">
+                    <Label className="text-sm font-semibold flex items-center gap-2">
+                      <Sparkles className="w-4 h-4 text-amber-500" />
+                      Instruções & Tom para Respostas por E-mail
+                    </Label>
+                    <textarea
+                      className="w-full text-sm p-3 rounded-lg border border-zinc-200 focus:ring-2 focus:ring-emerald-500 min-h-[90px]"
+                      placeholder="Ex: Responda de forma profissional e formal. Assine com a equipa de apoio ao cliente. Caso a dúvida seja sobre orçamentos, solicite o número de telefone para contacto imediato."
+                      value={emailConfig.auto_reply_prompt}
+                      onChange={e => setEmailConfig({ ...emailConfig, auto_reply_prompt: e.target.value })}
+                    />
+                  </div>
+                </CardContent>
+
+                <CardFooter className="border-t p-4 flex items-center justify-between bg-zinc-50/50 rounded-b-xl">
+                  {emailConfig.is_active ? (
+                    <Button 
+                      type="button" 
+                      variant="outline" 
+                      onClick={() => setIsEditingEmail(false)}
+                      className="text-zinc-600"
+                    >
+                      Cancelar
+                    </Button>
+                  ) : (
+                    <div className="text-xs text-zinc-500 flex items-center gap-1.5">
+                      <AlertCircle className="w-4 h-4 text-amber-600" />
+                      Respostas mantêm o histórico da conversa e cabeçalhos de threading.
+                    </div>
+                  )}
+
+                  <Button type="submit" disabled={isTestingEmail} className="bg-emerald-600 hover:bg-emerald-700">
+                    {isTestingEmail ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin mr-2" />
+                        Testando & Salvando...
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle2 className="w-4 h-4 mr-2" />
+                        {emailConfig.is_active ? "Salvar Alterações" : "Testar Conexão & Salvar"}
+                      </>
+                    )}
+                  </Button>
+                </CardFooter>
+              </form>
+            </Card>
+          )}
+        </>
       )}
+
+      {/* Modal Confirmação de Senha para E-mail */}
+      <PasswordConfirmationModal
+        isOpen={isEmailPasswordModalOpen}
+        onClose={() => setIsEmailPasswordModalOpen(false)}
+        onConfirm={(password) => executeSaveEmailConfig(password)}
+        title="Confirmar Alteração da Caixa de E-mail"
+        description="Por motivos de segurança, introduza a sua palavra-passe de acesso ao Orion para autorizar a modificação das credenciais da caixa de correio corporativa (IMAP/SMTP)."
+        actionLabel="Confirmar e Salvar Credenciais"
+        isLoading={isTestingEmail}
+      />
 
       {/* Modal Nova Regra */}
       {isModalOpen && (

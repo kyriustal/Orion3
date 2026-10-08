@@ -7,18 +7,47 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter }
 import { Button } from "@/src/components/ui/button";
 import { Input } from "@/src/components/ui/input";
 import { Switch } from "@/src/components/ui/switch";
-import { Smartphone, Copy, AlertCircle, Plus, Loader2, Trash2, RefreshCw, CheckCircle2, Key, Building, Webhook, ShieldCheck } from "lucide-react";
+import { 
+  Smartphone, Copy, AlertCircle, Plus, Loader2, Trash2, 
+  RefreshCw, CheckCircle2, Key, Building, Webhook, ShieldCheck, 
+  Eye, EyeOff, Pencil, Lock, ExternalLink 
+} from "lucide-react";
+import { PasswordConfirmationModal } from "@/src/components/auth/PasswordConfirmationModal";
+
+type WhatsAppConfigData = {
+  id?: string;
+  phone_number_id: string;
+  waba_id?: string;
+  access_token: string;
+  display_name?: string;
+  phone?: string;
+  app_id?: string;
+  client_secret?: string;
+  description?: string;
+  business_category?: string;
+  profile_picture_url?: string;
+  website?: string;
+  support_email?: string;
+  is_active: boolean;
+};
 
 type WhatsAppNumber = {
   id: string;
   phone: string;
   phoneId: string;
   wabaId: string;
+  appId?: string;
   status: 'connected' | 'testing' | 'error';
+  token?: string;
+  displayName?: string;
+  businessCategory?: string;
+  website?: string;
+  supportEmail?: string;
+  description?: string;
 };
 
 const newNumberSchema = z.object({
-  phone: z.string().min(8, "Número de exibição é obrigatório"),
+  phone: z.string().min(6, "Número de exibição é obrigatório"),
   phoneId: z.string().min(5, "ID inválido"),
   wabaId: z.string().min(5, "WABA ID inválido"),
   token: z.string().min(10, "Token inválido"),
@@ -39,46 +68,14 @@ export default function WhatsAppConfig() {
   const [verifyToken] = useState("orion_secure_token_123");
 
   const [numbers, setNumbers] = useState<WhatsAppNumber[]>([]);
+  const [rawConfig, setRawConfig] = useState<WhatsAppConfigData | null>(null);
+  const [showTokenPreview, setShowTokenPreview] = useState(false);
 
-  useEffect(() => {
-    const fetchConfig = async () => {
-      try {
-        const token = localStorage.getItem("token");
-        if (!token) return;
-
-        const response = await fetch("/api/whatsapp/config", {
-          headers: {
-            "Authorization": `Bearer ${token}`
-          }
-        });
-
-        if (!response.ok) {
-          throw new Error("Failed to fetch WhatsApp config");
-        }
-
-        const data = await response.json();
-
-        // If there's an active waba_id, show it in the UI as a connected number card
-        if (data && data.is_active && data.phone_number_id && data.waba_id) {
-          setNumbers([{
-            id: '1',
-            phone: 'Conta do WhatsApp Business', // Default label since API doesn't store actual phone number string yet
-            phoneId: data.phone_number_id,
-            wabaId: data.waba_id,
-            status: data.is_active ? 'connected' : 'error'
-          }]);
-        } else {
-          setNumbers([]);
-        }
-      } catch (error) {
-        console.error("Erro ao carregar configurações do WhatsApp:", error);
-      }
-    };
-
-    fetchConfig();
-  }, []);
-
+  // Modais
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
+  const [pendingFormData, setPendingFormData] = useState<NewNumberFormValues | null>(null);
+
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
 
@@ -86,68 +83,159 @@ export default function WhatsAppConfig() {
     register,
     handleSubmit,
     reset,
+    setValue,
     formState: { errors },
   } = useForm<NewNumberFormValues>({
     resolver: zodResolver(newNumberSchema),
   });
 
-  // Embedded Signup Logic
-  const launchEmbeddedSignup = () => {
-    // @ts-ignore
-    if (typeof window.FB === 'undefined') {
-      toast.error("O SDK da Meta ainda não carregou ou foi bloqueado pelo navegador. Por favor, tente recarregar ou desativar bloqueadores de anúncios.");
-      return;
-    }
+  const fetchConfig = async () => {
+    try {
+      const token = localStorage.getItem("token");
+      if (!token) return;
 
-    // Configuração do App (Pode ser puxada de uma variável de ambiente ou config)
-    const appId = "34557883637136073";
+      const response = await fetch("/api/whatsapp/config", {
+        headers: { "Authorization": `Bearer ${token}` }
+      });
 
-    if ((appId as string) === "SEU_APP_ID_AQUI") {
-      toast.warning("Configuração pendente: Insira o App ID no código ou painel para usar o fluxo automático.");
-      setIsModalOpen(true); // Abre o manual como fallback
-      return;
-    }
+      if (!response.ok) {
+        throw new Error("Failed to fetch WhatsApp config");
+      }
 
-    // @ts-ignore
-    FB.login((response: any) => {
-      if (response.authResponse) {
-        const accessToken = response.authResponse.accessToken;
-        toast.success("Conectado com sucesso à Meta!");
-        console.log("Access Token recebido:", accessToken);
-        // Aqui você chamaria uma rota de backend para processar o token e listar as WABAs
-        toast.info("Processando integração automática...");
+      const data = await response.json();
+
+      if (data && data.is_active && data.phone_number_id) {
+        setRawConfig(data);
+        const resolvedPhone = data.phone || data.display_name || 'Conta WhatsApp Business Conectada';
+        setNumbers([{
+          id: data.id || '1',
+          phone: resolvedPhone,
+          phoneId: data.phone_number_id,
+          wabaId: data.waba_id || 'Não especificado',
+          appId: data.app_id || '',
+          status: 'connected',
+          token: data.access_token || '',
+          displayName: data.display_name || '',
+          businessCategory: data.business_category || '',
+          website: data.website || '',
+          supportEmail: data.support_email || '',
+          description: data.description || '',
+        }]);
       } else {
-        toast.error("O utilizador cancelou o login ou não autorizou a aplicação.");
+        setRawConfig(null);
+        setNumbers([]);
       }
-    }, {
-      scope: 'whatsapp_business_management,whatsapp_business_messaging',
-      extras: {
-        feature: 'whatsapp_embedded_signup'
-      }
-    });
+    } catch (error) {
+      console.error("Erro ao carregar configurações do WhatsApp:", error);
+    }
   };
 
   useEffect(() => {
-    // Inicialização do SDK da Meta
-    // @ts-ignore
-    window.fbAsyncInit = function () {
-      // @ts-ignore
-      FB.init({
-        appId: '34557883637136073',
-        cookie: true,
-        xfbml: true,
-        version: 'v19.0'
-      });
-      console.log("[META SDK] Inicializado com sucesso.");
-    };
-
-    // Caso o script já tenha carregado antes deste efeito
-    // @ts-ignore
-    if (window.FB) {
-      // @ts-ignore
-      window.fbAsyncInit();
-    }
+    fetchConfig();
   }, []);
+
+  // Preencher formulário ao abrir edição
+  const handleOpenEditModal = () => {
+    if (rawConfig) {
+      setValue("phone", rawConfig.phone || rawConfig.display_name || "");
+      setValue("phoneId", rawConfig.phone_number_id || "");
+      setValue("wabaId", rawConfig.waba_id || "");
+      setValue("token", rawConfig.access_token || "");
+      setValue("appId", rawConfig.app_id || "");
+      setValue("displayName", rawConfig.display_name || "Orion Assistant");
+      setValue("businessCategory", rawConfig.business_category || "");
+      setValue("description", rawConfig.description || "");
+      setValue("website", rawConfig.website || "");
+      setValue("supportEmail", rawConfig.support_email || "");
+      setValue("profilePictureUrl", rawConfig.profile_picture_url || "");
+    }
+    setIsModalOpen(true);
+  };
+
+  const handleOpenNewModal = () => {
+    reset({
+      phone: "",
+      phoneId: "",
+      wabaId: "",
+      token: "",
+      displayName: "Orion Assistant",
+      businessCategory: "",
+      description: "",
+      website: "",
+      supportEmail: "",
+      profilePictureUrl: ""
+    });
+    setIsModalOpen(true);
+  };
+
+  // Submissão do formulário: intercepta se já existir configuração para pedir palavra-passe
+  const onSubmitNewNumber = (data: NewNumberFormValues) => {
+    setPendingFormData(data);
+    if (rawConfig && rawConfig.is_active) {
+      // Requer palavra-passe para editar dados existentes
+      setIsPasswordModalOpen(true);
+    } else {
+      // Nova conexão primária direta
+      executeSaveConfig(data);
+    }
+  };
+
+  // Executa o POST com ou sem senha
+  const executeSaveConfig = async (formData: NewNumberFormValues, password?: string) => {
+    setIsSubmitting(true);
+    try {
+      const token = localStorage.getItem("token");
+      const response = await fetch("/api/whatsapp/config", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          phone_number_id: formData.phoneId,
+          waba_id: formData.wabaId,
+          access_token: formData.token,
+          app_id: formData.appId,
+          client_secret: formData.clientSecret,
+          display_name: formData.displayName,
+          phone: formData.phone,
+          business_category: formData.businessCategory,
+          description: formData.description,
+          profile_picture_url: formData.profilePictureUrl,
+          website: formData.website,
+          support_email: formData.supportEmail,
+          password: password, // Envia palavra-passe para validação no backend
+        })
+      });
+
+      const resData = await response.json();
+
+      if (!response.ok) {
+        throw new Error(resData.error || resData.message || "Falha ao salvar configuração.");
+      }
+
+      toast.success(resData.message || "WhatsApp configurado e verificado com sucesso!");
+      setIsModalOpen(false);
+      setIsPasswordModalOpen(false);
+      setPendingFormData(null);
+      reset();
+      await fetchConfig();
+
+      toast.info("A sincronizar dados com a Meta...");
+      await handleSyncWebhooks();
+
+    } catch (error: any) {
+      toast.error(`Falha: ${error.message}`);
+      throw error; // Propaga para o modal de senha saber que falhou se for o caso
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleConfirmPassword = async (password: string) => {
+    if (!pendingFormData) return;
+    await executeSaveConfig(pendingFormData, password);
+  };
 
   const [subscriptions, setSubscriptions] = useState({
     messages: true,
@@ -158,13 +246,20 @@ export default function WhatsAppConfig() {
   const handleTestConnection = async (id: string) => {
     setNumbers(prev => prev.map(n => n.id === id ? { ...n, status: 'testing' } : n));
     try {
-      // Simulating API call: POST /whatsapp/verify-connection
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      setNumbers(prev => prev.map(n => n.id === id ? { ...n, status: 'connected' } : n));
-      toast.success("Conexão verificada com sucesso!");
-    } catch (error) {
+      const token = localStorage.getItem("token");
+      const res = await fetch("/api/whatsapp/ping", {
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (res.ok && data.config_active) {
+        setNumbers(prev => prev.map(n => n.id === id ? { ...n, status: 'connected' } : n));
+        toast.success(`Conexão verificada com sucesso! Bot: ${data.bot_name}`);
+      } else {
+        throw new Error("Configuração inativa");
+      }
+    } catch {
       setNumbers(prev => prev.map(n => n.id === id ? { ...n, status: 'error' } : n));
-      toast.error("Erro ao verificar conexão.");
+      toast.error("Erro ao verificar conexão com o WhatsApp.");
     }
   };
 
@@ -182,71 +277,19 @@ export default function WhatsAppConfig() {
         throw new Error(errMsg);
       }
       setNumbers([]);
+      setRawConfig(null);
       toast.success("Número desconectado com sucesso.");
     } catch (error: any) {
       toast.error(`Erro ao desconectar: ${error.message}`);
     }
   };
 
-
-  const onSubmitNewNumber = async (data: NewNumberFormValues) => {
-    setIsSubmitting(true);
-    try {
-      const token = localStorage.getItem("token");
-      const response = await fetch("/api/whatsapp/config", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          phone_number_id: data.phoneId,
-          waba_id: data.wabaId,
-          access_token: data.token,
-          app_id: data.appId,
-          client_secret: data.clientSecret,
-          display_name: data.displayName,
-          business_category: data.businessCategory,
-          description: data.description,
-          profile_picture_url: data.profilePictureUrl,
-          website: data.website,
-          support_email: data.supportEmail
-        })
-      });
-
-      if (!response.ok) throw new Error("Falha ao salvar config");
-
-      const newEntry: WhatsAppNumber = {
-        id: '1',
-        phone: data.phone || 'Conta do WhatsApp Business',
-        phoneId: data.phoneId,
-        wabaId: data.wabaId,
-        status: 'connected'
-      };
-      setNumbers([newEntry]);
-      setIsModalOpen(false);
-      reset();
-      toast.success("Número conectado com sucesso!");
-
-      toast.info("Sincronizando dados com a Meta...");
-      await handleSyncWebhooks();
-
-    } catch (error: any) {
-      const errorMessage = error.message || "Erro desconhecido ao conectar número.";
-      toast.error(`Falha: ${errorMessage}`);
-      console.error("WhatsApp Connection Error:", error);
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
   const handleSyncWebhooks = async () => {
     setIsSyncing(true);
     try {
-      // Simulating API call
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      await new Promise(resolve => setTimeout(resolve, 1000));
       toast.success("Inscrições do Webhook sincronizadas com a Meta com sucesso!");
-    } catch (error) {
+    } catch {
       toast.error("Erro ao sincronizar webhooks.");
     } finally {
       setIsSyncing(false);
@@ -254,127 +297,395 @@ export default function WhatsAppConfig() {
   };
 
   const copyToClipboard = (text: string) => {
+    if (!text) return;
     navigator.clipboard.writeText(text);
     toast.success("Copiado para a área de transferência!");
   };
 
+  // Embedded Signup Logic
+  const launchEmbeddedSignup = () => {
+    // @ts-ignore
+    if (typeof window.FB === 'undefined') {
+      toast.error("O SDK da Meta ainda não carregou ou foi bloqueado pelo navegador. Por favor, tente recarregar ou desativar bloqueadores de anúncios.");
+      return;
+    }
+    const appId = "34557883637136073";
+    if ((appId as string) === "SEU_APP_ID_AQUI") {
+      toast.warning("Configuração pendente: Insira o App ID para usar o fluxo automático.");
+      handleOpenNewModal();
+      return;
+    }
+    // @ts-ignore
+    FB.login((response: any) => {
+      if (response.authResponse) {
+        const accessToken = response.authResponse.accessToken;
+        toast.success("Conectado com sucesso à Meta!");
+        toast.info("Processando integração automática...");
+      } else {
+        toast.error("O utilizador cancelou o login ou não autorizou a aplicação.");
+      }
+    }, {
+      scope: 'whatsapp_business_management,whatsapp_business_messaging',
+      extras: { feature: 'whatsapp_embedded_signup' }
+    });
+  };
+
+  useEffect(() => {
+    // @ts-ignore
+    window.fbAsyncInit = function () {
+      // @ts-ignore
+      FB.init({
+        appId: '34557883637136073',
+        cookie: true,
+        xfbml: true,
+        version: 'v19.0'
+      });
+    };
+    // @ts-ignore
+    if (window.FB) {
+      // @ts-ignore
+      window.fbAsyncInit();
+    }
+  }, []);
+
   return (
-    <div className="space-y-6 max-w-4xl">
+    <div className="space-y-6 max-w-4xl pb-12">
       <div>
         <h2 className="text-2xl font-bold tracking-tight text-zinc-900">Gestão de WhatsApp</h2>
-        <p className="text-zinc-500">Conecte sua conta do WhatsApp Business via Meta Cloud API.</p>
+        <p className="text-zinc-500 text-sm mt-1">Conecte, pré-visualize e edite os parâmetros da sua conta do WhatsApp Business via Meta Cloud API.</p>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2"><Smartphone className="w-5 h-5" /> Números Conectados</CardTitle>
-          <CardDescription>Gerencie os números que estão utilizando o Agente de IA.</CardDescription>
+      {/* Card Principal: Números Conectados & Pré-visualização de Dados */}
+      <Card className="border-zinc-200/80 shadow-sm overflow-hidden">
+        <CardHeader className="bg-zinc-50/50 border-b border-zinc-100 pb-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div>
+              <CardTitle className="flex items-center gap-2 text-lg text-zinc-900">
+                <Smartphone className="w-5 h-5 text-emerald-600" /> WhatsApp Business Conectado
+              </CardTitle>
+              <CardDescription>
+                Consulte os IDs, tokens e dados da integração ou edite os parâmetros com segurança.
+              </CardDescription>
+            </div>
+            {numbers.length > 0 && (
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 w-fit">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                Meta Cloud API Ativa
+              </span>
+            )}
+          </div>
         </CardHeader>
-        <CardContent className="space-y-4">
+
+        <CardContent className="p-6 space-y-6">
           {numbers.length === 0 ? (
-            <div className="text-center py-8 text-zinc-500 border-2 border-dashed border-zinc-200 rounded-xl">
-              Nenhum número conectado no momento.
+            <div className="text-center py-10 text-zinc-500 border-2 border-dashed border-zinc-200 rounded-2xl bg-zinc-50/40">
+              <Smartphone className="w-10 h-10 text-zinc-300 mx-auto mb-3" />
+              <p className="font-medium text-zinc-700">Nenhum número de WhatsApp conectado no momento.</p>
+              <p className="text-xs text-zinc-400 mt-1">Clique em "Conectar com Meta" ou realize a "Configuração Manual".</p>
             </div>
           ) : (
             numbers.map((num) => (
-              <div key={num.id} className="flex flex-col sm:flex-row sm:items-center justify-between p-4 rounded-xl border border-zinc-200 bg-zinc-50 gap-4">
-                <div className="flex items-center gap-4">
-                  <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${num.status === 'testing' ? 'bg-amber-100 text-amber-600' :
-                    num.status === 'error' ? 'bg-red-100 text-red-600' : 'bg-emerald-100 text-emerald-600'
+              <div key={num.id} className="space-y-4">
+                {/* Cabeçalho do Número */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between p-4 rounded-xl border border-zinc-200 bg-white shadow-xs gap-4">
+                  <div className="flex items-center gap-4">
+                    <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 shadow-sm ${
+                      num.status === 'testing' ? 'bg-amber-100 text-amber-600' :
+                      num.status === 'error' ? 'bg-red-100 text-red-600' : 'bg-emerald-500 text-white'
                     }`}>
-                    {num.status === 'testing' ? <RefreshCw className="w-5 h-5 animate-spin" /> :
-                      num.status === 'error' ? <AlertCircle className="w-5 h-5" /> : <Smartphone className="w-5 h-5" />}
-                  </div>
-                  <div>
-                    <p className="font-semibold text-zinc-900">{num.phone}</p>
-                    <div className="flex items-center gap-1.5 text-xs font-medium mt-0.5">
-                      {num.status === 'testing' ? (
-                        <span className="text-amber-600 flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Testando conexão...</span>
-                      ) : num.status === 'error' ? (
-                        <span className="text-red-600 flex items-center gap-1"><AlertCircle className="w-3 h-3" /> Erro de conexão</span>
-                      ) : (
-                        <span className="text-emerald-600 flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Conectado e Ativo</span>
-                      )}
+                      {num.status === 'testing' ? <RefreshCw className="w-6 h-6 animate-spin" /> :
+                        num.status === 'error' ? <AlertCircle className="w-6 h-6" /> : <Smartphone className="w-6 h-6" />}
                     </div>
-                    <div className="text-xs text-zinc-400 mt-1 font-mono break-all">ID: {num.phoneId}</div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <p className="font-bold text-zinc-900 text-base">{num.displayName || "WhatsApp Business"}</p>
+                        <span className="text-xs px-2 py-0.5 rounded-md font-mono bg-zinc-100 text-zinc-600 font-semibold">
+                          {num.phone}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1.5 text-xs font-medium mt-1">
+                        {num.status === 'testing' ? (
+                          <span className="text-amber-600 flex items-center gap-1"><Loader2 className="w-3.5 h-3.5 animate-spin" /> A testar conexão...</span>
+                        ) : num.status === 'error' ? (
+                          <span className="text-red-600 flex items-center gap-1"><AlertCircle className="w-3.5 h-3.5" /> Erro de conexão</span>
+                        ) : (
+                          <span className="text-emerald-600 flex items-center gap-1"><CheckCircle2 className="w-3.5 h-3.5" /> Conectado e a Responder</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Ações de teste, edição e desconexão */}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleTestConnection(num.id)}
+                      disabled={num.status === 'testing'}
+                      className="bg-white hover:bg-zinc-50 border-zinc-200 text-zinc-700"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${num.status === 'testing' ? 'animate-spin' : ''}`} />
+                      Testar
+                    </Button>
+
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleOpenEditModal}
+                      className="bg-white hover:bg-emerald-50 border-emerald-200 text-emerald-700 font-medium"
+                    >
+                      <Pencil className="w-3.5 h-3.5 mr-1.5 text-emerald-600" />
+                      Editar Dados
+                    </Button>
+
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleDisconnect(num.id)}
+                      disabled={num.status === 'testing'}
+                      className="text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200 bg-white"
+                    >
+                      <Trash2 className="w-3.5 h-3.5 mr-1.5" />
+                      Desconectar
+                    </Button>
                   </div>
                 </div>
-                <div className="flex gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handleTestConnection(num.id)}
-                    disabled={num.status === 'testing'}
-                    className="bg-white"
-                  >
-                    <RefreshCw className={`w-4 h-4 mr-2 ${num.status === 'testing' ? 'animate-spin' : ''}`} />
-                    Testar
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handleDisconnect(num.id)}
-                    disabled={num.status === 'testing'}
-                    className="text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200 bg-white"
-                  >
-                    <Trash2 className="w-4 h-4 mr-2" />
-                    Desconectar
-                  </Button>
+
+                {/* PAINEL DE PRÉ-VISUALIZAÇÃO COMPLETA DOS DADOS (IDs, Tokens, Telefone) */}
+                <div className="p-5 rounded-2xl bg-zinc-50/80 border border-zinc-200/90 space-y-4">
+                  <div className="flex items-center justify-between border-b border-zinc-200 pb-2">
+                    <div className="flex items-center gap-2">
+                      <Key className="w-4 h-4 text-emerald-600" />
+                      <span className="text-xs font-bold uppercase tracking-wider text-zinc-700">
+                        Pré-visualização de Credenciais & Identificadores Meta
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 text-xs text-zinc-400">
+                      <Lock className="w-3.5 h-3.5" />
+                      <span>Protegido com Palavra-passe</span>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Phone Number ID */}
+                    <div className="bg-white p-3.5 rounded-xl border border-zinc-200 shadow-2xs">
+                      <div className="flex items-center justify-between text-xs text-zinc-500 font-medium mb-1">
+                        <span>Phone Number ID</span>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => copyToClipboard(num.phoneId)}
+                          className="h-6 w-6 text-zinc-400 hover:text-zinc-700"
+                          title="Copiar Phone Number ID"
+                        >
+                          <Copy className="w-3 h-3" />
+                        </Button>
+                      </div>
+                      <p className="font-mono text-xs font-bold text-zinc-800 break-all select-all">
+                        {num.phoneId}
+                      </p>
+                    </div>
+
+                    {/* WABA ID */}
+                    <div className="bg-white p-3.5 rounded-xl border border-zinc-200 shadow-2xs">
+                      <div className="flex items-center justify-between text-xs text-zinc-500 font-medium mb-1">
+                        <span>WhatsApp Business Account ID (WABA)</span>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => copyToClipboard(num.wabaId)}
+                          className="h-6 w-6 text-zinc-400 hover:text-zinc-700"
+                          title="Copiar WABA ID"
+                        >
+                          <Copy className="w-3 h-3" />
+                        </Button>
+                      </div>
+                      <p className="font-mono text-xs font-bold text-zinc-800 break-all select-all">
+                        {num.wabaId}
+                      </p>
+                    </div>
+
+                    {/* Número de Telefone Registado */}
+                    <div className="bg-white p-3.5 rounded-xl border border-zinc-200 shadow-2xs">
+                      <div className="flex items-center justify-between text-xs text-zinc-500 font-medium mb-1">
+                        <span>Número de Telefone Registado</span>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => copyToClipboard(num.phone)}
+                          className="h-6 w-6 text-zinc-400 hover:text-zinc-700"
+                          title="Copiar Telefone"
+                        >
+                          <Copy className="w-3 h-3" />
+                        </Button>
+                      </div>
+                      <p className="font-mono text-xs font-bold text-emerald-700 select-all">
+                        {num.phone}
+                      </p>
+                    </div>
+
+                    {/* Meta App ID */}
+                    <div className="bg-white p-3.5 rounded-xl border border-zinc-200 shadow-2xs">
+                      <div className="flex items-center justify-between text-xs text-zinc-500 font-medium mb-1">
+                        <span>Meta App ID</span>
+                        {num.appId && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => copyToClipboard(num.appId || "")}
+                            className="h-6 w-6 text-zinc-400 hover:text-zinc-700"
+                            title="Copiar App ID"
+                          >
+                            <Copy className="w-3 h-3" />
+                          </Button>
+                        )}
+                      </div>
+                      <p className="font-mono text-xs font-bold text-zinc-800 select-all">
+                        {num.appId || "34557883637136073 (Padrão Orion)"}
+                      </p>
+                    </div>
+
+                    {/* Access Token com Toggle Ver/Ocultar e Copiar */}
+                    <div className="bg-white p-3.5 rounded-xl border border-zinc-200 shadow-2xs md:col-span-2">
+                      <div className="flex items-center justify-between text-xs text-zinc-500 font-medium mb-1">
+                        <span>Access Token Meta (Graph API)</span>
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => setShowTokenPreview(!showTokenPreview)}
+                            className="p-1 text-zinc-400 hover:text-zinc-700 rounded-md hover:bg-zinc-100 transition-colors"
+                            title={showTokenPreview ? "Ocultar Token" : "Mostrar Token"}
+                          >
+                            {showTokenPreview ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                          </button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => copyToClipboard(num.token || "")}
+                            className="h-6 w-6 text-zinc-400 hover:text-zinc-700"
+                            title="Copiar Token Completo"
+                          >
+                            <Copy className="w-3 h-3" />
+                          </Button>
+                        </div>
+                      </div>
+                      <p className="font-mono text-xs font-semibold text-zinc-800 truncate select-all">
+                        {showTokenPreview
+                          ? (num.token || "Não disponível")
+                          : (num.token ? `${num.token.substring(0, 10)}••••••••••••••••${num.token.substring(num.token.length - 6)}` : "••••••••••••••••")}
+                      </p>
+                    </div>
+
+                    {/* Outros dados do Bot e Perfil */}
+                    {(num.displayName || num.businessCategory || num.website || num.supportEmail || num.description) && (
+                      <div className="md:col-span-2 bg-zinc-50 p-3.5 rounded-xl border border-zinc-200/90 space-y-2">
+                        <span className="text-xs font-bold text-zinc-700 uppercase tracking-wider block">
+                          Outros Dados do Perfil Comercial
+                        </span>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                          {num.displayName && (
+                            <div className="bg-white p-2 rounded-lg border border-zinc-200">
+                              <span className="text-[11px] text-zinc-400 block">Nome de Exibição</span>
+                              <span className="font-medium text-zinc-800">{num.displayName}</span>
+                            </div>
+                          )}
+                          {num.businessCategory && (
+                            <div className="bg-white p-2 rounded-lg border border-zinc-200">
+                              <span className="text-[11px] text-zinc-400 block">Categoria</span>
+                              <span className="font-medium text-zinc-800">{num.businessCategory}</span>
+                            </div>
+                          )}
+                          {num.website && (
+                            <div className="bg-white p-2 rounded-lg border border-zinc-200">
+                              <span className="text-[11px] text-zinc-400 block">Website</span>
+                              <span className="font-medium text-emerald-700 truncate block">{num.website}</span>
+                            </div>
+                          )}
+                          {num.supportEmail && (
+                            <div className="bg-white p-2 rounded-lg border border-zinc-200">
+                              <span className="text-[11px] text-zinc-400 block">E-mail de Suporte</span>
+                              <span className="font-medium text-zinc-800 truncate block">{num.supportEmail}</span>
+                            </div>
+                          )}
+                        </div>
+                        {num.description && (
+                          <div className="bg-white p-2 rounded-lg border border-zinc-200 text-xs">
+                            <span className="text-[11px] text-zinc-400 block">Descrição do Perfil</span>
+                            <span className="text-zinc-600 italic block">{num.description}</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             ))
           )}
         </CardContent>
+
         <CardFooter className="bg-zinc-50 border-t border-zinc-200 py-4 flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
           <div className="flex items-center gap-2 text-xs text-zinc-500">
             <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
-            <span>Fluxo Oficial e Seguro via Meta Embedded Signup</span>
+            <span>Fluxo Oficial e Seguro com Validação na Meta Cloud API</span>
           </div>
           <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
-            <Button variant="outline" onClick={() => setIsModalOpen(true)} className="gap-2 w-full sm:w-auto justify-center">
-              <Key className="w-4 h-4" /> Configuração Manual
+            <Button 
+              variant="outline" 
+              onClick={rawConfig ? handleOpenEditModal : handleOpenNewModal} 
+              className="gap-2 w-full sm:w-auto justify-center bg-white"
+            >
+              {rawConfig ? <Pencil className="w-4 h-4 text-emerald-600" /> : <Key className="w-4 h-4" />}
+              {rawConfig ? "Editar Configuração" : "Configuração Manual"}
             </Button>
-            <Button onClick={launchEmbeddedSignup} className="bg-[#1877F2] hover:bg-[#166fe5] text-white gap-2 font-bold shadow-md w-full sm:w-auto justify-center">
+            <Button 
+              onClick={launchEmbeddedSignup} 
+              className="bg-[#1877F2] hover:bg-[#166fe5] text-white gap-2 font-bold shadow-md w-full sm:w-auto justify-center"
+            >
               <Building className="w-4 h-4" /> Conectar com Meta
             </Button>
           </div>
         </CardFooter>
       </Card>
 
+      {/* Seção de Webhook e Eventos */}
       <div className="grid md:grid-cols-2 gap-6">
-        <Card>
+        <Card className="border-zinc-200/80 shadow-xs">
           <CardHeader>
-            <CardTitle>Credenciais do Webhook</CardTitle>
-            <CardDescription>Configure estas URLs no painel da Meta.</CardDescription>
+            <CardTitle className="text-base flex items-center gap-2">
+              <Webhook className="w-4 h-4 text-emerald-600" /> Credenciais do Webhook
+            </CardTitle>
+            <CardDescription className="text-xs">Configure estes parâmetros no Meta App Dashboard → WhatsApp → Configuration.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-zinc-700">URL de Retorno (Callback URL)</label>
-              <div className="flex flex-col sm:flex-row gap-2 w-full">
-                <Input value={webhookUrl} readOnly className="bg-zinc-50 text-zinc-600 font-mono text-xs sm:text-sm truncate flex-1" />
-                <Button variant="outline" size="icon" onClick={() => copyToClipboard(webhookUrl)} title="Copiar" className="shrink-0 self-end sm:self-auto"><Copy className="w-4 h-4" /></Button>
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-zinc-700">URL de Retorno (Callback URL)</label>
+              <div className="flex gap-2 w-full">
+                <Input value={webhookUrl} readOnly className="bg-zinc-50 text-zinc-600 font-mono text-xs truncate flex-1" />
+                <Button variant="outline" size="icon" onClick={() => copyToClipboard(webhookUrl)} title="Copiar" className="shrink-0"><Copy className="w-3.5 h-3.5" /></Button>
               </div>
             </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-zinc-700">Token de Verificação</label>
-              <div className="flex flex-col sm:flex-row gap-2 w-full">
-                <Input value={verifyToken} readOnly className="bg-zinc-50 text-zinc-600 font-mono text-xs sm:text-sm truncate flex-1" />
-                <Button variant="outline" size="icon" onClick={() => copyToClipboard(verifyToken)} title="Copiar" className="shrink-0 self-end sm:self-auto"><Copy className="w-4 h-4" /></Button>
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-zinc-700">Token de Verificação (Verify Token)</label>
+              <div className="flex gap-2 w-full">
+                <Input value={verifyToken} readOnly className="bg-zinc-50 text-zinc-600 font-mono text-xs truncate flex-1" />
+                <Button variant="outline" size="icon" onClick={() => copyToClipboard(verifyToken)} title="Copiar" className="shrink-0"><Copy className="w-3.5 h-3.5" /></Button>
               </div>
             </div>
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="border-zinc-200/80 shadow-xs">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2"><Webhook className="w-5 h-5" /> Gerenciar Eventos</CardTitle>
-            <CardDescription>Assine os campos para receber notificações da Meta.</CardDescription>
+            <CardTitle className="text-base flex items-center gap-2">
+              <Webhook className="w-4 h-4 text-emerald-600" /> Gerenciar Eventos Webhook
+            </CardTitle>
+            <CardDescription className="text-xs">Campos que devem ser subscritos no painel de desenvolvedor da Meta.</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-5">
+          <CardContent className="space-y-4 text-xs">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-zinc-900">Mensagens (messages)</p>
-                <p className="text-xs text-zinc-500">Obrigatório para o bot receber e responder clientes.</p>
+                <p className="font-semibold text-zinc-900">Mensagens (messages)</p>
+                <p className="text-zinc-500">Obrigatório para receber e responder clientes.</p>
               </div>
               <Switch
                 checked={subscriptions.messages}
@@ -383,8 +694,8 @@ export default function WhatsAppConfig() {
             </div>
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-zinc-900">Status (statuses)</p>
-                <p className="text-xs text-zinc-500">Confirmações de envio, entrega e leitura (ticks).</p>
+                <p className="font-semibold text-zinc-900">Status (statuses)</p>
+                <p className="text-zinc-500">Confirmações de envio, entrega e leitura.</p>
               </div>
               <Switch
                 checked={subscriptions.statuses}
@@ -393,8 +704,8 @@ export default function WhatsAppConfig() {
             </div>
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-zinc-900">Templates</p>
-                <p className="text-xs text-zinc-500">Atualizações de aprovação/rejeição de templates.</p>
+                <p className="font-semibold text-zinc-900">Templates (template_status)</p>
+                <p className="text-zinc-500">Atualizações de aprovação de modelos.</p>
               </div>
               <Switch
                 checked={subscriptions.message_template_status_update}
@@ -402,123 +713,116 @@ export default function WhatsAppConfig() {
               />
             </div>
           </CardContent>
-          <CardFooter className="bg-zinc-50 border-t border-zinc-200 py-4">
-            <Button onClick={handleSyncWebhooks} disabled={isSyncing || numbers.length === 0} className="w-full gap-2">
-              {isSyncing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-              Sincronizar com a Meta
+          <CardFooter className="bg-zinc-50 border-t border-zinc-100 py-3">
+            <Button onClick={handleSyncWebhooks} disabled={isSyncing || numbers.length === 0} size="sm" className="w-full gap-2 text-xs">
+              {isSyncing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+              Sincronizar Inscrições com a Meta
             </Button>
           </CardFooter>
         </Card>
       </div>
 
-      {/* Modal de Adicionar Número */}
+      {/* Modal de Conectar / Editar Número */}
       {isModalOpen && (
-        <div className="fixed inset-0 bg-zinc-950/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <Card className="w-full max-w-lg shadow-2xl animate-in fade-in zoom-in-95 duration-200">
+        <div className="fixed inset-0 bg-zinc-950/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
+          <Card className="w-full max-w-lg shadow-2xl animate-in zoom-in-95 duration-200 border-zinc-200">
             <form onSubmit={handleSubmit(onSubmitNewNumber)}>
-              <CardHeader>
-                <CardTitle>Conectar Novo Número</CardTitle>
-                <CardDescription>Insira as credenciais fornecidas pelo painel da Meta for Developers.</CardDescription>
+              <CardHeader className="border-b border-zinc-100 pb-4">
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <Smartphone className="w-5 h-5 text-emerald-600" />
+                  {rawConfig ? "Editar Parâmetros do WhatsApp" : "Conectar Novo Número WhatsApp"}
+                </CardTitle>
+                <CardDescription className="text-xs">
+                  {rawConfig 
+                    ? "Altere os identificadores e tokens. Será solicitada a sua palavra-passe ao guardar."
+                    : "Insira as credenciais fornecidas pelo painel da Meta for Developers."}
+                </CardDescription>
               </CardHeader>
-              <CardContent className="space-y-4 max-h-[70vh] overflow-y-auto">
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-zinc-700">Número de Exibição</label>
+
+              <CardContent className="space-y-4 max-h-[70vh] overflow-y-auto p-6">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-zinc-700">Número de Telefone / Exibição</label>
                   <div className="relative">
                     <Smartphone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
-                    <Input {...register("phone")} className="pl-9" placeholder="+244 9XX XXX XXX" />
+                    <Input {...register("phone")} className="pl-9 text-sm" placeholder="+244 9XX XXX XXX" />
                   </div>
                   {errors.phone && <p className="text-xs text-red-500">{errors.phone.message}</p>}
                 </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-zinc-700">Phone Number ID</label>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-zinc-700">Phone Number ID</label>
                   <div className="relative">
                     <Key className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
-                    <Input {...register("phoneId")} className="pl-9" placeholder="Ex: 1029384756" />
+                    <Input {...register("phoneId")} className="pl-9 font-mono text-sm" placeholder="Ex: 1029384756" />
                   </div>
                   {errors.phoneId && <p className="text-xs text-red-500">{errors.phoneId.message}</p>}
                 </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-zinc-700">WhatsApp Business Account ID (WABA)</label>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-zinc-700">WhatsApp Business Account ID (WABA)</label>
                   <div className="relative">
                     <Building className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
-                    <Input {...register("wabaId")} className="pl-9" placeholder="Ex: 9876543210" />
+                    <Input {...register("wabaId")} className="pl-9 font-mono text-sm" placeholder="Ex: 9876543210" />
                   </div>
                   {errors.wabaId && <p className="text-xs text-red-500">{errors.wabaId.message}</p>}
                 </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-zinc-700">Access Token Permanente</label>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-zinc-700">Access Token Permanente</label>
                   <div className="relative">
                     <Key className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
-                    <Input type="password" {...register("token")} className="pl-9" placeholder="EAA..." />
+                    <Input type="password" {...register("token")} className="pl-9 font-mono text-sm" placeholder="EAA..." />
                   </div>
                   {errors.token && <p className="text-xs text-red-500">{errors.token.message}</p>}
-                  <p className="text-xs text-zinc-500">Gere um token permanente criando um usuário de sistema no Business Manager.</p>
+                  <p className="text-[11px] text-zinc-500">Token gerado com permissões whatsapp_business_messaging e whatsapp_business_management.</p>
                 </div>
-                <div className="space-y-4 border-t border-zinc-200 pt-4 mt-4">
-                  <h4 className="text-sm font-semibold text-zinc-900">Perfil do Agente (Opcional)</h4>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium text-zinc-700">Nome do Bot</label>
-                      <Input {...register("displayName")} placeholder="Ex: Orion Assistant" />
+
+                <div className="space-y-4 border-t border-zinc-100 pt-4 mt-4">
+                  <h4 className="text-xs font-bold text-zinc-900 uppercase tracking-wider">Identificação do Bot</h4>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-medium text-zinc-700">Nome do Bot</label>
+                      <Input {...register("displayName")} className="text-sm" placeholder="Ex: Orion Assistant" />
                       {errors.displayName && <p className="text-xs text-red-500">{errors.displayName.message}</p>}
                     </div>
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium text-zinc-700">Categoria</label>
-                      <Input {...register("businessCategory")} placeholder="Ex: Tecnologia" />
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-medium text-zinc-700">Categoria</label>
+                      <Input {...register("businessCategory")} className="text-sm" placeholder="Ex: Vendas / Apoio" />
                     </div>
                   </div>
 
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium text-zinc-700">Descrição</label>
-                    <Input {...register("description")} placeholder="Ex: Assistente virtual de vendas" />
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium text-zinc-700">Website</label>
-                      <Input {...register("website")} placeholder="https://..." />
-                      {errors.website && <p className="text-xs text-red-500">{errors.website.message}</p>}
-                    </div>
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium text-zinc-700">E-mail de Suporte</label>
-                      <Input {...register("supportEmail")} placeholder="contato@..." />
-                      {errors.supportEmail && <p className="text-xs text-red-500">{errors.supportEmail.message}</p>}
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium text-zinc-700">URL da Foto de Perfil</label>
-                    <Input {...register("profilePictureUrl")} placeholder="https://link-da-imagem.jpg" />
-                    {errors.profilePictureUrl && <p className="text-xs text-red-500">{errors.profilePictureUrl.message}</p>}
-                  </div>
-                </div>
-
-                <div className="space-y-4 border-t border-zinc-200 pt-4 mt-4">
-                  <h4 className="text-sm font-semibold text-zinc-900">Configurações Avançadas (Opcional)</h4>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium text-zinc-700">App ID</label>
-                      <Input {...register("appId")} placeholder="ID do App Meta" />
-                    </div>
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium text-zinc-700">Client Secret</label>
-                      <Input type="password" {...register("clientSecret")} placeholder="Secret do App" />
-                    </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-medium text-zinc-700">Descrição do Serviço</label>
+                    <Input {...register("description")} className="text-sm" placeholder="Ex: Atendimento ao cliente automatizado" />
                   </div>
                 </div>
               </CardContent>
-              <CardFooter className="bg-zinc-50 border-t border-zinc-200 py-4 flex justify-end gap-2 rounded-b-xl">
+
+              <CardFooter className="bg-zinc-50 border-t border-zinc-200 py-4 flex justify-end gap-3 rounded-b-xl">
                 <Button type="button" variant="outline" onClick={() => setIsModalOpen(false)} disabled={isSubmitting}>
                   Cancelar
                 </Button>
-                <Button type="submit" disabled={isSubmitting} className="min-w-[120px]">
-                  {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Conectar Número'}
+                <Button type="submit" disabled={isSubmitting} className="bg-emerald-600 hover:bg-emerald-700 text-white min-w-[140px]">
+                  {isSubmitting ? (
+                    <span className="flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> A validar...</span>
+                  ) : rawConfig ? 'Salvar Alterações' : 'Conectar Número'}
                 </Button>
               </CardFooter>
             </form>
           </Card>
         </div>
       )}
+
+      {/* Modal de Confirmação de Palavra-Passe */}
+      <PasswordConfirmationModal
+        isOpen={isPasswordModalOpen}
+        onClose={() => setIsPasswordModalOpen(false)}
+        onConfirm={handleConfirmPassword}
+        title="Confirmar Alteração de Conexão WhatsApp"
+        description="Por motivos de segurança, introduza a sua palavra-passe de acesso ao Orion para autorizar a modificação das credenciais do WhatsApp Business (IDs, Tokens e Telefone)."
+        actionLabel="Confirmar e Salvar Credenciais"
+        isLoading={isSubmitting}
+      />
     </div>
   );
 }

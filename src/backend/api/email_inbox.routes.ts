@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { supabaseAdmin } from '../config/supabase';
 import { requireAuth, AuthRequest } from '../middleware/auth';
+import { verifyUserPassword } from '../utils/authVerify';
 import { EmailInboxService } from '../services/email_inbox.service';
 
 const router = Router();
@@ -10,7 +11,7 @@ router.get('/config', requireAuth, async (req: AuthRequest, res) => {
   try {
     const { data } = await supabaseAdmin
       .from('email_inbox_config')
-      .select('id, imap_host, imap_port, imap_user, imap_tls, smtp_host, smtp_port, smtp_user, smtp_from, is_active, automation_enabled, created_at')
+      .select('id, imap_host, imap_port, imap_user, imap_password, imap_tls, smtp_host, smtp_port, smtp_user, smtp_password, smtp_from, is_active, automation_enabled, auto_reply_prompt, created_at')
       .eq('org_id', req.user!.orgId)
       .maybeSingle();
     res.json(data || null);
@@ -26,11 +27,25 @@ router.post('/config', requireAuth, async (req: AuthRequest, res) => {
     const {
       imap_host, imap_port, imap_user, imap_password, imap_tls,
       smtp_host, smtp_port, smtp_user, smtp_password, smtp_from,
-      automation_enabled,
+      automation_enabled, auto_reply_prompt, password
     } = req.body;
 
     if (!imap_host || !imap_user || !imap_password) {
       return res.status(400).json({ error: 'imap_host, imap_user e imap_password são obrigatórios.' });
+    }
+
+    // Verificar se já existe configuração existente (edição)
+    const { data: existing } = await supabaseAdmin
+      .from('email_inbox_config')
+      .select('id, is_active')
+      .eq('org_id', orgId)
+      .maybeSingle();
+
+    if (existing) {
+      const authCheck = await verifyUserPassword(req.user?.id, req.user?.email, password);
+      if (!authCheck.valid) {
+        return res.status(401).json({ error: authCheck.error || 'Palavra-passe incorreta. Acesso negado para editar as credenciais de e-mail.' });
+      }
     }
 
     // Testar ligação IMAP antes de guardar
@@ -58,9 +73,10 @@ router.post('/config', requireAuth, async (req: AuthRequest, res) => {
         smtp_from: smtp_from || imap_user,
         is_active: true,
         automation_enabled: automation_enabled || false,
+        auto_reply_prompt: auto_reply_prompt || null,
         updated_at: new Date().toISOString(),
       }, { onConflict: 'org_id' })
-      .select('id, imap_host, imap_port, imap_user, imap_tls, smtp_host, smtp_port, smtp_user, smtp_from, is_active, automation_enabled')
+      .select('id, imap_host, imap_port, imap_user, imap_password, imap_tls, smtp_host, smtp_port, smtp_user, smtp_password, smtp_from, is_active, automation_enabled, auto_reply_prompt')
       .single();
 
     if (error) throw error;

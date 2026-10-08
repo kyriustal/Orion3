@@ -5,8 +5,9 @@ import { Button } from "@/src/components/ui/button";
 import { Input } from "@/src/components/ui/input";
 import { Label } from "@/src/components/ui/label";
 import { Switch } from "@/src/components/ui/switch";
-import { Save, Loader2, Key, User, Building2, Bot, ShieldCheck, Mail, Calendar, ExternalLink, CheckCircle2, XCircle, Clock, RefreshCw, Unlink, MessageSquare, Eye, EyeOff, Smartphone, Send, AlertTriangle } from "lucide-react";
+import { Save, Loader2, Key, User, Building2, Bot, ShieldCheck, Mail, Calendar, ExternalLink, CheckCircle2, XCircle, Clock, RefreshCw, Unlink, MessageSquare, Eye, EyeOff, Smartphone, Send, AlertTriangle, Power, Sparkles, Copy, Pencil, Lock } from "lucide-react";
 import { toast } from "sonner";
+import { PasswordConfirmationModal } from "@/src/components/auth/PasswordConfirmationModal";
 
 export default function Settings() {
   const location = useLocation();
@@ -18,7 +19,7 @@ export default function Settings() {
   const [isTestingTelcoSMS, setIsTestingTelcoSMS] = useState(false);
   const [testPhone, setTestPhone] = useState("");
   const [showTelcoKey, setShowTelcoKey] = useState(false);
-  const [activeTab, setActiveTab] = useState<"personal" | "company" | "ai" | "calendar" | "sms" | "security">("personal");
+  const [activeTab, setActiveTab] = useState<"personal" | "company" | "ai" | "email" | "calendar" | "sms" | "security">("personal");
   const [calendarConnected, setCalendarConnected] = useState<{ google: boolean; microsoft: boolean }>({ google: false, microsoft: false });
   const [calendarStatus, setCalendarStatus] = useState<any>(null);
 
@@ -66,6 +67,148 @@ export default function Settings() {
   const [isSavingHours, setIsSavingHours] = useState(false);
   const [isLoadingHours, setIsLoadingHours] = useState(false);
 
+  // ─── E-mail Corporativo (IMAP / SMTP) ─────────────────────────────────────────
+  const [emailConfig, setEmailConfig] = useState({
+    imap_host: "",
+    imap_port: 993,
+    imap_user: "",
+    imap_password: "",
+    imap_tls: true,
+    smtp_host: "",
+    smtp_port: 587,
+    smtp_user: "",
+    smtp_password: "",
+    smtp_from: "",
+    automation_enabled: false,
+    auto_reply_prompt: "",
+    is_active: false
+  });
+  const [isEditingEmail, setIsEditingEmail] = useState(false);
+  const [isTestingEmail, setIsTestingEmail] = useState(false);
+  const [showImapPass, setShowImapPass] = useState(false);
+  const [showSmtpPass, setShowSmtpPass] = useState(false);
+  const [isEmailPasswordModalOpen, setIsEmailPasswordModalOpen] = useState(false);
+
+  const fetchEmailConfig = async () => {
+    try {
+      const res = await fetch("/api/email-inbox/config", {
+        headers: { "Authorization": `Bearer ${localStorage.getItem("token")}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data) {
+          setEmailConfig(prev => ({
+            ...prev,
+            ...data,
+            imap_password: data.imap_password || prev.imap_password || "",
+            smtp_password: data.smtp_password || prev.smtp_password || "",
+          }));
+          if (data.is_active && data.imap_host) {
+            setIsEditingEmail(false);
+          } else {
+            setIsEditingEmail(true);
+          }
+        } else {
+          setIsEditingEmail(true);
+        }
+      }
+    } catch (err) {
+      console.warn("Aviso ao carregar config de e-mail:", err);
+    }
+  };
+
+  const handleSaveEmailConfig = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!emailConfig.imap_host || !emailConfig.imap_user || !emailConfig.imap_password) {
+      toast.error("Host, Usuário e Senha IMAP são obrigatórios.");
+      return;
+    }
+    if (emailConfig.is_active) {
+      setIsEmailPasswordModalOpen(true);
+    } else {
+      executeSaveEmailConfig();
+    }
+  };
+
+  const executeSaveEmailConfig = async (password?: string) => {
+    setIsTestingEmail(true);
+    try {
+      const res = await fetch("/api/email-inbox/config", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${localStorage.getItem("token")}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          ...emailConfig,
+          password
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Falha na conexão");
+      toast.success(data.message || "Caixa de correio configurada com sucesso!");
+      setIsEmailPasswordModalOpen(false);
+      setIsEditingEmail(false);
+      fetchEmailConfig();
+    } catch (err: any) {
+      toast.error(`Falha: ${err.message}`);
+      throw err;
+    } finally {
+      setIsTestingEmail(false);
+    }
+  };
+
+  const handleToggleEmailAutomation = async () => {
+    try {
+      const newStatus = !emailConfig.automation_enabled;
+      const res = await fetch("/api/email-inbox/toggle", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${localStorage.getItem("token")}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ enabled: newStatus })
+      });
+      if (res.ok) {
+        setEmailConfig(prev => ({ ...prev, automation_enabled: newStatus }));
+        toast.success(newStatus ? "Automação de e-mail ativada!" : "Automação de e-mail desativada.");
+      }
+    } catch {
+      toast.error("Erro ao alternar status do e-mail.");
+    }
+  };
+
+  const handleDisconnectEmail = async () => {
+    if (!window.confirm("Tem certeza que deseja desconectar a caixa de e-mail? A IA deixará de responder e-mails.")) return;
+    try {
+      const res = await fetch("/api/email-inbox/config", {
+        method: "DELETE",
+        headers: { "Authorization": `Bearer ${localStorage.getItem("token")}` }
+      });
+      if (res.ok) {
+        setEmailConfig({
+          imap_host: "",
+          imap_port: 993,
+          imap_user: "",
+          imap_password: "",
+          imap_tls: true,
+          smtp_host: "",
+          smtp_port: 587,
+          smtp_user: "",
+          smtp_password: "",
+          smtp_from: "",
+          automation_enabled: false,
+          auto_reply_prompt: "",
+          is_active: false
+        });
+        setIsEditingEmail(true);
+        toast.info("Caixa de e-mail desconectada.");
+      }
+    } catch {
+      toast.error("Erro ao desconectar e-mail.");
+    }
+  };
+
   // Detectar redirect de OAuth e mostrar feedback
   useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -73,7 +216,9 @@ export default function Settings() {
     const success = params.get('success');
     const error = params.get('error');
     const details = params.get('details');
-    if (tab === 'calendar') {
+    if (tab === 'email') {
+      setActiveTab('email');
+    } else if (tab === 'calendar') {
       setActiveTab('calendar');
       if (success === 'google_connected') {
         toast.success('Google Calendar conectado com sucesso!');
@@ -116,6 +261,7 @@ export default function Settings() {
   useEffect(() => {
     fetchSettings();
     fetchBusinessHours();
+    fetchEmailConfig();
   }, []);
 
   const fetchSettings = async () => {

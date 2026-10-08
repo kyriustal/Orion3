@@ -273,4 +273,34 @@ router.get('/me', requireAuth, async (req: AuthRequest, res) => {
     }
 });
 
+// ─── POST /api/auth/verify-password ──────────────────────────────────────────
+router.post('/verify-password', requireAuth, async (req: AuthRequest, res) => {
+    try {
+        const { password } = req.body;
+        const email = req.user?.email;
+
+        if (!password) {
+            return res.status(400).json({ error: 'Palavra-passe é obrigatória' });
+        }
+
+        if (!email) {
+            return res.status(400).json({ error: 'Utilizador não autenticado' });
+        }
+
+        // Tentar autenticar com a palavra-passe fornecida no Supabase Auth
+        const { data, error } = await supabase.auth.signInWithPassword({
+            email,
+            password,
+        });
+
+        if (error || !data.user) {
+            return res.status(401).json({ error: 'Palavra-passe incorreta. Acesso negado.' });
+        }
+
+        return res.json({ success: true, message: 'Palavra-passe verificada com sucesso.' });
+    } catch (error: any) {
+        return res.status(500).json({ error: error.message });
+    }
+});
+
 export default router;
