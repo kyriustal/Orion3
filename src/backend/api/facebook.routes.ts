@@ -46,49 +46,50 @@ router.post('/config', requireAuth, async (req: AuthRequest, res) => {
       return res.status(400).json({ error: 'Page ID e Page Access Token são obrigatórios.' });
     }
 
+    // Verificar se já existe uma configuração para esta org
+    const { data: existing } = await supabaseAdmin
+      .from('facebook_config')
+      .select('id')
+      .eq('org_id', orgId)
+      .maybeSingle();
+
     const payload: any = {
       org_id: orgId,
       page_id,
       access_token: page_access_token,
+      page_access_token,
       is_active: true,
       updated_at: new Date().toISOString(),
     };
-
-    // Adicionar campos opcionais apenas se existirem
     if (display_name) payload.display_name = display_name;
-    if (app_id)      payload.app_id = app_id;
-    if (app_secret)  payload.app_secret = app_secret;
+    if (app_id)       payload.app_id = app_id;
+    if (app_secret)   payload.app_secret = app_secret;
 
-    // Tentar guardar com page_access_token separado (caso a coluna exista na tabela)
-    try {
-      payload.page_access_token = page_access_token;
+    let result;
+    if (existing?.id) {
+      // UPDATE
       const { data, error } = await supabaseAdmin
         .from('facebook_config')
-        .upsert(payload, { onConflict: 'org_id' })
+        .update(payload)
+        .eq('id', existing.id)
         .select()
         .single();
-
       if (error) throw error;
-      console.log(`[FB CONFIG] Configuração salva para org ${orgId}, page_id: ${page_id}`);
-      return res.json(data);
-    } catch (firstErr: any) {
-      // Se falhar por causa da coluna page_access_token não existir, tentar sem ela
-      console.warn('[FB CONFIG] Tentativa 1 falhou:', firstErr.message, '- Tentando sem page_access_token...');
-      delete payload.page_access_token;
-
+      result = data;
+    } else {
+      // INSERT
+      payload.created_at = new Date().toISOString();
       const { data, error } = await supabaseAdmin
         .from('facebook_config')
-        .upsert(payload, { onConflict: 'org_id' })
+        .insert(payload)
         .select()
         .single();
-
-      if (error) {
-        console.error('[FB CONFIG] Erro final ao salvar:', error);
-        throw error;
-      }
-      console.log(`[FB CONFIG] Configuração salva (sem page_access_token) para org ${orgId}`);
-      return res.json(data);
+      if (error) throw error;
+      result = data;
     }
+
+    console.log(`[FB CONFIG] Configuração salva para org ${orgId}, page_id: ${page_id}`);
+    return res.json(result);
   } catch (err: any) {
     console.error('[FB CONFIG] Erro:', err.message);
     res.status(500).json({ error: err.message });

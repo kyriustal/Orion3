@@ -2,11 +2,134 @@ import { Router } from 'express';
 import { supabaseAdmin } from '../config/supabase';
 import { requireAuth } from '../middleware/auth';
 import { WhatsAppService } from '../services/whatsapp.service';
+import multer from 'multer';
+import * as XLSX from 'xlsx';
 
 const router = Router();
 
+// Multer: armazenamento em memória para parsing imediato
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 20 * 1024 * 1024 }, // 20 MB
+  fileFilter: (_req, file, cb) => {
+    const allowed = [
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // xlsx
+      'application/vnd.ms-excel', // xls
+      'text/csv',
+      'application/csv',
+      'application/pdf',
+      'text/plain'
+    ];
+    if (allowed.includes(file.mimetype) || file.originalname.match(/\.(xlsx?|csv|pdf|txt)$/i)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Formato não suportado. Use Excel (.xlsx/.xls), CSV ou PDF.'));
+    }
+  }
+});
+
 function sleep(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+interface TargetContact {
+  phone: string;
+  name: string;
+}
+
+/** Agrupa e resolve todos os contatos únicos da empresa a partir de todas as fontes ativas */
+async function resolveCampaignAudience(orgId: string, audience: string, filters: any): Promise<TargetContact[]> {
+  const contactMap = new Map<string, TargetContact>();
+
+  const normalizePhone = (p: string) => {
+    if (!p) return '';
+    return p.replace(/[^\d]/g, '');
+  };
+
+  const addContact = (rawPhone: string, rawName?: string) => {
+    const phone = normalizePhone(rawPhone);
+    if (!phone || phone.length < 8) return;
+    const existing = contactMap.get(phone);
+    const validName = (rawName && rawName.trim() !== 'Sem nome') ? rawName.trim() : '';
+    const name = validName || (existing?.name && existing.name !== 'Cliente' ? existing.name : 'Cliente');
+    contactMap.set(phone, { phone, name });
+  };
+
+  // 1. Tabela `contacts`
+  const { data: dbContacts } = await supabaseAdmin
+    .from('contacts')
+    .select('phone, name')
+    .eq('org_id', orgId);
+  (dbContacts || []).forEach(c => addContact(c.phone, c.name));
+
+  // 2. Tabela `conversation_history`
+  const { data: histContacts } = await supabaseAdmin
+    .from('conversation_history')
+    .select('customer_phone')
+    .eq('org_id', orgId);
+  (histContacts || []).forEach(c => addContact(c.customer_phone));
+
+  // 3. Tabela `followup_schedules`
+  const { data: followupContacts } = await supabaseAdmin
+    .from('followup_schedules')
+    .select('customer_phone, customer_name')
+    .eq('org_id', orgId);
+  (followupContacts || []).forEach(c => addContact(c.customer_phone, c.customer_name));
+
+  // 4. Tabela `bookings`
+  const { data: bookingContacts } = await supabaseAdmin
+    .from('bookings')
+    .select('phone, first_name, last_name')
+    .eq('org_id', orgId);
+  (bookingContacts || []).forEach(c => {
+    const fullName = [c.first_name, c.last_name].filter(Boolean).join(' ');
+    addContact(c.phone, fullName);
+  });
+
+  let allContacts = Array.from(contactMap.values());
+
+  // Sincronizar automaticamente para a tabela `contacts` para salvar os contatos recuperados
+  if (allContacts.length > 0) {
+    try {
+      const inserts = allContacts.map(c => ({
+        org_id: orgId,
+        phone: c.phone,
+        name: c.name,
+        source: 'whatsapp'
+      }));
+      await supabaseAdmin.from('contacts').upsert(inserts, { onConflict: 'org_id, phone' });
+    } catch (upsertErr: any) {
+      console.warn('[CAMPAIGNS] Aviso ao sincronizar contatos:', upsertErr.message);
+    }
+  }
+
+  // Filtragem por Público Alvo:
+  if (audience === 'active_24h') {
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const { data: activeHist } = await supabaseAdmin
+      .from('conversation_history')
+      .select('customer_phone')
+      .eq('org_id', orgId)
+      .gte('created_at', since);
+    const activeSet = new Set((activeHist || []).map(h => normalizePhone(h.customer_phone)).filter(Boolean));
+    allContacts = allContacts.filter(c => activeSet.has(c.phone));
+  } else if (audience === 'customers') {
+    const { data: bList } = await supabaseAdmin
+      .from('bookings')
+      .select('phone')
+      .eq('org_id', orgId);
+    const customerSet = new Set((bList || []).map(b => normalizePhone(b.phone)).filter(Boolean));
+    allContacts = allContacts.filter(c => customerSet.has(c.phone));
+  } else if (audience === 'leads') {
+    const { data: bList } = await supabaseAdmin
+      .from('bookings')
+      .select('phone')
+      .eq('org_id', orgId);
+    const customerSet = new Set((bList || []).map(b => normalizePhone(b.phone)).filter(Boolean));
+    allContacts = allContacts.filter(c => !customerSet.has(c.phone));
+  }
+
+  return allContacts;
 }
 
 /** Executa o disparo em massa da campanha em segundo plano */
@@ -41,24 +164,8 @@ async function processCampaign(campaignId: string, orgId: string) {
       .eq('org_id', orgId)
       .maybeSingle();
 
-    // Buscar contatos da audiência
-    let query = supabaseAdmin.from('contacts').select('id, phone, name').eq('org_id', orgId);
-
-    if (campaign.audience === 'active_24h') {
-      const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-      const { data: activeHist } = await supabaseAdmin
-        .from('conversation_history')
-        .select('customer_phone')
-        .eq('org_id', orgId)
-        .gte('created_at', since);
-      const activePhones = Array.from(new Set((activeHist || []).map(h => h.customer_phone).filter(Boolean)));
-      if (activePhones.length > 0) {
-        query = query.in('phone', activePhones);
-      }
-    }
-
-    const { data: contacts } = await query;
-    const targetContacts = contacts || [];
+    // Resolver contatos da audiência selecionada
+    const targetContacts = await resolveCampaignAudience(orgId, campaign.audience || 'all', campaign.filters);
 
     if (targetContacts.length === 0) {
       await supabaseAdmin.from('campaigns').update({
@@ -298,6 +405,193 @@ router.get('/', requireAuth, async (req: any, res) => {
 
     res.json({ campaigns });
   } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ─── Pausar / Cancelar campanha ───────────────────────────────────────────────
+router.patch('/:id/status', requireAuth, async (req: any, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const { id } = req.params;
+    const { status } = req.body; // 'PAUSED' | 'CANCELLED'
+
+    const allowed = ['PAUSED', 'CANCELLED', 'SENDING'];
+    if (!allowed.includes(status)) {
+      return res.status(400).json({ error: 'Status inválido.' });
+    }
+
+    const { error } = await supabaseAdmin
+      .from('campaigns')
+      .update({ status })
+      .eq('id', id)
+      .eq('org_id', orgId);
+
+    if (error) throw error;
+    res.json({ success: true, status });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ─── Excluir log individual da campanha ───────────────────────────────────────
+router.delete('/:id/logs/:logId', requireAuth, async (req: any, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const { id, logId } = req.params;
+
+    const { error } = await supabaseAdmin
+      .from('campaign_logs')
+      .delete()
+      .eq('id', logId)
+      .eq('campaign_id', id)
+      .eq('org_id', orgId);
+
+    if (error) throw error;
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ─── Listar contatos da organização ──────────────────────────────────────────
+router.get('/contacts', requireAuth, async (req: any, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const { data, error } = await supabaseAdmin
+      .from('contacts')
+      .select('*')
+      .eq('org_id', orgId)
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+    res.json({ contacts: data || [] });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ─── Excluir contato ──────────────────────────────────────────────────────────
+router.delete('/contacts/:contactId', requireAuth, async (req: any, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const { contactId } = req.params;
+
+    const { error } = await supabaseAdmin
+      .from('contacts')
+      .delete()
+      .eq('id', contactId)
+      .eq('org_id', orgId);
+
+    if (error) throw error;
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ─── Upload de lista de contatos (Excel / CSV / TXT) ─────────────────────────
+router.post('/contacts/upload', requireAuth, upload.single('file'), async (req: any, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const file = req.file;
+    if (!file) return res.status(400).json({ error: 'Nenhum ficheiro enviado.' });
+
+    const ext = (file.originalname || '').toLowerCase();
+    const contacts: { phone: string; name: string; email?: string }[] = [];
+
+    const normalizePhone = (raw: string) => raw?.toString().replace(/[^\d+]/g, '').trim();
+
+    if (ext.endsWith('.pdf')) {
+      // PDF: tentativa de extração de texto via pdf-parse
+      let pdfParse: any;
+      try { pdfParse = require('pdf-parse'); } catch { /* not installed */ }
+      if (!pdfParse) {
+        return res.status(422).json({ error: 'Suporte a PDF não disponível no servidor. Use Excel ou CSV.' });
+      }
+      const pdfData = await pdfParse(file.buffer);
+      const lines = pdfData.text.split(/[\r\n]+/).map((l: string) => l.trim()).filter(Boolean);
+      // Tenta extrair números de telefone de cada linha
+      const phoneRegex = /(?:\+?\d[\d\s\-().]{6,}\d)/g;
+      for (const line of lines) {
+        const matches = line.match(phoneRegex);
+        if (matches) {
+          for (const m of matches) {
+            const phone = normalizePhone(m);
+            if (phone.length >= 8) {
+              contacts.push({ phone, name: 'Contato' });
+            }
+          }
+        }
+      }
+    } else {
+      // Excel / CSV / TXT → parsear com XLSX
+      const workbook = XLSX.read(file.buffer, { type: 'buffer' });
+      const sheetName = workbook.SheetNames[0];
+      const sheet = workbook.Sheets[sheetName];
+      const rows: any[] = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+
+      for (const row of rows) {
+        // Detecta coluna de telefone (procura variações comuns de header)
+        const phoneKeys = ['phone', 'telefone', 'tel', 'celular', 'numero', 'número', 'mobile', 'whatsapp', 'fone', 'Phone', 'Telefone'];
+        const nameKeys  = ['name', 'nome', 'Name', 'Nome', 'contato', 'Contato', 'cliente', 'Cliente'];
+        const emailKeys = ['email', 'e-mail', 'Email', 'E-mail'];
+
+        let rawPhone = '';
+        for (const k of phoneKeys) {
+          if (row[k] !== undefined && row[k] !== '') { rawPhone = String(row[k]); break; }
+        }
+        // Fallback: primeira coluna numérica
+        if (!rawPhone) {
+          for (const val of Object.values(row)) {
+            const s = String(val).replace(/[^\d]/g, '');
+            if (s.length >= 8) { rawPhone = String(val); break; }
+          }
+        }
+
+        let rawName = '';
+        for (const k of nameKeys) {
+          if (row[k] !== undefined && row[k] !== '') { rawName = String(row[k]); break; }
+        }
+
+        let rawEmail = '';
+        for (const k of emailKeys) {
+          if (row[k] !== undefined && row[k] !== '') { rawEmail = String(row[k]); break; }
+        }
+
+        const phone = normalizePhone(rawPhone);
+        if (phone.length >= 8) {
+          contacts.push({ phone, name: rawName || 'Contato', email: rawEmail || undefined });
+        }
+      }
+    }
+
+    if (contacts.length === 0) {
+      return res.status(422).json({ error: 'Nenhum número de telefone válido encontrado no ficheiro. Verifique se o ficheiro contém uma coluna "Telefone" ou "Phone".' });
+    }
+
+    // Upsert na tabela contacts
+    const inserts = contacts.map(c => ({
+      org_id: orgId,
+      phone: c.phone,
+      name: c.name,
+      email: c.email || null,
+      source: 'upload'
+    }));
+
+    const { error: upsertErr } = await supabaseAdmin
+      .from('contacts')
+      .upsert(inserts, { onConflict: 'org_id, phone' });
+
+    if (upsertErr) throw upsertErr;
+
+    res.json({
+      success: true,
+      imported: contacts.length,
+      message: `${contacts.length} contato(s) importado(s) com sucesso.`
+    });
+  } catch (error: any) {
+    console.error('[CONTACTS UPLOAD] Erro:', error.message);
     res.status(500).json({ error: error.message });
   }
 });

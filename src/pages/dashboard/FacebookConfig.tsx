@@ -61,8 +61,15 @@ export default function FacebookConfig() {
         body: JSON.stringify(formData)
       });
 
-      if (!res.ok) throw new Error("Erro ao salvar configuração");
-      
+      if (!res.ok) {
+        let errMsg = `Erro ${res.status} ao salvar configuração`;
+        try {
+          const errData = await res.json();
+          errMsg = errData.error || errData.message || errMsg;
+        } catch {}
+        throw new Error(errMsg);
+      }
+
       toast.success("Configuração do Facebook salva com sucesso!");
       fetchConfig();
     } catch (err: any) {
