@@ -65,8 +65,14 @@ export default function FacebookConfig() {
         let errMsg = `Erro ${res.status} ao salvar configuração`;
         try {
           const errData = await res.json();
-          errMsg = errData.error || errData.message || errMsg;
+          errMsg = errData.message || errData.error || errMsg;
         } catch {}
+        if (res.status === 401) {
+          localStorage.removeItem("token");
+          toast.error("Sessão expirada. Por favor faça login novamente.");
+          setTimeout(() => window.location.href = "/login", 1500);
+          return;
+        }
         throw new Error(errMsg);
       }
 

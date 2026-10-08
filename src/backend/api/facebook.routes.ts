@@ -184,19 +184,37 @@ router.post('/webhook', async (req, res) => {
       console.log(`[FB WEBHOOK] ▶ Nova mensagem | sender=${senderId} | page=${pageId} | text="${(userText || '').substring(0, 80)}" | media=${media ? media.mimeType : 'none'}`);
 
       // 1. Buscar configuração da página
-      const { data: config } = await supabaseAdmin
+      const { data: config, error: configErr } = await supabaseAdmin
         .from('facebook_config')
-        .select('org_id, access_token, display_name')
+        .select('org_id, access_token, page_access_token, display_name')
         .eq('page_id', pageId)
         .eq('is_active', true)
         .maybeSingle();
 
-      if (!config) {
-        console.warn(`[FB WEBHOOK] Nenhuma config activa para page_id: ${pageId}`);
+      if (configErr) {
+        console.error(`[FB WEBHOOK] ❌ Erro ao buscar config para page_id=${pageId}:`, configErr.message);
         continue;
       }
 
-      const { org_id: orgId, access_token: accessToken } = config;
+      if (!config) {
+        console.warn(`[FB WEBHOOK] ⚠️ Nenhuma config activa para page_id: ${pageId}. Verifique se o Page ID guardado coincide exatamente com o ID que chega no webhook.`);
+        // Debug: listar todas as configs activas para comparar
+        const { data: allConfigs } = await supabaseAdmin
+          .from('facebook_config')
+          .select('page_id, org_id, is_active')
+          .eq('is_active', true);
+        console.warn(`[FB WEBHOOK] Configs activas na BD:`, JSON.stringify(allConfigs || []));
+        continue;
+      }
+
+      const { org_id: orgId, access_token: rawToken, page_access_token: rawPageToken, } = config;
+      // Usar o token mais recente disponível (page_access_token tem prioridade se existir)
+      const accessToken = rawPageToken || rawToken;
+      if (!accessToken) {
+        console.error(`[FB WEBHOOK] ❌ Nenhum access token encontrado para org ${orgId} / page ${pageId}`);
+        continue;
+      }
+      console.log(`[FB WEBHOOK] ✅ Config encontrada: org=${orgId}, token=${'*'.repeat(8)}${accessToken.slice(-6)}`);
 
       // Buscar nome personalizado (chatbot_name)
       const { data: org } = await supabaseAdmin
@@ -250,7 +268,7 @@ router.post('/webhook', async (req, res) => {
 
       for (let attempt = 1; attempt <= 3; attempt++) {
         try {
-          console.log(`[FB WEBHOOK] 🛡️ Tentativa ${attempt}/3 de auto-cura para sender=${senderId}...`);
+          console.log(`[FB WEBHOOK] 🛡️ Tentativa ${attempt}/3 para sender=${senderId}...`);
           if (attempt > 1) {
             await new Promise(r => setTimeout(r, attempt * 1000));
           }
@@ -264,6 +282,8 @@ router.post('/webhook', async (req, res) => {
             media: attempt === 1 ? media : undefined,
             referral: referral || undefined,
           });
+
+          console.log(`[FB WEBHOOK] 🤖 IA respondeu (tentativa ${attempt}): "${(aiResult?.reply || '').substring(0, 100)}"`);
 
           if (!aiResult?.reply) {
             throw new Error('Resposta vazia da IA no Facebook.');
@@ -384,34 +404,35 @@ router.post('/webhook', async (req, res) => {
         .catch(err => console.error('[FB-BOOKING] ❌ Erro ao processar agendamento:', err.message));
       }
 
-      // 6. Enviar resposta
-      await FacebookService.sendMessage(pageId, senderId, aiResult.reply, accessToken);
+      if (sendSuccess && aiResult?.reply) {
+        // 7. Persistir resposta do bot (apenas uma vez — o sendMessage já aconteceu no loop acima)
+        await supabaseAdmin.from('conversation_history').insert({
+          org_id: orgId,
+          customer_phone: senderId,
+          sender: 'bot',
+          text: aiResult.reply,
+          metadata: { platform: 'facebook' },
+        });
 
-      // 7. Persistir resposta do bot
-      await supabaseAdmin.from('conversation_history').insert({
-        org_id: orgId,
-        customer_phone: senderId,
-        sender: 'bot',
-        text: aiResult.reply,
-        metadata: { platform: 'facebook' },
-      });
+        // Ativar protocolo de follow-up
+        if (!aiResult.transfer && !aiResult.booking) {
+          FollowupService.scheduleSmartFollowup({
+            orgId,
+            phone:    senderId,
+            platform: 'facebook',
+            botReply: aiResult.reply,
+          }).catch(() => {});
+        }
 
-      // Ativar protocolo de follow-up para todos os clientes sem agendamento e sem transferência para humano
-      if (!aiResult.transfer && !aiResult.booking) {
-        FollowupService.scheduleSmartFollowup({
-          orgId,
-          phone:    senderId,
-          platform: 'facebook',
-          botReply: aiResult.reply,
-        }).catch(() => {});
+        console.log(`[FB WEBHOOK] ✅ Fluxo completo para ${senderId}.`);
       }
 
-      console.log(`[FB WEBHOOK] Resposta enviada para ${senderId}.`);
-    }
+    } // end for entry loop
   } catch (err: any) {
     console.error('[FB WEBHOOK] Erro:', err.message);
   }
 });
+
 
 // ─── POST /api/facebook/comment-automation ────────────────────────────────────
 router.post('/comment-automation', requireAuth, async (req: AuthRequest, res) => {
