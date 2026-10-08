@@ -51,8 +51,9 @@ export function formatGreeting(name?: string): string {
 }
 
 // ─── Mensagens do protocolo padrão de follow-up (condicionados ao contexto) ───
+// Fluxo padrão: Step 1 (12h) → Step 2 (24h, encerramento cordial) → fim silencioso
 export const FOLLOWUP_MESSAGES = {
-  /** Step 1 — após 12h sem resposta (condicionado ao cenário e contexto) */
+  /** Step 1 — após 12h sem resposta (retoma leve, contextualizada por cenário) */
   step1: (name: string, scenario: number = 4, ctx?: FollowupContext): string => {
     const n = formatGreeting(name);
     const s = ctx?.service || 'atendimento';
@@ -68,69 +69,21 @@ export const FOLLOWUP_MESSAGES = {
     }
   },
 
-  /** Step 2 — após +24h, contextualizado por cenário */
+  /** Step 2 — após +24h (encerramento cordial; último contacto do fluxo padrão) */
   step2: (name: string, scenario: number = 4, ctx?: FollowupContext): string => {
-    const n = formatGreeting(name);
-    const s = ctx?.service || 'atendimento';
-    switch (scenario) {
-      case 1: // 📄 Cenário 1: Aguardava documentos, fotos ou informações do cliente
-        return `${n} Passando para saber se conseguiu verificar os seus documentos ou as informações necessárias para darmos seguimento ao seu ${s}. Fico à sua disposição!`;
-      case 2: // 💰 Cenário 2: Enviou orçamento / valores / modalidade pós-paga
-        return `${n} Tudo bem? Queria saber se conseguiu analisar os valores e as condições da nossa assessoria para o seu ${s} (incluindo as opções de pagamento). Ficou com alguma dúvida sobre o investimento?`;
-      case 3: // 📅 Cenário 3: Faltava agendar consultoria
-        return `${n} Como a rotina pode estar corrida, passo para saber se conseguiu ver qual o melhor dia e horário para a sua consultoria presencial ou online. Ainda temos algumas vagas para esta semana!`;
-      default: // 🌍 Cenário 4: Abordagem geral
-        return `${n} Tudo bem? Passando só para saber se gostaria de avançar com o seu ${s} connosco ou esclarecer alguma dúvida. Conseguimos avançar?`;
-    }
-  },
-
-  /** Step 3 — após +48h (condicionado ao cenário e contexto) */
-  step3: (name: string, scenario: number = 4, ctx?: FollowupContext): string => {
-    const n = formatGreeting(name);
-    const s = ctx?.service || 'atendimento';
-    switch (scenario) {
-      case 1: // 📄 Documentos
-        return `${n} Não gostaria que ficasse com dúvidas sobre a documentação para o seu ${s}. Caso precise de ajuda para reunir os papéis ou queira agendar um atendimento no escritório, avise-me por aqui!`;
-      case 2: // 💰 Orçamento
-        return `${n} Não gostaria que perdesse as condições e opções de investimento vigentes para o seu ${s}. Caso queira tirar dúvidas sobre valores ou opções flexíveis, avise-me por aqui!`;
-      case 3: // 📅 Agendamento
-        return `${n} Não gostaria que perdesse as vagas de atendimento desta semana para o seu ${s}. Caso queira que eu lhe sugira outros horários no escritório ou online, avise-me por aqui!`;
-      default: // 🌍 Geral
-        return `${n} Não gostaria que perdesse as oportunidades e informações atuais para o seu ${s}. Caso queira conversar com um dos nossos consultores ou agendar um atendimento no escritório, avise-me por aqui!`;
-    }
-  },
-
-  /** Step 4 — após +72h (condicionado ao cenário e contexto) */
-  step4: (name: string, scenario: number = 4, ctx?: FollowupContext): string => {
-    const n = formatGreeting(name);
-    const s = ctx?.service || 'atendimento';
-    switch (scenario) {
-      case 1: // 📄 Documentos
-        return `${n} Tudo bem? Passando para deixar uma nota sobre a documentação do seu ${s}. Se ainda tiver interesse em enviar as informações ou tirar dúvidas, basta responder a esta mensagem!`;
-      case 2: // 💰 Orçamento
-        return `${n} Tudo bem? Passando para deixar uma nota sobre a proposta para o seu ${s}. Se ainda tiver interesse em avançar ou esclarecer condições de pagamento, basta responder a esta mensagem!`;
-      case 3: // 📅 Agendamento
-        return `${n} Tudo bem? Passando para deixar uma nota sobre o agendamento da sua consultoria. Se ainda desejar marcar um horário conveniente, basta responder a esta mensagem!`;
-      default: // 🌍 Geral
-        return `${n} Tudo bem? Passando para deixar uma nota sobre o seu ${s}. Se ainda tiver interesse em dar entrada ou tirar dúvidas, basta responder a esta mensagem quando for mais conveniente!`;
-    }
-  },
-
-  /** Step 5 — encerramento cordial (condicionado ao cenário e empresa) */
-  step5: (name: string, scenario: number = 4, ctx?: FollowupContext): string => {
     const n = formatGreeting(name);
     const company = ctx?.orgName || 'nossa assessoria';
     switch (scenario) {
-      case 1:
+      case 1: // 📄 Cenário 1: Documentos
         return `${n} Vou encerrar os nossos lembretes automáticos sobre os documentos por aqui para não incomodar. Estaremos sempre à sua disposição na ${company} quando desejar dar o próximo passo. Tenha um excelente dia!`;
-      case 2:
+      case 2: // 💰 Cenário 2: Orçamento
         return `${n} Vou encerrar os nossos lembretes automáticos sobre a proposta por aqui para não incomodar. Estaremos sempre à sua disposição na ${company} quando desejar avançar. Tenha um excelente dia!`;
-      case 3:
+      case 3: // 📅 Cenário 3: Agendamento
         return `${n} Vou encerrar os nossos lembretes automáticos sobre o agendamento por aqui para não incomodar. Estaremos sempre à sua disposição na ${company} quando desejar agendar a sua consultoria. Tenha um excelente dia!`;
-      default:
+      default: // 🌍 Cenário 4: Geral
         return `${n} Vou encerrar os nossos lembretes automáticos por aqui para não incomodar. Estaremos sempre à sua disposição na ${company} quando desejar dar o próximo passo. Tenha um excelente dia!`;
     }
-  }
+  },
 };
 
 // ─── Protocolo de Objeções (B2C e B2B) ───────────────────────────────────────
@@ -208,45 +161,70 @@ export const OBJECTION_PROTOCOLS: Record<'b2c' | 'b2b', Record<'spouse' | 'budge
 };
 
 // ─── Preenchimento Neutro de Variáveis e Placeholders ─────────────────────────
+// Placeholders suportados nos templates de campanhas e objeções:
+//   [Nome]              → Primeiro nome do cliente (limpo de emojis/bandeiras)
+//   [Nome_do_Chatbot]   → Nome do chatbot / assistente da organização
+//   [Produto/Serviço]   → Nome do produto ou serviço principal
+//   [Serviço/Produto]   → Alias de [Produto/Serviço] (ordem invertida)
+//   [Serviço]           → Nome do serviço (pode diferir do produto)
+//   [Produto]           → Nome do produto isolado
+//   [Benefício]         → Benefício principal para o cliente
+//   [Empresa]           → Nome da organização
 export function fillPlaceholders(
   template: string,
   data: {
-    clientName?: string;
-    botName?: string;
+    clientName?:      string;
+    botName?:         string;
     productOrService?: string;
-    service?: string;
-    benefit?: string;
+    service?:         string;
+    product?:         string;
+    benefit?:         string;
+    orgName?:         string;
   }
 ): string {
   let result = template;
 
+  // ── [Nome] ────────────────────────────────────────────────────────────────
   const firstName = cleanGreetingName(data.clientName);
-
   if (firstName) {
     result = result.replace(/\[Nome\]/g, firstName);
   } else {
-    // Tratar saudações com elegância se o nome não for conhecido ou for emoji/inválido
+    // Remover saudação "Olá, [Nome]!" / "Oi, [Nome]!" / "Bom dia, [Nome]."
+    // de forma elegante quando o nome não está disponível
     result = result.replace(/(?:Olá|Oi|Bom dia),\s*\[Nome\]([!\.])/g, (_match, punc) => {
       if (_match.startsWith('Bom dia')) return `Bom dia${punc}`;
-      if (_match.startsWith('Oi')) return `Oi${punc}`;
+      if (_match.startsWith('Oi'))      return `Oi${punc}`;
       return `Olá${punc}`;
     });
     result = result.replace(/\[Nome\]/g, '');
   }
 
+  // ── [Nome_do_Chatbot] ────────────────────────────────────────────────────
   const botName = data.botName?.trim() || 'Assistente';
   result = result.replace(/\[Nome_do_Chatbot\]/g, botName);
 
-  const productOrService = data.productOrService?.trim() || 'nosso serviço';
+  // ── [Produto/Serviço] e [Serviço/Produto] ────────────────────────────────
+  const productOrService = data.productOrService?.trim() || data.service?.trim() || data.product?.trim() || 'nosso serviço';
   result = result.replace(/\[Produto\/Serviço\]/g, productOrService);
   result = result.replace(/\[Serviço\/Produto\]/g, productOrService);
 
+  // ── [Serviço] ────────────────────────────────────────────────────────────
   const service = data.service?.trim() || productOrService;
   result = result.replace(/\[Serviço\]/g, service);
 
+  // ── [Produto] ────────────────────────────────────────────────────────────
+  const product = data.product?.trim() || productOrService;
+  result = result.replace(/\[Produto\]/g, product);
+
+  // ── [Benefício] ──────────────────────────────────────────────────────────
   const benefit = data.benefit?.trim() || 'o seu atendimento';
   result = result.replace(/\[Benefício\]/g, benefit);
 
+  // ── [Empresa] ────────────────────────────────────────────────────────────
+  const orgName = data.orgName?.trim() || 'nossa equipe';
+  result = result.replace(/\[Empresa\]/g, orgName);
+
+  // Colapsar espaços duplos resultantes de placeholders vazios
   return result.replace(/\s{2,}/g, ' ').trim();
 }
 
@@ -912,10 +890,13 @@ export class FollowupService {
 
   /**
    * Dá o atendimento e ciclo de follow-up por concluído.
-   * - Insere marco no conversation_history
-   * - Emite Socket.IO para atualizar o painel Live Chat em tempo real
-   * - Cancela eventuais follow-ups pendentes para o cliente
-   * - Sincroniza com Google Sheets com status 'Concluído'
+   *
+   * Por defeito opera em modo silencioso (silent = true):
+   *   - NÃO insere nota no conversation_history
+   *   - NÃO emite evento `new_message` no Socket.IO
+   *   - Cancela follow-ups pendentes, emite `chat_status_updated` e sincroniza Google Sheets
+   *
+   * Passar silent = false apenas se se quiser inserir uma nota interna visível no chat.
    */
   static async concludeConversation(params: {
     orgId:         string;
@@ -923,14 +904,21 @@ export class FollowupService {
     platform?:     string;
     customerName?: string;
     reason?:       string;
+    silent?:       boolean;
   }): Promise<void> {
     try {
-      const { orgId, phone, platform = 'whatsapp', customerName = '', reason = 'followup_concluded' } = params;
+      const {
+        orgId,
+        phone,
+        platform     = 'whatsapp',
+        customerName = '',
+        reason       = 'followup_concluded',
+        silent       = true,
+      } = params;
 
       // 1. Cancelar todos os follow-ups pendentes deste cliente
       await this.cancelPendingForPhone(orgId, phone);
 
-      // 2. Inserir registo no histórico de conversa
       const noteText = reason.includes('objection')
         ? '[ATENDIMENTO CONCLUÍDO — CICLO DE OBJEÇÃO FINALIZADO]'
         : reason.includes('farewell')
@@ -939,63 +927,78 @@ export class FollowupService {
         ? '[ATENDIMENTO CONCLUÍDO — AVALIAÇÃO FINALIZADA]'
         : '[ATENDIMENTO CONCLUÍDO — CICLO DE FOLLOW-UP FINALIZADO]';
 
-      await supabaseAdmin.from('conversation_history').insert({
-        org_id:         orgId,
-        customer_phone: phone,
-        sender:         'system',
-        text:           noteText,
-        metadata: {
-          attended:      true,
-          concluded:     true,
-          internal_note: true,
-          reason,
-          platform,
-        },
-      });
-
-      // 3. Emitir evento Socket.IO em tempo real para Live Chat
-      try {
-        const { getIo } = await import('../socket');
-        getIo().to(`org:${orgId}`).emit('chat_status_updated', {
-          phone,
-          attended:        true,
-          concluded:       true,
-          needs_confirm:   false,
-          has_exclamation: false,
-        });
-
-        getIo().to(`org:${orgId}`).emit('new_message', {
-          phone,
-          sender:    'system',
-          text:      noteText,
-          time:      new Date().toLocaleTimeString('pt-PT', { timeZone: 'Africa/Luanda', hour: '2-digit', minute: '2-digit' }),
-          timestamp: new Date().toISOString(),
-          platform,
+      if (!silent) {
+        // 2. Inserir registo no histórico de conversa
+        await supabaseAdmin.from('conversation_history').insert({
+          org_id:         orgId,
+          customer_phone: phone,
+          sender:         'system',
+          text:           noteText,
           metadata: {
             attended:      true,
             concluded:     true,
             internal_note: true,
             reason,
+            platform,
           },
         });
-      } catch (_) {
-        // Silencioso se o socket não estiver ativo
+
+        // 3. Emitir evento Socket.IO em tempo real para Live Chat
+        try {
+          const { getIo } = await import('../socket');
+          getIo().to(`org:${orgId}`).emit('chat_status_updated', {
+            phone,
+            attended:        true,
+            concluded:       true,
+            needs_confirm:   false,
+            has_exclamation: false,
+          });
+
+          getIo().to(`org:${orgId}`).emit('new_message', {
+            phone,
+            sender:    'system',
+            text:      noteText,
+            time:      new Date().toLocaleTimeString('pt-PT', { timeZone: 'Africa/Luanda', hour: '2-digit', minute: '2-digit' }),
+            timestamp: new Date().toISOString(),
+            platform,
+            metadata: {
+              attended:      true,
+              concluded:     true,
+              internal_note: true,
+              reason,
+            },
+          });
+        } catch (_) {
+          // Silencioso se o socket não estiver ativo
+        }
+      } else {
+        // Modo silencioso: apenas emitir chat_status_updated (sem new_message no chat)
+        try {
+          const { getIo } = await import('../socket');
+          getIo().to(`org:${orgId}`).emit('chat_status_updated', {
+            phone,
+            attended:        true,
+            concluded:       true,
+            needs_confirm:   false,
+            has_exclamation: false,
+          });
+        } catch (_) {}
       }
 
-      // 4. Sincronizar com Google Sheets se configurado
+      // 4. Sincronizar com Google Sheets (independente do modo silencioso)
       try {
         const { GoogleSheetsService } = await import('./google_sheets.service');
         GoogleSheetsService.syncInteraction({
           orgId,
-          channel: (platform as any) || 'whatsapp',
+          channel:   (platform as any) || 'whatsapp',
           phoneOrId: phone,
-          name: customerName || 'Cliente',
-          text: noteText,
-          status: 'Concluído',
+          name:      customerName || 'Cliente',
+          text:      noteText,
+          status:    'Concluído',
         }).catch(err => console.warn('[FOLLOWUP] Aviso ao sincronizar conclusão com Google Sheets:', err.message));
       } catch (_) {}
 
-      console.log(`[FOLLOWUP] 🏁 Atendimento dado por CONCLUÍDO para ${phone} (motivo: ${reason})`);
+      console.log(`[FOLLOWUP] 🏁 Atendimento dado por CONCLUÍDO para ${phone} (motivo: ${reason}${silent ? ', silencioso' : ''})`);
     } catch (err: any) {
       console.warn(`[FOLLOWUP] Erro ao concluir conversa para ${params.phone}:`, err.message);
     }

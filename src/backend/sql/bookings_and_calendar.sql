@@ -31,6 +31,9 @@ ALTER TABLE bookings ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Users can view bookings of their own organization" ON bookings;
 DROP POLICY IF EXISTS "Anyone can insert bookings" ON bookings;
 DROP POLICY IF EXISTS "Allow select bookings" ON bookings;
+DROP POLICY IF EXISTS "Allow insert bookings" ON bookings;
+DROP POLICY IF EXISTS "Allow update bookings" ON bookings;
+DROP POLICY IF EXISTS "Allow delete bookings" ON bookings;
 DROP POLICY IF EXISTS "Allow all for bookings" ON bookings;
 
 -- Criar policies seguras e compatíveis

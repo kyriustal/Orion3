@@ -1,7 +1,7 @@
 // src/backend/workers/followup.worker.ts
 // Worker que executa a cada minuto e dispara follow-ups agendados
-// Protocolo Padrão: Step 1 (12h) → mensagem fixa; Step 2+ (24h) → mensagem contextualizada por cenário
-// Protocolo de Objeções: mensagens específicas B2C/B2B com botões interativos
+// Fluxo padrão: Step 1 (12h) → Step 2 (24h, encerramento cordial) → fim silencioso
+// Protocolo de Objeções: mensagens específicas B2C/B2B com botões interativos (inalterado)
 // Intervalo de 5 segundos entre envios para números diferentes (evitar spam)
 
 import {
@@ -54,14 +54,14 @@ function isObjectionFlow(item: any): boolean {
   }
 }
 
-/** Construir a mensagem certa para o step atual (fluxo padrão de vendas condicionado ao contexto) */
+/** Constrói a mensagem certa para o step atual (fluxo padrão de vendas: 2 steps) */
 async function buildFollowupMessage(item: any): Promise<string> {
   const step     = item.followup_step ?? 1;
   const name     = item.customer_name || '';
   const scenario = await resolveScenario(item);
   const history  = await FollowupService.fetchContext(item.org_id, item.customer_phone);
 
-  let orgName = 'nossa equipe';
+  let orgName = 'nossa equipa';
   let orgData: any = null;
   try {
     const { data: org } = await supabaseAdmin
@@ -78,6 +78,7 @@ async function buildFollowupMessage(item: any): Promise<string> {
   const { service, benefit } = inferServiceAndBenefit(history, orgData);
   const context = { service, benefit, orgName };
 
+  // Step 100: avaliação pós-atendimento (mantido inalterado)
   if (step === 100) {
     let subject = service;
     try {
@@ -90,11 +91,9 @@ async function buildFollowupMessage(item: any): Promise<string> {
     return `${greeting} Esperamos que tenha corrido tudo bem com a sua consultoria na ${orgName} (${subject}). 😊\n\nGostaríamos muito de saber: como foi o atendimento? A sua avaliação e feedback são muito importantes para nós! ⭐`;
   }
 
+  // Step 1: retoma leve | Step 2: encerramento cordial (defaulta para step2 se step > 2)
   if (step === 1) return FOLLOWUP_MESSAGES.step1(name, scenario, context);
-  if (step === 2) return FOLLOWUP_MESSAGES.step2(name, scenario, context);
-  if (step === 3) return FOLLOWUP_MESSAGES.step3(name, scenario, context);
-  if (step === 4) return FOLLOWUP_MESSAGES.step4(name, scenario, context);
-  return FOLLOWUP_MESSAGES.step5(name, scenario, context);
+  return FOLLOWUP_MESSAGES.step2(name, scenario, context);
 }
 
 /** Constrói a mensagem e botões para follow-ups de objeção (B2C/B2B) */
@@ -391,9 +390,9 @@ async function runFollowups() {
         await FollowupService.setStatus(item.id, 'sent');
         console.log(`[FOLLOWUP] ✅ Step ${currentStep} enviado para ${item.customer_phone}`);
 
-        // ── 7. Agendar próximo follow-up (se for fluxo de vendas step < 5) ───
-        // Limite: 5 follow-ups máximos (12h → +24h → +24h → +48h → +72h)
-        const MAX_STEPS = 5;
+        // ── 7. Agendar próximo follow-up ou encerrar silenciosamente ────────────────
+        // Fluxo padrão: máximo 2 steps (Step 1 →12h, Step 2 →24h → encerramento cordial)
+        const MAX_STEPS = 2;
         if (currentStep === 100) {
           console.log(`[FOLLOWUP] ⭐ Avaliação pós-atendimento enviada para ${item.customer_phone}. Sequência concluída com sucesso.`);
           await FollowupService.concludeConversation({
@@ -406,16 +405,15 @@ async function runFollowups() {
         } else if (currentStep < MAX_STEPS) {
           const nextStep = currentStep + 1;
 
-          // Intervalos progressivos: step1→24h, step2→24h, step3→48h, step4→72h
-          const delayHours = nextStep <= 2 ? 24 : nextStep === 3 ? 48 : 72;
-          const nextScheduledAt = randomScheduledTime(delayHours);
+          // Step 2 sempre 24h depois (encerramento cordial)
+          const nextScheduledAt = randomScheduledTime(24);
 
-          // Obter cenário atual para preservar contexto
+          // Preservar contexto
           const scenario = await resolveScenario(item);
           const contextSnapshot = JSON.stringify({
-            flow: 'standard',
+            flow:        'standard',
             scenario,
-            lastBotReply: message.substring(0, 500)
+            lastBotReply: message.substring(0, 500),
           });
 
           const { error: nextErr } = await supabaseAdmin
@@ -433,20 +431,14 @@ async function runFollowups() {
             });
 
           if (nextErr) {
-            console.warn(`[FOLLOWUP] Aviso ao agendar próximo follow-up (step ${nextStep}) para ${item.customer_phone}:`, nextErr.message);
+            console.warn(`[FOLLOWUP] Aviso ao agendar step ${nextStep} para ${item.customer_phone}:`, nextErr.message);
           } else {
             console.log(`[FOLLOWUP] 📅 Próximo follow-up (step ${nextStep}) agendado para ${item.customer_phone} em ${nextScheduledAt.toISOString()}`);
           }
         } else {
-          console.log(`[FOLLOWUP] ⏹ Limite de ${MAX_STEPS} follow-ups atingido para ${item.customer_phone}. Sequência encerrada.`);
-          // Última mensagem do follow-up padrão (step 5) enviada -> Dar por concluído!
-          await FollowupService.concludeConversation({
-            orgId:        item.org_id,
-            phone:        item.customer_phone,
-            platform:     item.platform || 'whatsapp',
-            customerName: item.customer_name,
-            reason:       `standard_followup_completed (step ${currentStep}/${MAX_STEPS})`,
-          });
+          // Step 2 enviado → encerrar silenciosamente (sem nota no chat)
+          console.log(`[FOLLOWUP] ⏹ Fluxo padrão concluído para ${item.customer_phone} (step ${currentStep}/${MAX_STEPS}). A encerrar silenciosamente.`);
+          await FollowupService.cancelPendingForPhone(item.org_id, item.customer_phone);
         }
 
         // ── 8. Intervalo de 5 segundos entre envios de números diferentes ─
@@ -465,6 +457,6 @@ async function runFollowups() {
 runFollowups();
 const workerInterval = setInterval(runFollowups, 60_000);
 
-console.log('[FOLLOWUP WORKER] ✅ Worker de follow-up iniciado (protocolo padrão 12h/24h/48h/72h + objeções B2C/B2B, intervalo: 60s)');
+console.log('[FOLLOWUP WORKER] ✅ Worker de follow-up iniciado (fluxo padrão 12h/24h · 2 steps + objeções B2C/B2B, intervalo: 60s)');
 
 export { workerInterval };

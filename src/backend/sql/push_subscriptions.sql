@@ -18,5 +18,6 @@ CREATE INDEX IF NOT EXISTS idx_push_subs_org ON push_subscriptions(org_id);
 -- Segurança RLS
 ALTER TABLE push_subscriptions ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Org isolada - Push Subs" ON push_subscriptions;
 CREATE POLICY "Org isolada - Push Subs" ON push_subscriptions
   USING (org_id = auth.jwt() ->> 'orgId');

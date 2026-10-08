@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS team_members (
 -- Habilitar RLS (opcional) ou criar policies adequadas se RLS estiver activo
 ALTER TABLE team_members ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Users can view their own team members" ON team_members;
 CREATE POLICY "Users can view their own team members" ON team_members
   FOR SELECT USING (
     org_id IN (SELECT org_id FROM team_members WHERE user_id = auth.uid() UNION SELECT auth.uid())

@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS campaigns (
 -- RLS
 ALTER TABLE campaigns ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Org members can manage campaigns" ON campaigns;
 CREATE POLICY "Org members can manage campaigns"
 ON campaigns
 FOR ALL
