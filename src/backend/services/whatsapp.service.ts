@@ -232,7 +232,41 @@ export class WhatsAppService {
     }
 
     /**
-     * Submete um novo template com suporte a botões para a Meta WABA
+     * Prepara o texto do template para a Meta:
+     * Converte [Nome], [Empresa], [Produto], {{nome}}, {{empresa}}, etc., para {{1}}, {{2}}, {{3}}
+     * e gera os exemplos obrigatórios exigidos pela API da Meta.
+     */
+    static normalizeTemplateForMeta(rawContent: string): { text: string; examples: string[] } {
+        let text = rawContent || '';
+        const placeholdersFound: string[] = [];
+
+        // Substituir padrões [Placeholder] ou {{placeholder}} por {{1}}, {{2}}, etc.
+        text = text.replace(/\[([^\]]+)\]|\{\{([^}]+)\}\}/g, (match, p1, p2) => {
+            const name = (p1 || p2 || match).trim();
+            let index = placeholdersFound.indexOf(name);
+            if (index === -1) {
+                placeholdersFound.push(name);
+                index = placeholdersFound.length - 1;
+            }
+            return `{{${index + 1}}}`;
+        });
+
+        // Gerar amostras de exemplo para cada variável encontrada (exigido pela Meta WABA)
+        const examples = placeholdersFound.map((name, idx) => {
+            const lower = name.toLowerCase();
+            if (lower.includes('nome') || lower.includes('cliente')) return 'Maria Silva';
+            if (lower.includes('empresa') || lower.includes('loja')) return 'Empresa Exemplo';
+            if (lower.includes('produto') || lower.includes('servico')) return 'Plano Premium';
+            if (lower.includes('data') || lower.includes('hora')) return '15/10/2026';
+            if (lower.includes('link') || lower.includes('url')) return 'https://exemplo.com';
+            return `Exemplo_${idx + 1}`;
+        });
+
+        return { text, examples };
+    }
+
+    /**
+     * Submete um novo template com suporte a botões e variáveis para a Meta WABA
      */
     static async createMetaTemplate(
         wabaId: string,
@@ -246,12 +280,21 @@ export class WhatsAppService {
         }
     ) {
         try {
-            const components: any[] = [
-                {
-                    type: "BODY",
-                    text: template.content
-                }
-            ];
+            const { text: formattedContent, examples } = this.normalizeTemplateForMeta(template.content);
+
+            const bodyComponent: any = {
+                type: "BODY",
+                text: formattedContent
+            };
+
+            // A Meta WABA API exige o campo `example` quando há variáveis {{1}}, {{2}}...
+            if (examples.length > 0) {
+                bodyComponent.example = {
+                    body_text: [examples]
+                };
+            }
+
+            const components: any[] = [bodyComponent];
 
             if (template.buttons && template.buttons.length > 0) {
                 const formattedButtons = template.buttons.slice(0, 3).map(b => {
@@ -282,9 +325,16 @@ export class WhatsAppService {
                 });
             }
 
+            // Sanitizar nome do template conforme regras da Meta: minúsculas, sem acentos, sem caracteres especiais
+            const cleanName = template.name
+                .toLowerCase()
+                .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+                .replace(/[^a-z0-9_]/g, '_')
+                .replace(/_+/g, '_');
+
             const url = `https://graph.facebook.com/v19.0/${wabaId}/message_templates`;
             const response = await axios.post(url, {
-                name: template.name.toLowerCase().replace(/[^a-z0-9_]/g, '_'),
+                name: cleanName,
                 category: template.category || 'MARKETING',
                 language: template.language || 'pt_BR',
                 components
