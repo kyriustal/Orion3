@@ -280,16 +280,38 @@ export default function Templates() {
 
                 {/* Conteúdo */}
                 <div className="space-y-2">
-                  <Label htmlFor="tContent">Conteúdo da Mensagem (Corpo)</Label>
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="tContent">Conteúdo da Mensagem (Corpo)</Label>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-[11px] text-zinc-400">Inserir variável:</span>
+                      {[
+                        { label: "+ [Nome]", val: "[Nome]" },
+                        { label: "+ [Empresa]", val: "[Empresa]" },
+                        { label: "+ [Produto]", val: "[Produto]" },
+                        { label: "+ [Telefone]", val: "[Phone]" },
+                      ].map((item) => (
+                        <button
+                          key={item.val}
+                          type="button"
+                          onClick={() => setNewTemplate(prev => ({ ...prev, content: prev.content + " " + item.val }))}
+                          className="text-[11px] font-medium bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 px-2 py-0.5 rounded transition-colors"
+                        >
+                          {item.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                   <textarea
                     id="tContent"
                     rows={4}
                     className="flex w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500"
-                    placeholder={"Olá {{1}}, obrigado pelo contato! Precisa de ajuda?"}
+                    placeholder="Olá [Nome], bem-vindo à [Empresa]! O seu pedido [Produto] foi confirmado."
                     value={newTemplate.content}
                     onChange={(e) => setNewTemplate({ ...newTemplate, content: e.target.value })}
                   />
-                  <p className="text-[10px] text-zinc-500 italic">Use {"{{1}}"}, {"{{2}}"} para variáveis que serão preenchidas no envio.</p>
+                  <p className="text-[10px] text-zinc-500 italic">
+                    Clique nos botões acima ou escreva <strong>[Nome]</strong>, <strong>[Empresa]</strong> ou <strong>{"{{1}}"}</strong>, <strong>{"{{2}}"}</strong> diretamente no texto. O sistema ajusta automaticamente para a Meta.
+                  </p>
                 </div>
 
                 {/* Botões */}
