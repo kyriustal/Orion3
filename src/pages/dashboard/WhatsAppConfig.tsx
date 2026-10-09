@@ -79,6 +79,7 @@ export default function WhatsAppConfig() {
 
   const [numbers, setNumbers] = useState<WhatsAppNumber[]>([]);
   const [rawConfig, setRawConfig] = useState<WhatsAppConfigData | null>(null);
+  const [webhookDiagnostic, setWebhookDiagnostic] = useState<any>(null);
   const [showTokenPreview, setShowTokenPreview] = useState(false);
 
   // Modais
@@ -145,8 +146,24 @@ export default function WhatsAppConfig() {
     }
   };
 
+  const fetchWebhookDiagnostics = async () => {
+    try {
+      const token = localStorage.getItem("token");
+      if (!token) return;
+      const response = await fetch("/api/whatsapp/webhook-diagnostics", {
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      if (response.ok) {
+        setWebhookDiagnostic(await response.json());
+      }
+    } catch (error) {
+      console.warn("Erro ao carregar diagnóstico do webhook:", error);
+    }
+  };
+
   useEffect(() => {
     fetchConfig();
+    fetchWebhookDiagnostics();
   }, []);
 
   // Preencher formulário ao abrir edição
@@ -299,6 +316,7 @@ export default function WhatsAppConfig() {
         throw new Error(data.error || "Erro ao sincronizar webhooks.");
       }
       toast.success(data.message || "Inscrições do Webhook sincronizadas com a Meta com sucesso!");
+      await fetchWebhookDiagnostics();
     } catch (error: any) {
       toast.error(error.message || "Erro ao sincronizar webhooks.");
     } finally {
@@ -420,6 +438,7 @@ export default function WhatsAppConfig() {
 
       toast.success(data.message || "WhatsApp conectado com a Meta.");
       await fetchConfig();
+      await fetchWebhookDiagnostics();
     } catch (error: any) {
       embeddedCompletionStartedRef.current = false;
       toast.error(error.message || "Erro ao concluir conexão com a Meta.");
@@ -547,6 +566,27 @@ export default function WhatsAppConfig() {
         <h2 className="text-2xl font-bold tracking-tight text-zinc-900">Gestão de WhatsApp</h2>
         <p className="text-zinc-500 text-sm mt-1">Conecte, pré-visualize e edite os parâmetros da sua conta do WhatsApp Business via Meta Cloud API.</p>
       </div>
+
+      {webhookDiagnostic && (!webhookDiagnostic.callbackOk || !webhookDiagnostic.environment?.hasMetaAppId || !webhookDiagnostic.environment?.hasMetaAppSecret) && (
+        <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-3 text-amber-900">
+          <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+          <div className="space-y-1 text-sm">
+            <p className="font-semibold text-amber-950">Webhook da Meta ainda não está pronto para receber mensagens.</p>
+            {!webhookDiagnostic.callbackOk && (
+              <p className="text-xs text-amber-800">{webhookDiagnostic.callbackIssue}</p>
+            )}
+            {!webhookDiagnostic.environment?.hasMetaAppId && (
+              <p className="text-xs text-amber-800">Configure <code className="font-mono bg-amber-100 px-1 rounded">META_APP_ID</code> no backend.</p>
+            )}
+            {!webhookDiagnostic.environment?.hasMetaAppSecret && (
+              <p className="text-xs text-amber-800">Configure <code className="font-mono bg-amber-100 px-1 rounded">META_APP_SECRET</code> no backend.</p>
+            )}
+            <p className="text-xs text-amber-800">
+              URL atual do webhook: <code className="font-mono bg-white/70 px-1 rounded break-all">{webhookDiagnostic.callbackUrl}</code>
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Card Principal: Números Conectados & Pré-visualização de Dados */}
       <Card className="border-zinc-200/80 shadow-sm overflow-hidden">

@@ -27,6 +27,26 @@ function getPublicBaseUrl(req: AuthRequest) {
   return `${req.protocol}://${req.get('host')}`;
 }
 
+function validatePublicWebhookUrl(baseUrl: string) {
+  let parsed: URL;
+  try {
+    parsed = new URL(baseUrl);
+  } catch {
+    throw new Error('PUBLIC_BASE_URL inválido. Configure um domínio público HTTPS, por exemplo: https://seudominio.com');
+  }
+
+  const hostname = parsed.hostname.toLowerCase();
+  const isLocal =
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    hostname === '0.0.0.0' ||
+    hostname.endsWith('.local');
+
+  if (parsed.protocol !== 'https:' || isLocal) {
+    throw new Error('Webhook da Meta precisa de um domínio público HTTPS. Configure PUBLIC_BASE_URL com o domínio real da plataforma.');
+  }
+}
+
 async function subscribeWhatsAppWebhooks(params: {
   req: AuthRequest;
   wabaId: string;
@@ -38,41 +58,55 @@ async function subscribeWhatsAppWebhooks(params: {
   const appId = (process.env.META_APP_ID || params.appId || '').toString().trim();
   const appSecret = (process.env.META_APP_SECRET || params.appSecret || '').toString().trim();
   const verifyToken = process.env.META_VERIFY_TOKEN || 'orion_webhook_token';
-  const callbackUrl = `${getPublicBaseUrl(req)}/api/whatsapp/webhook`;
+  const publicBaseUrl = getPublicBaseUrl(req);
+  validatePublicWebhookUrl(publicBaseUrl);
+
+  if (!appId || !appSecret) {
+    throw new Error('META_APP_ID e META_APP_SECRET são obrigatórios para subscrever o webhook da Meta.');
+  }
+
+  const callbackUrl = `${publicBaseUrl}/api/whatsapp/webhook`;
   const result: any = {
     callbackUrl,
     appSubscription: null,
     wabaSubscription: null,
   };
 
-  if (appId && appSecret) {
-    try {
-      const appToken = `${appId}|${appSecret}`;
-      const appSubRes = await axios.post(`https://graph.facebook.com/${META_GRAPH_VERSION}/${appId}/subscriptions`, null, {
-        params: {
-          object: 'whatsapp_business_account',
-          callback_url: callbackUrl,
-          verify_token: verifyToken,
-          fields: 'messages,message_template_status_update,account_update,phone_number_quality_update,phone_number_name_update',
-          include_values: true,
-          access_token: appToken,
-        },
-      });
-      result.appSubscription = { success: true, data: appSubRes.data };
-    } catch (err: any) {
-      result.appSubscription = { success: false, error: err.response?.data || err.message };
-      console.warn('[WHATSAPP WEBHOOKS] Aviso ao configurar webhook do app:', result.appSubscription.error);
-    }
+  try {
+    const appToken = `${appId}|${appSecret}`;
+    const appSubRes = await axios.post(`https://graph.facebook.com/${META_GRAPH_VERSION}/${appId}/subscriptions`, null, {
+      params: {
+        object: 'whatsapp_business_account',
+        callback_url: callbackUrl,
+        verify_token: verifyToken,
+        fields: 'messages,message_template_status_update,account_update,phone_number_quality_update,phone_number_name_update',
+        include_values: true,
+        access_token: appToken,
+      },
+    });
+    result.appSubscription = { success: true, data: appSubRes.data };
+  } catch (err: any) {
+    result.appSubscription = { success: false, error: err.response?.data || err.message };
+    console.warn('[WHATSAPP WEBHOOKS] Erro ao configurar webhook do app:', result.appSubscription.error);
+    throw err;
   }
 
   try {
-    const wabaSubRes = await axios.post(`https://graph.facebook.com/${META_GRAPH_VERSION}/${wabaId}/subscribed_apps`, {
-      override_callback_uri: callbackUrl,
-      verify_token: verifyToken,
-    }, {
-      headers: { 'Content-Type': 'application/json' },
-      params: { access_token: accessToken },
-    });
+    let wabaSubRes;
+    try {
+      wabaSubRes = await axios.post(`https://graph.facebook.com/${META_GRAPH_VERSION}/${wabaId}/subscribed_apps`, {
+        override_callback_uri: callbackUrl,
+        verify_token: verifyToken,
+      }, {
+        headers: { 'Content-Type': 'application/json' },
+        params: { access_token: accessToken },
+      });
+    } catch (overrideErr: any) {
+      console.warn('[WHATSAPP WEBHOOKS] Override callback falhou; tentando subscrição padrão:', overrideErr.response?.data || overrideErr.message);
+      wabaSubRes = await axios.post(`https://graph.facebook.com/${META_GRAPH_VERSION}/${wabaId}/subscribed_apps`, null, {
+        params: { access_token: accessToken },
+      });
+    }
     result.wabaSubscription = { success: true, data: wabaSubRes.data };
   } catch (err: any) {
     result.wabaSubscription = { success: false, error: err.response?.data || err.message };
@@ -851,6 +885,69 @@ router.post('/webhook-sync', requireAuth, async (req: AuthRequest, res) => {
       error: metaError?.message || err.message || 'Erro ao sincronizar webhooks com a Meta.',
       details: metaError,
     });
+  }
+});
+
+// ─── GET /api/whatsapp/webhook-diagnostics ───────────────────────────────────
+router.get('/webhook-diagnostics', requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const orgId = req.user?.orgId;
+    const publicBaseUrl = getPublicBaseUrl(req);
+    const callbackUrl = `${publicBaseUrl}/api/whatsapp/webhook`;
+
+    let callbackOk = true;
+    let callbackIssue = '';
+    try {
+      validatePublicWebhookUrl(publicBaseUrl);
+    } catch (err: any) {
+      callbackOk = false;
+      callbackIssue = err.message;
+    }
+
+    const { data: config, error } = await supabaseAdmin
+      .from('whatsapp_config')
+      .select('phone_number_id, waba_id, access_token, display_name, is_active')
+      .eq('org_id', orgId)
+      .eq('is_active', true)
+      .maybeSingle();
+
+    if (error) throw error;
+
+    let subscribedApps: any = null;
+    let subscribedAppsError = '';
+    if (config?.waba_id && config?.access_token) {
+      try {
+        const { data } = await axios.get(`https://graph.facebook.com/${META_GRAPH_VERSION}/${config.waba_id}/subscribed_apps`, {
+          params: { access_token: config.access_token },
+        });
+        subscribedApps = data;
+      } catch (err: any) {
+        subscribedAppsError = err.response?.data?.error?.message || err.message;
+      }
+    }
+
+    return res.json({
+      callbackUrl,
+      callbackOk,
+      callbackIssue,
+      environment: {
+        hasPublicBaseUrl: !!(process.env.PUBLIC_BASE_URL || process.env.APP_URL || process.env.FRONTEND_URL),
+        hasMetaVerifyToken: !!process.env.META_VERIFY_TOKEN,
+        hasMetaAppId: !!process.env.META_APP_ID,
+        hasMetaAppSecret: !!process.env.META_APP_SECRET,
+      },
+      config: config ? {
+        isActive: config.is_active,
+        phoneNumberId: config.phone_number_id,
+        wabaId: config.waba_id,
+        displayName: config.display_name,
+        hasAccessToken: !!config.access_token,
+      } : null,
+      subscribedApps,
+      subscribedAppsError,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
   }
 });
 
