@@ -135,6 +135,7 @@ router.get('/config', requireAuth, async (req: AuthRequest, res) => {
       website: extraMeta.website || (data as any).website || '',
       support_email: extraMeta.support_email || (data as any).support_email || '',
       app_id: extraMeta.app_id || (data as any).app_id || '',
+      client_secret: extraMeta.client_secret || (data as any).client_secret || '',
       description: extraMeta.about || extraMeta.description || data.description || '',
     });
   } catch (err: any) {
@@ -571,6 +572,7 @@ router.post('/config', requireAuth, async (req: AuthRequest, res) => {
         website: req.body.website || '',
         support_email: req.body.support_email || '',
         app_id: req.body.app_id || '',
+        client_secret: req.body.client_secret || '',
         about: req.body.description || '',
         updated_at: new Date().toISOString()
       });
@@ -600,6 +602,7 @@ router.post('/config', requireAuth, async (req: AuthRequest, res) => {
           website: req.body.website || '',
           support_email: req.body.support_email || '',
           app_id: req.body.app_id || '',
+          client_secret: req.body.client_secret || '',
           description: req.body.description || '',
         }
       });

@@ -63,9 +63,18 @@ const newNumberSchema = z.object({
 
 type NewNumberFormValues = z.infer<typeof newNumberSchema>;
 
+declare global {
+  interface Window {
+    FB?: any;
+    fbAsyncInit?: () => void;
+  }
+}
+
 export default function WhatsAppConfig() {
   const [webhookUrl] = useState(`${window.location.origin}/api/whatsapp/webhook`);
   const [verifyToken] = useState("orion_secure_token_123");
+  const metaAppId = import.meta.env.VITE_META_APP_ID || "34557883637136073";
+  const metaWhatsappConfigId = import.meta.env.VITE_META_WHATSAPP_CONFIG_ID || "";
 
   const [numbers, setNumbers] = useState<WhatsAppNumber[]>([]);
   const [rawConfig, setRawConfig] = useState<WhatsAppConfigData | null>(null);
@@ -79,6 +88,7 @@ export default function WhatsAppConfig() {
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isEmbeddedSignupStarting, setIsEmbeddedSignupStarting] = useState(false);
 
   const {
     register,
@@ -162,6 +172,8 @@ export default function WhatsAppConfig() {
       displayName: "Orion Assistant",
       businessCategory: "",
       description: "",
+      appId: metaAppId,
+      clientSecret: "",
       website: "",
       supportEmail: "",
       profilePictureUrl: ""
@@ -323,51 +335,138 @@ export default function WhatsAppConfig() {
     setIsPasswordModalOpen(false);
   };
 
-  // Embedded Signup Logic
-  const launchEmbeddedSignup = () => {
-    // @ts-ignore
-    if (typeof window.FB === 'undefined') {
-      toast.error("O SDK da Meta ainda não carregou ou foi bloqueado pelo navegador. Por favor, tente recarregar ou desativar bloqueadores de anúncios.");
-      return;
-    }
-    const appId = "34557883637136073";
-    if ((appId as string) === "SEU_APP_ID_AQUI") {
-      toast.warning("Configuração pendente: Insira o App ID para usar o fluxo automático.");
-      handleOpenNewModal();
-      return;
-    }
-    // @ts-ignore
-    FB.login((response: any) => {
-      if (response.authResponse) {
-        const accessToken = response.authResponse.accessToken;
-        toast.success("Conectado com sucesso à Meta!");
-        toast.info("Processando integração automática...");
-      } else {
-        toast.error("O utilizador cancelou o login ou não autorizou a aplicação.");
-      }
-    }, {
-      scope: 'whatsapp_business_management,whatsapp_business_messaging',
-      extras: { feature: 'whatsapp_embedded_signup' }
-    });
-  };
-
-  useEffect(() => {
-    // @ts-ignore
-    window.fbAsyncInit = function () {
-      // @ts-ignore
-      FB.init({
-        appId: '34557883637136073',
+  const ensureMetaSdk = () => new Promise<void>((resolve, reject) => {
+    if (window.FB) {
+      window.FB.init({
+        appId: metaAppId,
         cookie: true,
         xfbml: true,
         version: 'v19.0'
       });
-    };
-    // @ts-ignore
-    if (window.FB) {
-      // @ts-ignore
-      window.fbAsyncInit();
+      resolve();
+      return;
     }
-  }, []);
+
+    const timeout = window.setTimeout(() => {
+      reject(new Error("O SDK da Meta demorou demasiado a carregar."));
+    }, 12000);
+
+    window.fbAsyncInit = function () {
+      window.clearTimeout(timeout);
+      window.FB?.init({
+        appId: metaAppId,
+        cookie: true,
+        xfbml: true,
+        version: 'v19.0'
+      });
+      resolve();
+    };
+
+    if (!document.getElementById('facebook-jssdk')) {
+      const script = document.createElement('script');
+      script.id = 'facebook-jssdk';
+      script.async = true;
+      script.defer = true;
+      script.crossOrigin = 'anonymous';
+      script.src = 'https://connect.facebook.net/pt_PT/sdk.js';
+      script.onerror = () => {
+        window.clearTimeout(timeout);
+        reject(new Error("Não foi possível carregar o SDK da Meta. Verifique bloqueadores de anúncios ou permissões do navegador."));
+      };
+      document.body.appendChild(script);
+    }
+  });
+
+  // Embedded Signup Logic
+  const launchEmbeddedSignup = async () => {
+    if (!metaWhatsappConfigId) {
+      toast.error("Falta configurar o ID da configuração de Login for Business da Meta.");
+      toast.info("Adicione VITE_META_WHATSAPP_CONFIG_ID no ambiente ou use a configuração manual.");
+      handleOpenNewModal();
+      return;
+    }
+
+    setIsEmbeddedSignupStarting(true);
+    try {
+      await ensureMetaSdk();
+
+      window.FB.login((response: any) => {
+        setIsEmbeddedSignupStarting(false);
+
+        if (response?.authResponse?.code) {
+          toast.success("Autorização recebida da Meta.");
+          toast.info("Complete os dados que faltarem no formulário para concluir a conexão.");
+          handleOpenNewModal();
+          return;
+        }
+
+        if (response?.authResponse?.accessToken) {
+          toast.success("Sessão Meta autorizada.");
+          toast.info("Complete os dados que faltarem no formulário para concluir a conexão.");
+          handleOpenNewModal();
+          return;
+        }
+
+        toast.error("A conexão com a Meta foi cancelada ou não foi autorizada.");
+      }, {
+        config_id: metaWhatsappConfigId,
+        response_type: 'code',
+        override_default_response_type: true,
+        extras: {
+          setup: {},
+          featureType: 'whatsapp_business_app_onboarding',
+          sessionInfoVersion: '3'
+        }
+      });
+    } catch (error: any) {
+      setIsEmbeddedSignupStarting(false);
+      toast.error(error.message || "Erro ao iniciar conexão com a Meta.");
+    }
+  };
+
+  useEffect(() => {
+    const handleEmbeddedSignupMessage = (event: MessageEvent) => {
+      const origin = event.origin || "";
+      const isMetaOrigin = origin === "https://www.facebook.com" || origin === "https://web.facebook.com";
+      if (!isMetaOrigin) return;
+
+      let payload: any = event.data;
+      if (typeof payload === "string") {
+        try {
+          payload = JSON.parse(payload);
+        } catch {
+          return;
+        }
+      }
+
+      if (payload?.type !== "WA_EMBEDDED_SIGNUP") return;
+
+      if (payload.event === "FINISH" || payload.event === "FINISH_ONLY_WABA") {
+        const phoneNumberId = payload.data?.phone_number_id || "";
+        const wabaId = payload.data?.waba_id || payload.data?.business_account_id || "";
+
+        reset({
+          phone: "",
+          phoneId: phoneNumberId,
+          wabaId,
+          token: "",
+          appId: metaAppId,
+          clientSecret: "",
+          displayName: "Orion Assistant",
+          businessCategory: "",
+          description: "",
+          website: "",
+          supportEmail: "",
+          profilePictureUrl: ""
+        });
+        setIsModalOpen(true);
+        toast.success("Dados da Meta recebidos. Confirme os campos para concluir a conexão.");
+      }
+    };
+
+    window.addEventListener("message", handleEmbeddedSignupMessage);
+    return () => window.removeEventListener("message", handleEmbeddedSignupMessage);
+  }, [metaAppId, reset]);
 
   return (
     <div className="space-y-6 max-w-4xl pb-12">
@@ -660,9 +759,11 @@ export default function WhatsAppConfig() {
             </Button>
             <Button 
               onClick={launchEmbeddedSignup} 
+              disabled={isEmbeddedSignupStarting}
               className="bg-[#1877F2] hover:bg-[#166fe5] text-white gap-2 font-bold shadow-md w-full sm:w-auto justify-center"
             >
-              <Building className="w-4 h-4" /> Conectar com Meta
+              {isEmbeddedSignupStarting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Building className="w-4 h-4" />}
+              Conectar com Meta
             </Button>
           </div>
         </CardFooter>
@@ -796,6 +897,26 @@ export default function WhatsAppConfig() {
                   </div>
                   {errors.token && <p className="text-xs text-red-500">{errors.token.message}</p>}
                   <p className="text-[11px] text-zinc-500">Token gerado com permissões whatsapp_business_messaging e whatsapp_business_management.</p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 border-t border-zinc-100 pt-4">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-zinc-700">Meta App ID</label>
+                    <div className="relative">
+                      <Building className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
+                      <Input {...register("appId")} className="pl-9 font-mono text-sm" placeholder="Ex: 3455788..." />
+                    </div>
+                    <p className="text-[11px] text-zinc-500">ID da aplicação criada no Meta for Developers.</p>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-zinc-700">Meta App Secret</label>
+                    <div className="relative">
+                      <Key className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
+                      <Input type="password" {...register("clientSecret")} className="pl-9 font-mono text-sm" placeholder="Opcional" />
+                    </div>
+                    <p className="text-[11px] text-zinc-500">Opcional, usado quando a sua aplicação Meta exigir secret.</p>
+                  </div>
                 </div>
 
                 <div className="space-y-4 border-t border-zinc-100 pt-4 mt-4">
