@@ -21,6 +21,68 @@ const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
 const META_GRAPH_VERSION = process.env.META_GRAPH_VERSION || 'v19.0';
 
+function getPublicBaseUrl(req: AuthRequest) {
+  const configured = process.env.PUBLIC_BASE_URL || process.env.APP_URL || process.env.FRONTEND_URL;
+  if (configured) return configured.replace(/\/+$/, '');
+  return `${req.protocol}://${req.get('host')}`;
+}
+
+async function subscribeWhatsAppWebhooks(params: {
+  req: AuthRequest;
+  wabaId: string;
+  accessToken: string;
+  appId?: string;
+  appSecret?: string;
+}) {
+  const { req, wabaId, accessToken } = params;
+  const appId = (process.env.META_APP_ID || params.appId || '').toString().trim();
+  const appSecret = (process.env.META_APP_SECRET || params.appSecret || '').toString().trim();
+  const verifyToken = process.env.META_VERIFY_TOKEN || 'orion_webhook_token';
+  const callbackUrl = `${getPublicBaseUrl(req)}/api/whatsapp/webhook`;
+  const result: any = {
+    callbackUrl,
+    appSubscription: null,
+    wabaSubscription: null,
+  };
+
+  if (appId && appSecret) {
+    try {
+      const appToken = `${appId}|${appSecret}`;
+      const appSubRes = await axios.post(`https://graph.facebook.com/${META_GRAPH_VERSION}/${appId}/subscriptions`, null, {
+        params: {
+          object: 'whatsapp_business_account',
+          callback_url: callbackUrl,
+          verify_token: verifyToken,
+          fields: 'messages,message_template_status_update,account_update,phone_number_quality_update,phone_number_name_update',
+          include_values: true,
+          access_token: appToken,
+        },
+      });
+      result.appSubscription = { success: true, data: appSubRes.data };
+    } catch (err: any) {
+      result.appSubscription = { success: false, error: err.response?.data || err.message };
+      console.warn('[WHATSAPP WEBHOOKS] Aviso ao configurar webhook do app:', result.appSubscription.error);
+    }
+  }
+
+  try {
+    const wabaSubRes = await axios.post(`https://graph.facebook.com/${META_GRAPH_VERSION}/${wabaId}/subscribed_apps`, {
+      override_callback_uri: callbackUrl,
+      verify_token: verifyToken,
+    }, {
+      headers: { 'Content-Type': 'application/json' },
+      params: { access_token: accessToken },
+    });
+    result.wabaSubscription = { success: true, data: wabaSubRes.data };
+  } catch (err: any) {
+    result.wabaSubscription = { success: false, error: err.response?.data || err.message };
+    console.warn('[WHATSAPP WEBHOOKS] Erro ao subscrever WABA:', result.wabaSubscription.error);
+    throw err;
+  }
+
+  return result;
+}
+
 // ─── Helper: Upload de média do cliente para o Supabase Storage ───────────────
 async function uploadClientMediaToStorage(
   orgId: string,
@@ -693,15 +755,15 @@ router.post('/embedded-signup/complete', requireAuth, async (req: AuthRequest, r
       });
     }
 
-    if (resolvedWabaId) {
-      try {
-        await axios.post(`https://graph.facebook.com/${META_GRAPH_VERSION}/${resolvedWabaId}/subscribed_apps`, null, {
-          params: { access_token: accessToken },
-        });
-      } catch (subErr: any) {
-        console.warn('[WHATSAPP EMBEDDED] Aviso ao subscrever app no WABA:', subErr.response?.data || subErr.message);
-      }
-    }
+    const webhookSubscription = resolvedWabaId
+      ? await subscribeWhatsAppWebhooks({
+          req,
+          wabaId: resolvedWabaId,
+          accessToken,
+          appId: metaAppId,
+          appSecret: metaAppSecret,
+        })
+      : null;
 
     const verifiedName = display_name || phoneInfo?.verified_name || 'WhatsApp Business';
     const displayPhone = phoneInfo?.display_phone_number || '';
@@ -736,6 +798,7 @@ router.post('/embedded-signup/complete', requireAuth, async (req: AuthRequest, r
         ...data,
         phone: displayPhone,
         app_id: metaAppId,
+        webhook_subscription: webhookSubscription,
       },
     });
   } catch (err: any) {
@@ -744,6 +807,48 @@ router.post('/embedded-signup/complete', requireAuth, async (req: AuthRequest, r
     return res.status(500).json({
       error: metaError?.message || err.message || 'Erro ao concluir conexão automática com a Meta.',
       code: metaError?.code,
+      details: metaError,
+    });
+  }
+});
+
+// ─── POST /api/whatsapp/webhook-sync ─────────────────────────────────────────
+router.post('/webhook-sync', requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const orgId = req.user?.orgId;
+    const { data: config, error } = await supabaseAdmin
+      .from('whatsapp_config')
+      .select('waba_id, access_token')
+      .eq('org_id', orgId)
+      .eq('is_active', true)
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!config?.waba_id || !config?.access_token) {
+      return res.status(400).json({ error: 'Configuração WhatsApp incompleta: WABA ID ou token ausente.' });
+    }
+
+    const subscription = await subscribeWhatsAppWebhooks({
+      req,
+      wabaId: config.waba_id,
+      accessToken: config.access_token,
+    });
+
+    const { data: subscriptions } = await axios.get(`https://graph.facebook.com/${META_GRAPH_VERSION}/${config.waba_id}/subscribed_apps`, {
+      params: { access_token: config.access_token },
+    });
+
+    return res.json({
+      success: true,
+      message: 'Webhooks sincronizados com a Meta.',
+      subscription,
+      subscriptions,
+    });
+  } catch (err: any) {
+    const metaError = err.response?.data?.error || err.response?.data;
+    console.error('[WHATSAPP WEBHOOKS] Erro ao sincronizar:', metaError || err.message);
+    return res.status(500).json({
+      error: metaError?.message || err.message || 'Erro ao sincronizar webhooks com a Meta.',
       details: metaError,
     });
   }
@@ -789,6 +894,52 @@ function extractCustomerNameFromText(text: string): string | null {
       }
     }
   }
+  return null;
+}
+
+async function findWhatsappConfigForWebhook(phoneNumberId?: string, wabaId?: string) {
+  const selectFields = 'org_id, access_token, display_name, phone_number_id, waba_id';
+
+  if (phoneNumberId) {
+    const { data, error } = await supabaseAdmin
+      .from('whatsapp_config')
+      .select(selectFields)
+      .eq('phone_number_id', phoneNumberId)
+      .eq('is_active', true)
+      .maybeSingle();
+    if (error) {
+      console.error('[WEBHOOK] Erro DB ao procurar por phone_number_id:', error.message);
+    }
+    if (data) return data;
+  }
+
+  if (wabaId) {
+    const { data, error } = await supabaseAdmin
+      .from('whatsapp_config')
+      .select(selectFields)
+      .eq('waba_id', wabaId)
+      .eq('is_active', true)
+      .maybeSingle();
+    if (error) {
+      console.error('[WEBHOOK] Erro DB ao procurar por waba_id:', error.message);
+    }
+    if (data) return data;
+  }
+
+  const { data: activeConfigs, error } = await supabaseAdmin
+    .from('whatsapp_config')
+    .select(selectFields)
+    .eq('is_active', true);
+  if (error) {
+    console.error('[WEBHOOK] Erro DB ao procurar configurações ativas:', error.message);
+    return null;
+  }
+
+  if (activeConfigs?.length === 1) {
+    console.warn(`[WEBHOOK] Fallback: usando única config ativa (phone_id=${activeConfigs[0].phone_number_id}, waba_id=${activeConfigs[0].waba_id}). Recebido phone_id=${phoneNumberId || 'n/a'}, waba_id=${wabaId || 'n/a'}`);
+    return activeConfigs[0];
+  }
+
   return null;
 }
 
@@ -1392,6 +1543,7 @@ router.post('/webhook', async (req, res) => {
     const messages = value?.messages;
     const statuses = value?.statuses;
     const metadata = value?.metadata;
+    const entryWabaId = entry?.id;
 
     // Emissão de atualizações de status de mensagem (sent, delivered, read) via Socket
     if (statuses && statuses.length > 0) {
@@ -1400,11 +1552,7 @@ router.post('/webhook', async (req, res) => {
       const status = statusObj.status; // 'sent', 'delivered', 'read'
       if (recipientPhone && status) {
         try {
-          const { data: config } = await supabaseAdmin
-            .from('whatsapp_config')
-            .select('org_id')
-            .eq('phone_number_id', metadata?.phone_number_id)
-            .maybeSingle();
+          const config = await findWhatsappConfigForWebhook(metadata?.phone_number_id, entryWabaId);
 
           if (config) {
             getIo().to(`org:${config.org_id}`).emit('message_status', {
@@ -1436,11 +1584,7 @@ router.post('/webhook', async (req, res) => {
     if (incomingMsg.from === metadata?.display_phone_number || incomingMsg.type === 'echo') {
       const recipientNumber = incomingMsg.to;
       if (recipientNumber) {
-        const { data: config } = await supabaseAdmin
-          .from('whatsapp_config')
-          .select('org_id')
-          .eq('phone_number_id', metadata?.phone_number_id)
-          .maybeSingle();
+        const config = await findWhatsappConfigForWebhook(metadata?.phone_number_id, entryWabaId);
 
         if (config) {
           const key = `${config.org_id}:${recipientNumber}`;
@@ -1469,20 +1613,13 @@ router.post('/webhook', async (req, res) => {
     const phoneNumberId = metadata?.phone_number_id;
     const referral     = incomingMsg.referral;
 
-    console.log(`[WEBHOOK] Nova mensagem de ${fromNumber} (${profileName || 'Sem nome'}) → phone_id ${phoneNumberId}`);
+    console.log(`[WEBHOOK] Nova mensagem de ${fromNumber} (${profileName || 'Sem nome'}) → phone_id ${phoneNumberId || 'n/a'} | waba_id ${entryWabaId || 'n/a'}`);
 
     // ── 4. Buscar configuração da organização ─────────────────────────────────
-    const { data: configData, error: dbError } = await supabaseAdmin
-      .from('whatsapp_config')
-      .select('org_id, access_token, display_name')
-      .eq('phone_number_id', phoneNumberId)
-      .eq('is_active', true)
-      .maybeSingle();
-
-    if (dbError) console.error('[WEBHOOK] Erro DB:', dbError.message);
+    const configData = await findWhatsappConfigForWebhook(phoneNumberId, entryWabaId);
 
     if (!configData) {
-      console.warn(`[WEBHOOK] Nenhuma config activa para phone_number_id: ${phoneNumberId}`);
+      console.warn(`[WEBHOOK] Nenhuma config activa para phone_number_id=${phoneNumberId || 'n/a'} / waba_id=${entryWabaId || 'n/a'}`);
       return;
     }
 
@@ -1692,7 +1829,7 @@ router.post('/webhook', async (req, res) => {
     await triggerAIResponse({
       orgId,
       fromNumber,
-      phoneNumberId,
+      phoneNumberId: phoneNumberId || configData.phone_number_id,
       accessToken,
       botName: botName || 'Assistente',
       message: dbText,

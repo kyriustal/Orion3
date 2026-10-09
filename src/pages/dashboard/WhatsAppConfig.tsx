@@ -289,10 +289,18 @@ export default function WhatsAppConfig() {
   const handleSyncWebhooks = async () => {
     setIsSyncing(true);
     try {
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      toast.success("Inscrições do Webhook sincronizadas com a Meta com sucesso!");
-    } catch {
-      toast.error("Erro ao sincronizar webhooks.");
+      const token = localStorage.getItem("token");
+      const res = await fetch("/api/whatsapp/webhook-sync", {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Erro ao sincronizar webhooks.");
+      }
+      toast.success(data.message || "Inscrições do Webhook sincronizadas com a Meta com sucesso!");
+    } catch (error: any) {
+      toast.error(error.message || "Erro ao sincronizar webhooks.");
     } finally {
       setIsSyncing(false);
     }
