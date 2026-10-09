@@ -74,7 +74,8 @@ export default function WhatsAppConfig() {
   // Modais
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
-  const [pendingFormData, setPendingFormData] = useState<NewNumberFormValues | null>(null);
+  const [pendingCredentialAction, setPendingCredentialAction] = useState<null | 'showToken' | 'copyToken'>(null);
+  const [hasCredentialAccess, setHasCredentialAccess] = useState(false);
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -168,20 +169,12 @@ export default function WhatsAppConfig() {
     setIsModalOpen(true);
   };
 
-  // Submissão do formulário: intercepta se já existir configuração para pedir palavra-passe
+  // Submissão do formulário: configuração/edição não exige palavra-passe.
   const onSubmitNewNumber = (data: NewNumberFormValues) => {
-    setPendingFormData(data);
-    if (rawConfig && rawConfig.is_active) {
-      // Requer palavra-passe para editar dados existentes
-      setIsPasswordModalOpen(true);
-    } else {
-      // Nova conexão primária direta
-      executeSaveConfig(data);
-    }
+    executeSaveConfig(data);
   };
 
-  // Executa o POST com ou sem senha
-  const executeSaveConfig = async (formData: NewNumberFormValues, password?: string) => {
+  const executeSaveConfig = async (formData: NewNumberFormValues) => {
     setIsSubmitting(true);
     try {
       const token = localStorage.getItem("token");
@@ -204,7 +197,6 @@ export default function WhatsAppConfig() {
           profile_picture_url: formData.profilePictureUrl,
           website: formData.website,
           support_email: formData.supportEmail,
-          password: password, // Envia palavra-passe para validação no backend
         })
       });
 
@@ -217,7 +209,6 @@ export default function WhatsAppConfig() {
       toast.success(resData.message || "WhatsApp configurado e verificado com sucesso!");
       setIsModalOpen(false);
       setIsPasswordModalOpen(false);
-      setPendingFormData(null);
       reset();
       await fetchConfig();
 
@@ -226,15 +217,10 @@ export default function WhatsAppConfig() {
 
     } catch (error: any) {
       toast.error(`Falha: ${error.message}`);
-      throw error; // Propaga para o modal de senha saber que falhou se for o caso
+      throw error;
     } finally {
       setIsSubmitting(false);
     }
-  };
-
-  const handleConfirmPassword = async (password: string) => {
-    if (!pendingFormData) return;
-    await executeSaveConfig(pendingFormData, password);
   };
 
   const [subscriptions, setSubscriptions] = useState({
@@ -300,6 +286,41 @@ export default function WhatsAppConfig() {
     if (!text) return;
     navigator.clipboard.writeText(text);
     toast.success("Copiado para a área de transferência!");
+  };
+
+  const requestCredentialAccess = (action: NonNullable<typeof pendingCredentialAction>) => {
+    if (hasCredentialAccess) {
+      runCredentialAction(action);
+      return;
+    }
+    setPendingCredentialAction(action);
+    setIsPasswordModalOpen(true);
+  };
+
+  const runCredentialAction = (action: NonNullable<typeof pendingCredentialAction>) => {
+    const token = numbers[0]?.token || "";
+    if (action === 'showToken') setShowTokenPreview(true);
+    if (action === 'copyToken') copyToClipboard(token);
+  };
+
+  const confirmCredentialAccess = async (password: string) => {
+    const token = localStorage.getItem("token");
+    const res = await fetch("/api/auth/verify-password", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`
+      },
+      body: JSON.stringify({ password })
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      throw new Error(data.error || "Palavra-passe incorreta. Acesso negado.");
+    }
+    setHasCredentialAccess(true);
+    if (pendingCredentialAction) runCredentialAction(pendingCredentialAction);
+    setPendingCredentialAction(null);
+    setIsPasswordModalOpen(false);
   };
 
   // Embedded Signup Logic
@@ -552,7 +573,7 @@ export default function WhatsAppConfig() {
                         <div className="flex items-center gap-1">
                           <button
                             type="button"
-                            onClick={() => setShowTokenPreview(!showTokenPreview)}
+                            onClick={() => showTokenPreview ? setShowTokenPreview(false) : requestCredentialAccess('showToken')}
                             className="p-1 text-zinc-400 hover:text-zinc-700 rounded-md hover:bg-zinc-100 transition-colors"
                             title={showTokenPreview ? "Ocultar Token" : "Mostrar Token"}
                           >
@@ -561,7 +582,7 @@ export default function WhatsAppConfig() {
                           <Button
                             variant="ghost"
                             size="icon"
-                            onClick={() => copyToClipboard(num.token || "")}
+                            onClick={() => requestCredentialAccess('copyToken')}
                             className="h-6 w-6 text-zinc-400 hover:text-zinc-700"
                             title="Copiar Token Completo"
                           >
@@ -734,7 +755,7 @@ export default function WhatsAppConfig() {
                 </CardTitle>
                 <CardDescription className="text-xs">
                   {rawConfig 
-                    ? "Altere os identificadores e tokens. Será solicitada a sua palavra-passe ao guardar."
+                    ? "Altere os identificadores e tokens. A palavra-passe só será solicitada ao visualizar ou copiar credenciais sensíveis."
                     : "Insira as credenciais fornecidas pelo painel da Meta for Developers."}
                 </CardDescription>
               </CardHeader>
@@ -817,11 +838,10 @@ export default function WhatsAppConfig() {
       <PasswordConfirmationModal
         isOpen={isPasswordModalOpen}
         onClose={() => setIsPasswordModalOpen(false)}
-        onConfirm={handleConfirmPassword}
-        title="Confirmar Alteração de Conexão WhatsApp"
-        description="Por motivos de segurança, introduza a sua palavra-passe de acesso ao Orion para autorizar a modificação das credenciais do WhatsApp Business (IDs, Tokens e Telefone)."
-        actionLabel="Confirmar e Salvar Credenciais"
-        isLoading={isSubmitting}
+        onConfirm={confirmCredentialAccess}
+        title="Desbloquear Credenciais WhatsApp"
+        description="Por motivos de segurança, introduza a sua palavra-passe de acesso ao Orion para visualizar ou copiar credenciais da Meta."
+        actionLabel="Desbloquear Credenciais"
       />
     </div>
   );

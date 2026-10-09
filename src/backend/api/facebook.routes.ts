@@ -3,7 +3,6 @@ import { supabaseAdmin } from '../config/supabase';
 import { AIService } from '../services/ai.service';
 import { FacebookService } from '../services/facebook.service';
 import { requireAuth, AuthRequest } from '../middleware/auth';
-import { verifyUserPassword } from '../utils/authVerify';
 import { EmailService } from '../services/email.service';
 import { PushService } from '../services/push.service';
 import { FollowupService } from '../services/followup.service';
@@ -102,7 +101,7 @@ router.get('/test', requireAuth, async (req: AuthRequest, res) => {
 router.post('/config', requireAuth, async (req: AuthRequest, res) => {
   try {
     const orgId = req.user?.orgId;
-    let { page_id, page_access_token, app_id, app_secret, display_name, password } = req.body;
+    let { page_id, page_access_token, app_id, app_secret, display_name } = req.body;
 
     page_id = (page_id || '').toString().trim();
     page_access_token = (page_access_token || '').toString().trim();
@@ -119,13 +118,6 @@ router.post('/config', requireAuth, async (req: AuthRequest, res) => {
       .select('id, is_active')
       .eq('org_id', orgId)
       .maybeSingle();
-
-    if (existing) {
-      const authCheck = await verifyUserPassword(req.user?.id, req.user?.email, password);
-      if (!authCheck.valid) {
-        return res.status(401).json({ error: authCheck.error || 'Palavra-passe incorreta. Acesso negado para editar as credenciais.' });
-      }
-    }
 
     // Validar token junto da Meta API
     const validation = await FacebookService.validatePageToken(page_id, page_access_token);

@@ -27,6 +27,8 @@ export default function InstagramConfig() {
   const [isEditing, setIsEditing] = useState(false);
   const [showTokenPreview, setShowTokenPreview] = useState(false);
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
+  const [pendingCredentialAction, setPendingCredentialAction] = useState<null | 'showToken' | 'copyToken'>(null);
+  const [hasCredentialAccess, setHasCredentialAccess] = useState(false);
 
   const [token, setToken] = useState('');
   const [displayName, setDisplayName] = useState('');
@@ -68,15 +70,10 @@ export default function InstagramConfig() {
       return; 
     }
 
-    if (config && config.is_active) {
-      // Requer palavra-passe para editar credenciais existentes
-      setIsPasswordModalOpen(true);
-    } else {
-      executeSave();
-    }
+    executeSave();
   };
 
-  const executeSave = async (password?: string) => {
+  const executeSave = async () => {
     setIsConnecting(true);
     try {
       const res = await fetch('/api/instagram/config', {
@@ -87,8 +84,7 @@ export default function InstagramConfig() {
         },
         body: JSON.stringify({ 
           access_token: token.trim(), 
-          display_name: displayName.trim(),
-          password 
+          display_name: displayName.trim()
         }),
       });
 
@@ -130,6 +126,39 @@ export default function InstagramConfig() {
     if (!text) return;
     navigator.clipboard.writeText(text); 
     toast.success('Copiado para a área de transferência!'); 
+  };
+
+  const requestCredentialAccess = (action: NonNullable<typeof pendingCredentialAction>) => {
+    if (hasCredentialAccess) {
+      runCredentialAction(action);
+      return;
+    }
+    setPendingCredentialAction(action);
+    setIsPasswordModalOpen(true);
+  };
+
+  const runCredentialAction = (action: NonNullable<typeof pendingCredentialAction>) => {
+    if (action === 'showToken') setShowTokenPreview(true);
+    if (action === 'copyToken') copy(config?.access_token || token);
+  };
+
+  const confirmCredentialAccess = async (password: string) => {
+    const res = await fetch('/api/auth/verify-password', {
+      method: 'POST',
+      headers: { 
+        'Content-Type': 'application/json', 
+        Authorization: `Bearer ${authToken()}` 
+      },
+      body: JSON.stringify({ password }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      throw new Error(data.error || 'Palavra-passe incorreta. Acesso negado.');
+    }
+    setHasCredentialAccess(true);
+    if (pendingCredentialAction) runCredentialAction(pendingCredentialAction);
+    setPendingCredentialAction(null);
+    setIsPasswordModalOpen(false);
   };
 
   if (isLoading) {
@@ -201,7 +230,7 @@ export default function InstagramConfig() {
               </div>
               <div className="flex items-center gap-1.5 text-xs text-zinc-400">
                 <Lock className="w-3.5 h-3.5" />
-                <span>Edição Protegida por Palavra-passe</span>
+                <span>Visualização protegida por palavra-passe</span>
               </div>
             </div>
 
@@ -251,7 +280,7 @@ export default function InstagramConfig() {
                   <div className="flex items-center gap-1">
                     <button
                       type="button"
-                      onClick={() => setShowTokenPreview(!showTokenPreview)}
+                      onClick={() => showTokenPreview ? setShowTokenPreview(false) : requestCredentialAccess('showToken')}
                       className="p-1 text-zinc-400 hover:text-zinc-700 rounded-md hover:bg-zinc-200 transition-colors"
                       title={showTokenPreview ? "Ocultar Token" : "Mostrar Token"}
                     >
@@ -260,7 +289,7 @@ export default function InstagramConfig() {
                     <Button
                       variant="ghost"
                       size="icon"
-                      onClick={() => copy(config.access_token || token)}
+                      onClick={() => requestCredentialAccess('copyToken')}
                       className="h-6 w-6 text-zinc-400 hover:text-zinc-700"
                       title="Copiar Token"
                     >
@@ -332,7 +361,7 @@ export default function InstagramConfig() {
             </div>
             <CardDescription className="text-xs">
               {isConnected 
-                ? "Atualize o token ou o nome de exibição. A sua palavra-passe será solicitada para autorizar."
+                ? "Atualize o token ou o nome de exibição. A palavra-passe só será solicitada ao visualizar ou copiar credenciais sensíveis."
                 : "Precisa de um Page Access Token permanente com permissões de mensagens."}
             </CardDescription>
           </CardHeader>
@@ -445,11 +474,10 @@ export default function InstagramConfig() {
       <PasswordConfirmationModal
         isOpen={isPasswordModalOpen}
         onClose={() => setIsPasswordModalOpen(false)}
-        onConfirm={(password) => executeSave(password)}
-        title="Confirmar Alteração de Conexão Instagram"
-        description="Por motivos de segurança, introduza a sua palavra-passe de acesso ao Orion para autorizar a modificação das credenciais do Instagram Business (Token e Identificadores)."
-        actionLabel="Confirmar e Salvar Credenciais"
-        isLoading={isConnecting}
+        onConfirm={confirmCredentialAccess}
+        title="Desbloquear Credenciais Instagram"
+        description="Por motivos de segurança, introduza a sua palavra-passe de acesso ao Orion para visualizar ou copiar credenciais da Meta."
+        actionLabel="Desbloquear Credenciais"
       />
     </div>
   );

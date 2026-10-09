@@ -1,7 +1,6 @@
 import { Router } from 'express';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import { supabaseAdmin } from '../config/supabase';
-import { verifyUserPassword } from '../utils/authVerify';
 import { AIService, getUniqueApiKeys, CustomerProfile } from '../services/ai.service';
 import { WhatsAppService } from '../services/whatsapp.service';
 import { AudioService } from '../services/audio.service';
@@ -549,26 +548,10 @@ router.post('/config', requireAuth, async (req: AuthRequest, res) => {
       access_token,
       display_name,
       phone,
-      password,
     } = req.body;
 
     if (!phone_number_id || !access_token) {
       return res.status(400).json({ error: 'phone_number_id e access_token são obrigatórios.' });
-    }
-
-    // Verificar se já existe configuração existente
-    const { data: existing } = await supabaseAdmin
-      .from('whatsapp_config')
-      .select('id, is_active, phone_number_id, access_token')
-      .eq('org_id', orgId)
-      .maybeSingle();
-
-    // Se já houver configuração existente (edição), exigir palavra-passe
-    if (existing) {
-      const authCheck = await verifyUserPassword(req.user?.id, req.user?.email, password);
-      if (!authCheck.valid) {
-        return res.status(401).json({ error: authCheck.error || 'Palavra-passe incorreta. Acesso negado para editar as credenciais.' });
-      }
     }
 
     try {

@@ -24,6 +24,8 @@ export default function FacebookConfig() {
   const [showTokenPreview, setShowTokenPreview] = useState(false);
   const [showSecretPreview, setShowSecretPreview] = useState(false);
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
+  const [pendingCredentialAction, setPendingCredentialAction] = useState<null | 'showToken' | 'showSecret' | 'copyToken' | 'copySecret'>(null);
+  const [hasCredentialAccess, setHasCredentialAccess] = useState(false);
 
   const [formData, setFormData] = useState({
     page_id: '',
@@ -108,15 +110,10 @@ export default function FacebookConfig() {
       return;
     }
 
-    if (config && config.is_active) {
-      // Requer palavra-passe para editar credenciais existentes
-      setIsPasswordModalOpen(true);
-    } else {
-      executeSave();
-    }
+    executeSave();
   };
 
-  const executeSave = async (password?: string) => {
+  const executeSave = async () => {
     setIsSubmitting(true);
     try {
       const token = localStorage.getItem("token");
@@ -127,8 +124,7 @@ export default function FacebookConfig() {
           "Authorization": `Bearer ${token}`
         },
         body: JSON.stringify({
-          ...formData,
-          password
+          ...formData
         })
       });
 
@@ -157,6 +153,42 @@ export default function FacebookConfig() {
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const requestCredentialAccess = (action: NonNullable<typeof pendingCredentialAction>) => {
+    if (hasCredentialAccess) {
+      runCredentialAction(action);
+      return;
+    }
+    setPendingCredentialAction(action);
+    setIsPasswordModalOpen(true);
+  };
+
+  const runCredentialAction = (action: NonNullable<typeof pendingCredentialAction>) => {
+    if (action === 'showToken') setShowTokenPreview(true);
+    if (action === 'showSecret') setShowSecretPreview(true);
+    if (action === 'copyToken') copyToClipboard(formData.page_access_token);
+    if (action === 'copySecret') copyToClipboard(formData.app_secret);
+  };
+
+  const confirmCredentialAccess = async (password: string) => {
+    const token = localStorage.getItem("token");
+    const res = await fetch("/api/auth/verify-password", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`
+      },
+      body: JSON.stringify({ password })
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      throw new Error(data.error || "Palavra-passe incorreta. Acesso negado.");
+    }
+    setHasCredentialAccess(true);
+    if (pendingCredentialAction) runCredentialAction(pendingCredentialAction);
+    setPendingCredentialAction(null);
+    setIsPasswordModalOpen(false);
   };
 
   const handleDelete = async () => {
@@ -280,7 +312,7 @@ export default function FacebookConfig() {
                   </div>
                   <div className="flex items-center gap-1.5 text-xs text-zinc-400">
                     <Lock className="w-3.5 h-3.5" />
-                    <span>Edição Requer Palavra-passe</span>
+                    <span>Visualização protegida por palavra-passe</span>
                   </div>
                 </div>
 
@@ -330,7 +362,7 @@ export default function FacebookConfig() {
                       <div className="flex items-center gap-1">
                         <button
                           type="button"
-                          onClick={() => setShowTokenPreview(!showTokenPreview)}
+                          onClick={() => showTokenPreview ? setShowTokenPreview(false) : requestCredentialAccess('showToken')}
                           className="p-1 text-zinc-400 hover:text-zinc-700 rounded-md hover:bg-zinc-200 transition-colors"
                           title={showTokenPreview ? "Ocultar Token" : "Mostrar Token"}
                         >
@@ -339,7 +371,7 @@ export default function FacebookConfig() {
                         <Button
                           variant="ghost"
                           size="icon"
-                          onClick={() => copyToClipboard(formData.page_access_token)}
+                          onClick={() => requestCredentialAccess('copyToken')}
                           className="h-6 w-6 text-zinc-400 hover:text-zinc-700"
                           title="Copiar Token"
                         >
@@ -362,7 +394,7 @@ export default function FacebookConfig() {
                         <div className="flex items-center gap-1">
                           <button
                             type="button"
-                            onClick={() => setShowSecretPreview(!showSecretPreview)}
+                            onClick={() => showSecretPreview ? setShowSecretPreview(false) : requestCredentialAccess('showSecret')}
                             className="p-1 text-zinc-400 hover:text-zinc-700 rounded-md hover:bg-zinc-200 transition-colors"
                             title={showSecretPreview ? "Ocultar Secret" : "Mostrar Secret"}
                           >
@@ -371,7 +403,7 @@ export default function FacebookConfig() {
                           <Button
                             variant="ghost"
                             size="icon"
-                            onClick={() => copyToClipboard(formData.app_secret)}
+                            onClick={() => requestCredentialAccess('copySecret')}
                             className="h-6 w-6 text-zinc-400 hover:text-zinc-700"
                             title="Copiar Secret"
                           >
@@ -439,7 +471,7 @@ export default function FacebookConfig() {
                 </div>
                 <CardDescription className="text-xs">
                   {isConnected
-                    ? "Altere os dados da conexão. Será solicitada a sua palavra-passe ao guardar."
+                    ? "Altere os dados da conexão. A palavra-passe só será solicitada ao visualizar ou copiar credenciais sensíveis."
                     : "Insira as credenciais da sua Página e Aplicação Meta."}
                 </CardDescription>
               </CardHeader>
@@ -609,11 +641,10 @@ export default function FacebookConfig() {
       <PasswordConfirmationModal
         isOpen={isPasswordModalOpen}
         onClose={() => setIsPasswordModalOpen(false)}
-        onConfirm={(password) => executeSave(password)}
-        title="Confirmar Alteração de Conexão Facebook"
-        description="Por motivos de segurança, introduza a sua palavra-passe de acesso ao Orion para autorizar a modificação das credenciais da Página do Facebook (IDs e Tokens)."
-        actionLabel="Confirmar e Salvar Credenciais"
-        isLoading={isSubmitting}
+        onConfirm={confirmCredentialAccess}
+        title="Desbloquear Credenciais Facebook"
+        description="Por motivos de segurança, introduza a sua palavra-passe de acesso ao Orion para visualizar ou copiar credenciais da Meta."
+        actionLabel="Desbloquear Credenciais"
       />
     </div>
   );
