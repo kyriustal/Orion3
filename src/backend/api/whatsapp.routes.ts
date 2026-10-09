@@ -19,6 +19,7 @@ import multer from 'multer';
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
+const META_GRAPH_VERSION = process.env.META_GRAPH_VERSION || 'v19.0';
 
 // ─── Helper: Upload de média do cliente para o Supabase Storage ───────────────
 async function uploadClientMediaToStorage(
@@ -616,6 +617,135 @@ router.post('/config', requireAuth, async (req: AuthRequest, res) => {
     }
   } catch (err: any) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── POST /api/whatsapp/embedded-signup/complete ─────────────────────────────
+router.post('/embedded-signup/complete', requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const orgId = req.user?.orgId;
+    const {
+      code,
+      access_token,
+      waba_id,
+      phone_number_id,
+      app_id,
+      client_secret,
+      display_name,
+    } = req.body || {};
+
+    const metaAppId = (process.env.META_APP_ID || app_id || '').toString().trim();
+    const metaAppSecret = (process.env.META_APP_SECRET || client_secret || '').toString().trim();
+
+    let accessToken = (access_token || '').toString().trim();
+    if (!accessToken && code) {
+      if (!metaAppId || !metaAppSecret) {
+        return res.status(400).json({
+          error: 'META_APP_ID e META_APP_SECRET são obrigatórios para concluir a conexão automática com a Meta.',
+        });
+      }
+
+      const tokenRes = await axios.get(`https://graph.facebook.com/${META_GRAPH_VERSION}/oauth/access_token`, {
+        params: {
+          client_id: metaAppId,
+          client_secret: metaAppSecret,
+          code,
+        },
+      });
+      accessToken = tokenRes.data?.access_token || '';
+    }
+
+    if (!accessToken) {
+      return res.status(400).json({ error: 'A Meta não retornou token de acesso para concluir a conexão.' });
+    }
+
+    let resolvedWabaId = (waba_id || '').toString().trim();
+    let resolvedPhoneNumberId = (phone_number_id || '').toString().trim();
+    let phoneInfo: any = null;
+
+    if (resolvedPhoneNumberId) {
+      const phoneRes = await axios.get(`https://graph.facebook.com/${META_GRAPH_VERSION}/${resolvedPhoneNumberId}`, {
+        params: {
+          fields: 'display_phone_number,verified_name,quality_rating',
+          access_token: accessToken,
+        },
+      });
+      phoneInfo = phoneRes.data;
+    }
+
+    if (resolvedWabaId && !resolvedPhoneNumberId) {
+      const numbersRes = await axios.get(`https://graph.facebook.com/${META_GRAPH_VERSION}/${resolvedWabaId}/phone_numbers`, {
+        params: {
+          fields: 'id,display_phone_number,verified_name,quality_rating',
+          access_token: accessToken,
+        },
+      });
+      const firstNumber = numbersRes.data?.data?.[0];
+      if (firstNumber?.id) {
+        resolvedPhoneNumberId = firstNumber.id;
+        phoneInfo = firstNumber;
+      }
+    }
+
+    if (!resolvedPhoneNumberId) {
+      return res.status(400).json({
+        error: 'A Meta autorizou a aplicação, mas não devolveu Phone Number ID. Confirme se o fluxo Embedded Signup terminou até ao fim.',
+      });
+    }
+
+    if (resolvedWabaId) {
+      try {
+        await axios.post(`https://graph.facebook.com/${META_GRAPH_VERSION}/${resolvedWabaId}/subscribed_apps`, null, {
+          params: { access_token: accessToken },
+        });
+      } catch (subErr: any) {
+        console.warn('[WHATSAPP EMBEDDED] Aviso ao subscrever app no WABA:', subErr.response?.data || subErr.message);
+      }
+    }
+
+    const verifiedName = display_name || phoneInfo?.verified_name || 'WhatsApp Business';
+    const displayPhone = phoneInfo?.display_phone_number || '';
+    const descriptionPayload = JSON.stringify({
+      phone: displayPhone,
+      verified_name: verifiedName,
+      app_id: metaAppId,
+      connection_source: 'embedded_signup',
+      updated_at: new Date().toISOString(),
+    });
+
+    const { data, error } = await supabaseAdmin
+      .from('whatsapp_config')
+      .upsert({
+        org_id: orgId,
+        phone_number_id: resolvedPhoneNumberId,
+        waba_id: resolvedWabaId || null,
+        access_token: accessToken,
+        display_name: verifiedName,
+        description: descriptionPayload,
+        is_active: true,
+      }, { onConflict: 'org_id' })
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    return res.json({
+      success: true,
+      message: `WhatsApp conectado com a Meta: ${verifiedName || displayPhone || resolvedPhoneNumberId}`,
+      data: {
+        ...data,
+        phone: displayPhone,
+        app_id: metaAppId,
+      },
+    });
+  } catch (err: any) {
+    const metaError = err.response?.data?.error || err.response?.data;
+    console.error('[WHATSAPP EMBEDDED] Erro:', metaError || err.message);
+    return res.status(500).json({
+      error: metaError?.message || err.message || 'Erro ao concluir conexão automática com a Meta.',
+      code: metaError?.code,
+      details: metaError,
+    });
   }
 });
 

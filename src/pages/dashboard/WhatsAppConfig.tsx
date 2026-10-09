@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
@@ -75,6 +75,7 @@ export default function WhatsAppConfig() {
   const [verifyToken] = useState("orion_secure_token_123");
   const metaAppId = import.meta.env.VITE_META_APP_ID || "34557883637136073";
   const metaWhatsappConfigId = import.meta.env.VITE_META_WHATSAPP_CONFIG_ID || "";
+  const metaWhatsappFeatureType = import.meta.env.VITE_META_WHATSAPP_FEATURE_TYPE || "";
 
   const [numbers, setNumbers] = useState<WhatsAppNumber[]>([]);
   const [rawConfig, setRawConfig] = useState<WhatsAppConfigData | null>(null);
@@ -89,6 +90,9 @@ export default function WhatsAppConfig() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isEmbeddedSignupStarting, setIsEmbeddedSignupStarting] = useState(false);
+  const embeddedAuthRef = useRef<{ code?: string; accessToken?: string } | null>(null);
+  const embeddedSessionRef = useRef<{ wabaId?: string; phoneNumberId?: string } | null>(null);
+  const embeddedCompletionStartedRef = useRef(false);
 
   const {
     register,
@@ -377,6 +381,62 @@ export default function WhatsAppConfig() {
     }
   });
 
+  const completeEmbeddedSignup = async () => {
+    const auth = embeddedAuthRef.current;
+    const session = embeddedSessionRef.current;
+    if (embeddedCompletionStartedRef.current || !auth || !session) return;
+
+    embeddedCompletionStartedRef.current = true;
+    setIsEmbeddedSignupStarting(true);
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch("/api/whatsapp/embedded-signup/complete", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          code: auth.code,
+          access_token: auth.accessToken,
+          waba_id: session.wabaId,
+          phone_number_id: session.phoneNumberId,
+          app_id: metaAppId,
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Não foi possível concluir a conexão automática com a Meta.");
+      }
+
+      toast.success(data.message || "WhatsApp conectado com a Meta.");
+      await fetchConfig();
+    } catch (error: any) {
+      embeddedCompletionStartedRef.current = false;
+      toast.error(error.message || "Erro ao concluir conexão com a Meta.");
+      if (embeddedSessionRef.current) {
+        reset({
+          phone: "",
+          phoneId: embeddedSessionRef.current.phoneNumberId || "",
+          wabaId: embeddedSessionRef.current.wabaId || "",
+          token: "",
+          appId: metaAppId,
+          clientSecret: "",
+          displayName: "Orion Assistant",
+          businessCategory: "",
+          description: "",
+          website: "",
+          supportEmail: "",
+          profilePictureUrl: ""
+        });
+        setIsModalOpen(true);
+      }
+    } finally {
+      setIsEmbeddedSignupStarting(false);
+    }
+  };
+
   // Embedded Signup Logic
   const launchEmbeddedSignup = async () => {
     if (!metaWhatsappConfigId) {
@@ -387,36 +447,44 @@ export default function WhatsAppConfig() {
     }
 
     setIsEmbeddedSignupStarting(true);
+    embeddedAuthRef.current = null;
+    embeddedSessionRef.current = null;
+    embeddedCompletionStartedRef.current = false;
+
     try {
       await ensureMetaSdk();
 
-      window.FB.login((response: any) => {
-        setIsEmbeddedSignupStarting(false);
+      const extras: Record<string, any> = {
+        setup: {},
+        sessionInfoVersion: '3',
+      };
+      if (metaWhatsappFeatureType) {
+        extras.featureType = metaWhatsappFeatureType;
+        extras.version = 'v3';
+      }
 
+      window.FB.login((response: any) => {
         if (response?.authResponse?.code) {
+          embeddedAuthRef.current = { code: response.authResponse.code };
           toast.success("Autorização recebida da Meta.");
-          toast.info("Complete os dados que faltarem no formulário para concluir a conexão.");
-          handleOpenNewModal();
+          completeEmbeddedSignup();
           return;
         }
 
         if (response?.authResponse?.accessToken) {
+          embeddedAuthRef.current = { accessToken: response.authResponse.accessToken };
           toast.success("Sessão Meta autorizada.");
-          toast.info("Complete os dados que faltarem no formulário para concluir a conexão.");
-          handleOpenNewModal();
+          completeEmbeddedSignup();
           return;
         }
 
+        setIsEmbeddedSignupStarting(false);
         toast.error("A conexão com a Meta foi cancelada ou não foi autorizada.");
       }, {
         config_id: metaWhatsappConfigId,
         response_type: 'code',
         override_default_response_type: true,
-        extras: {
-          setup: {},
-          featureType: 'whatsapp_business_app_onboarding',
-          sessionInfoVersion: '3'
-        }
+        extras
       });
     } catch (error: any) {
       setIsEmbeddedSignupStarting(false);
@@ -426,8 +494,13 @@ export default function WhatsAppConfig() {
 
   useEffect(() => {
     const handleEmbeddedSignupMessage = (event: MessageEvent) => {
-      const origin = event.origin || "";
-      const isMetaOrigin = origin === "https://www.facebook.com" || origin === "https://web.facebook.com";
+      let isMetaOrigin = false;
+      try {
+        const hostname = new URL(event.origin).hostname;
+        isMetaOrigin = hostname === "facebook.com" || hostname.endsWith(".facebook.com");
+      } catch {
+        isMetaOrigin = false;
+      }
       if (!isMetaOrigin) return;
 
       let payload: any = event.data;
@@ -445,22 +518,14 @@ export default function WhatsAppConfig() {
         const phoneNumberId = payload.data?.phone_number_id || "";
         const wabaId = payload.data?.waba_id || payload.data?.business_account_id || "";
 
-        reset({
-          phone: "",
-          phoneId: phoneNumberId,
-          wabaId,
-          token: "",
-          appId: metaAppId,
-          clientSecret: "",
-          displayName: "Orion Assistant",
-          businessCategory: "",
-          description: "",
-          website: "",
-          supportEmail: "",
-          profilePictureUrl: ""
-        });
-        setIsModalOpen(true);
-        toast.success("Dados da Meta recebidos. Confirme os campos para concluir a conexão.");
+        embeddedSessionRef.current = { phoneNumberId, wabaId };
+        toast.success("Dados da conta WhatsApp recebidos da Meta.");
+        completeEmbeddedSignup();
+      }
+
+      if (payload.event === "CANCEL") {
+        setIsEmbeddedSignupStarting(false);
+        toast.error("A conexão com a Meta foi cancelada antes de terminar.");
       }
     };
 
