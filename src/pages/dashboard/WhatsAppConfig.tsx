@@ -73,9 +73,14 @@ declare global {
 export default function WhatsAppConfig() {
   const [webhookUrl] = useState(`${window.location.origin}/api/whatsapp/webhook`);
   const [verifyToken] = useState("orion_secure_token_123");
-  const metaAppId = import.meta.env.VITE_META_APP_ID || "34557883637136073";
-  const metaWhatsappConfigId = import.meta.env.VITE_META_WHATSAPP_CONFIG_ID || "";
-  const metaWhatsappFeatureType = import.meta.env.VITE_META_WHATSAPP_FEATURE_TYPE || "";
+  const [metaPublicConfig, setMetaPublicConfig] = useState({
+    appId: import.meta.env.VITE_META_APP_ID || "34557883637136073",
+    whatsappConfigId: import.meta.env.VITE_META_WHATSAPP_CONFIG_ID || "",
+    whatsappFeatureType: import.meta.env.VITE_META_WHATSAPP_FEATURE_TYPE || "",
+  });
+  const metaAppId = metaPublicConfig.appId || "34557883637136073";
+  const metaWhatsappConfigId = metaPublicConfig.whatsappConfigId || "";
+  const metaWhatsappFeatureType = metaPublicConfig.whatsappFeatureType || "";
 
   const [numbers, setNumbers] = useState<WhatsAppNumber[]>([]);
   const [rawConfig, setRawConfig] = useState<WhatsAppConfigData | null>(null);
@@ -146,6 +151,26 @@ export default function WhatsAppConfig() {
     }
   };
 
+  const fetchMetaPublicConfig = async () => {
+    try {
+      const token = localStorage.getItem("token");
+      if (!token) return;
+      const response = await fetch("/api/whatsapp/meta-public-config", {
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setMetaPublicConfig(prev => ({
+          appId: data.appId || prev.appId,
+          whatsappConfigId: data.whatsappConfigId || prev.whatsappConfigId,
+          whatsappFeatureType: data.whatsappFeatureType || prev.whatsappFeatureType,
+        }));
+      }
+    } catch (error) {
+      console.warn("Erro ao carregar configuração pública da Meta:", error);
+    }
+  };
+
   const fetchWebhookDiagnostics = async () => {
     try {
       const token = localStorage.getItem("token");
@@ -162,6 +187,7 @@ export default function WhatsAppConfig() {
   };
 
   useEffect(() => {
+    fetchMetaPublicConfig();
     fetchConfig();
     fetchWebhookDiagnostics();
   }, []);
@@ -567,13 +593,25 @@ export default function WhatsAppConfig() {
         <p className="text-zinc-500 text-sm mt-1">Conecte, pré-visualize e edite os parâmetros da sua conta do WhatsApp Business via Meta Cloud API.</p>
       </div>
 
-      {webhookDiagnostic && (!webhookDiagnostic.callbackOk || !webhookDiagnostic.environment?.hasMetaAppId || !webhookDiagnostic.environment?.hasMetaAppSecret) && (
+      {webhookDiagnostic && (
+        !webhookDiagnostic.callbackOk ||
+        !webhookDiagnostic.environment?.hasMetaAppId ||
+        !webhookDiagnostic.environment?.hasMetaAppSecret ||
+        webhookDiagnostic.environment?.publicBaseUrlLooksPlaceholder ||
+        webhookDiagnostic.environment?.metaWhatsappConfigIdLooksPlaceholder
+      ) && (
         <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-3 text-amber-900">
           <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
           <div className="space-y-1 text-sm">
             <p className="font-semibold text-amber-950">Webhook da Meta ainda não está pronto para receber mensagens.</p>
             {!webhookDiagnostic.callbackOk && (
               <p className="text-xs text-amber-800">{webhookDiagnostic.callbackIssue}</p>
+            )}
+            {webhookDiagnostic.environment?.publicBaseUrlLooksPlaceholder && (
+              <p className="text-xs text-amber-800">Substitua <code className="font-mono bg-amber-100 px-1 rounded">PUBLIC_BASE_URL</code> pelo domínio público real da plataforma.</p>
+            )}
+            {webhookDiagnostic.environment?.metaWhatsappConfigIdLooksPlaceholder && (
+              <p className="text-xs text-amber-800">Substitua <code className="font-mono bg-amber-100 px-1 rounded">META_WHATSAPP_CONFIG_ID</code> pelo Configuration ID real da Meta.</p>
             )}
             {!webhookDiagnostic.environment?.hasMetaAppId && (
               <p className="text-xs text-amber-800">Configure <code className="font-mono bg-amber-100 px-1 rounded">META_APP_ID</code> no backend.</p>
@@ -584,6 +622,16 @@ export default function WhatsAppConfig() {
             <p className="text-xs text-amber-800">
               URL atual do webhook: <code className="font-mono bg-white/70 px-1 rounded break-all">{webhookDiagnostic.callbackUrl}</code>
             </p>
+          </div>
+        </div>
+      )}
+
+      {webhookDiagnostic?.recentWebhookEvents?.length === 0 && webhookDiagnostic?.callbackOk && (
+        <div className="p-4 bg-blue-50 border border-blue-200 rounded-xl flex items-start gap-3 text-blue-900">
+          <Webhook className="w-5 h-5 text-blue-600 shrink-0 mt-0.5" />
+          <div className="space-y-1 text-sm">
+            <p className="font-semibold text-blue-950">Ainda não há chamadas recentes da Meta para este webhook.</p>
+            <p className="text-xs text-blue-800">Depois de sincronizar, envie uma mensagem para o número conectado. Se esta mensagem continuar, a Meta ainda não está a entregar eventos para a URL indicada.</p>
           </div>
         </div>
       )}

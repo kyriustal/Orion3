@@ -20,6 +20,15 @@ import multer from 'multer';
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
 const META_GRAPH_VERSION = process.env.META_GRAPH_VERSION || 'v19.0';
+const recentWebhookEvents: Array<Record<string, any>> = [];
+
+function rememberWebhookEvent(event: Record<string, any>) {
+  recentWebhookEvents.unshift({
+    at: new Date().toISOString(),
+    ...event,
+  });
+  if (recentWebhookEvents.length > 30) recentWebhookEvents.pop();
+}
 
 function getPublicBaseUrl(req: AuthRequest) {
   const configured = process.env.PUBLIC_BASE_URL || process.env.APP_URL || process.env.FRONTEND_URL;
@@ -41,10 +50,27 @@ function validatePublicWebhookUrl(baseUrl: string) {
     hostname === '127.0.0.1' ||
     hostname === '0.0.0.0' ||
     hostname.endsWith('.local');
+  const isPlaceholder =
+    hostname.includes('seu-dominio') ||
+    hostname.includes('your-domain') ||
+    hostname.includes('example.com') ||
+    hostname.includes('dominio.com');
 
-  if (parsed.protocol !== 'https:' || isLocal) {
+  if (parsed.protocol !== 'https:' || isLocal || isPlaceholder) {
     throw new Error('Webhook da Meta precisa de um domínio público HTTPS. Configure PUBLIC_BASE_URL com o domínio real da plataforma.');
   }
+}
+
+function isPlaceholderValue(value?: string) {
+  if (!value) return true;
+  const normalized = value.toLowerCase();
+  return (
+    normalized.includes('coloque_aqui') ||
+    normalized.includes('your_') ||
+    normalized.includes('seu-') ||
+    normalized.includes('your-domain') ||
+    normalized.includes('example')
+  );
 }
 
 async function subscribeWhatsAppWebhooks(params: {
@@ -935,6 +961,9 @@ router.get('/webhook-diagnostics', requireAuth, async (req: AuthRequest, res) =>
         hasMetaVerifyToken: !!process.env.META_VERIFY_TOKEN,
         hasMetaAppId: !!process.env.META_APP_ID,
         hasMetaAppSecret: !!process.env.META_APP_SECRET,
+        hasMetaWhatsappConfigId: !!(process.env.META_WHATSAPP_CONFIG_ID || process.env.VITE_META_WHATSAPP_CONFIG_ID),
+        publicBaseUrlLooksPlaceholder: isPlaceholderValue(process.env.PUBLIC_BASE_URL || process.env.APP_URL || process.env.FRONTEND_URL),
+        metaWhatsappConfigIdLooksPlaceholder: isPlaceholderValue(process.env.META_WHATSAPP_CONFIG_ID || process.env.VITE_META_WHATSAPP_CONFIG_ID),
       },
       config: config ? {
         isActive: config.is_active,
@@ -945,10 +974,20 @@ router.get('/webhook-diagnostics', requireAuth, async (req: AuthRequest, res) =>
       } : null,
       subscribedApps,
       subscribedAppsError,
+      recentWebhookEvents,
     });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }
+});
+
+// ─── GET /api/whatsapp/meta-public-config ────────────────────────────────────
+router.get('/meta-public-config', requireAuth, async (_req: AuthRequest, res) => {
+  return res.json({
+    appId: process.env.META_APP_ID || process.env.VITE_META_APP_ID || '',
+    whatsappConfigId: process.env.META_WHATSAPP_CONFIG_ID || process.env.VITE_META_WHATSAPP_CONFIG_ID || '',
+    whatsappFeatureType: process.env.META_WHATSAPP_FEATURE_TYPE || process.env.VITE_META_WHATSAPP_FEATURE_TYPE || '',
+  });
 });
 
 // ─── DELETE /config — Desconectar número WhatsApp ─────────────────────────────
@@ -1616,6 +1655,12 @@ router.get('/webhook', (req, res) => {
   const mode      = req.query['hub.mode'];
   const token     = req.query['hub.verify_token'];
   const challenge = req.query['hub.challenge'];
+  rememberWebhookEvent({
+    method: 'GET',
+    mode,
+    tokenMatched: token === VERIFY_TOKEN,
+    hasChallenge: !!challenge,
+  });
 
   if (mode === 'subscribe' && token === VERIFY_TOKEN) {
     console.log('[WEBHOOK] Verificado com sucesso pela Meta.');
@@ -1632,6 +1677,15 @@ router.post('/webhook', async (req, res) => {
 
   try {
     const body = req.body;
+    rememberWebhookEvent({
+      method: 'POST',
+      object: body?.object,
+      entryId: body?.entry?.[0]?.id,
+      hasMessages: !!body?.entry?.[0]?.changes?.[0]?.value?.messages?.length,
+      hasStatuses: !!body?.entry?.[0]?.changes?.[0]?.value?.statuses?.length,
+      phoneNumberId: body?.entry?.[0]?.changes?.[0]?.value?.metadata?.phone_number_id,
+    });
+
     if (body.object !== 'whatsapp_business_account') return;
 
     const entry    = body.entry?.[0];
