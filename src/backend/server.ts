@@ -70,6 +70,12 @@ app.use('/api/instructions', instructionsRoutes);
 app.use('/api/assets',       assetsRoutes);
 app.use('/api/orion-web',   chatRoutes);
 app.use('/api/whatsapp',    whatsappRoutes);
+app.use('/api/webhook', (req, res, next) => {
+  if (req.url === '/') req.url = '/webhook';
+  else if (req.url.startsWith('/?')) req.url = `/webhook${req.url.slice(1)}`;
+  else req.url = `/webhook${req.url}`;
+  whatsappRoutes(req, res, next);
+});
 app.use('/api/facebook',    facebookRoutes);
 app.use('/api/instagram',   instagramRoutes);
 app.use('/api/tiktok',      tiktokRoutes);
