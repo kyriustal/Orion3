@@ -30,6 +30,11 @@ function rememberWebhookEvent(event: Record<string, any>) {
   if (recentWebhookEvents.length > 30) recentWebhookEvents.pop();
 }
 
+function formatDbError(error: any) {
+  if (!error) return '';
+  return [error.message, error.details, error.hint, error.code].filter(Boolean).join(' | ');
+}
+
 function normalizeMetaPhone(value?: string) {
   return (value || '').toString().replace(/\D/g, '');
 }
@@ -1177,7 +1182,7 @@ async function triggerAIResponse(params: {
   isAudio?: boolean;
   isVoiceAllowed?: boolean;
   detectedLanguage?: string;
-}) {
+}): Promise<{ ok: boolean; error?: string; sentMsgId?: string | null }> {
   const {
     orgId, fromNumber, phoneNumberId, accessToken, botName,
     message, incomingMessageId, senderName, media, referral, isAudio, isVoiceAllowed,
@@ -1189,7 +1194,7 @@ async function triggerAIResponse(params: {
   const pausedUntil = aiPauses.get(historyKey);
   if (pausedUntil && Date.now() < pausedUntil) {
     console.log(`[IA] Pausada para ${fromNumber}. Mensagem recebida mas não respondida (humano no controlo).`);
-    return;
+    return { ok: true };
   }
 
   let customerProfile: CustomerProfile | undefined;
@@ -1601,13 +1606,16 @@ async function triggerAIResponse(params: {
     }
 
     // Persistir resposta no histórico em PORTUGUÊS
-    await supabaseAdmin.from('conversation_history').insert({
+    const { error: botInsertError } = await supabaseAdmin.from('conversation_history').insert({
       org_id: orgId,
       customer_phone: fromNumber,
       sender: 'bot',
       text: ptReplyText,
       metadata: Object.keys(botMetadata).length > 0 ? botMetadata : undefined,
     });
+    if (botInsertError) {
+      throw new Error(`Resposta enviada ao WhatsApp, mas falhou ao gravar no histórico: ${formatDbError(botInsertError)}`);
+    }
 
     // Emitir resposta da IA para o Live Chat em tempo real em PORTUGUÊS
     try {
@@ -1692,6 +1700,8 @@ async function triggerAIResponse(params: {
       }).catch(err => console.warn('[FOLLOWUP] Aviso ao agendar smart follow-up:', err.message));
     }
 
+    return { ok: true, sentMsgId };
+
   } catch (err: any) {
     console.error(`[PROTOCOLO SEGURANÇA IA] ❌ ERRO PERSISTENTE no fluxo para ${fromNumber}:`, err.message);
 
@@ -1699,14 +1709,19 @@ async function triggerAIResponse(params: {
     // O agente humano verá o chat marcado a vermelho e receberá o email de urgência.
     try {
       // 1. Registar o erro internamente no histórico (visível apenas no painel)
-      await supabaseAdmin.from('conversation_history').insert({
+      const { error: internalInsertError } = await supabaseAdmin.from('conversation_history').insert({
         org_id: orgId,
         customer_phone: fromNumber,
         sender: 'bot',
         text: `[ERRO INTERNO — NÃO ENVIADO AO CLIENTE]: ${err.message}`,
         metadata: { internal_error: true, needs_urgent_intervention: true },
       });
-    } catch (_) { /* silencioso */ }
+      if (internalInsertError) {
+        console.error('[PROTOCOLO SEGURANÇA IA] Falha ao gravar erro interno:', formatDbError(internalInsertError));
+      }
+    } catch (insertErr: any) {
+      console.error('[PROTOCOLO SEGURANÇA IA] Exceção ao gravar erro interno:', insertErr.message);
+    }
 
     // 2. Emitir evento Socket para marcar o chat a VERMELHO no painel
     try {
@@ -1727,6 +1742,8 @@ async function triggerAIResponse(params: {
       customerMessage: message,
       platform: 'WhatsApp',
     }).catch(e => console.error('[ALERTA URGENTE] Erro ao enviar email de intervenção:', e.message));
+
+    return { ok: false, error: err.message };
   }
 }
 
@@ -2066,13 +2083,28 @@ router.post('/webhook', async (req, res) => {
       clientMetadata.referral = referral;
     }
 
-    await supabaseAdmin.from('conversation_history').insert({
+    const { error: clientInsertError } = await supabaseAdmin.from('conversation_history').insert({
       org_id: orgId,
       customer_phone: fromNumber,
       sender: 'user',
       text: dbText,
       metadata: clientMetadata,
     });
+    if (clientInsertError) {
+      const dbError = formatDbError(clientInsertError);
+      console.error('[WEBHOOK] Falha ao gravar mensagem do cliente:', dbError);
+      rememberWebhookEvent({
+        method: 'POST',
+        outcome: 'client_message_insert_failed',
+        orgId,
+        from: fromNumber,
+        phoneNumberId,
+        wabaId: entryWabaId,
+        messageId,
+        error: dbError,
+      });
+      return;
+    }
 
     rememberWebhookEvent({
       method: 'POST',
@@ -2110,7 +2142,7 @@ router.post('/webhook', async (req, res) => {
       getIo().to(`org:${orgId}`).emit('bot_typing', { phone: fromNumber, typing: true });
     } catch (_) {}
 
-    await triggerAIResponse({
+    const aiOutcome = await triggerAIResponse({
       orgId,
       fromNumber,
       phoneNumberId: phoneNumberId || configData.phone_number_id,
@@ -2128,12 +2160,14 @@ router.post('/webhook', async (req, res) => {
 
     rememberWebhookEvent({
       method: 'POST',
-      outcome: 'ai_flow_completed',
+      outcome: aiOutcome.ok ? 'ai_flow_completed' : 'ai_flow_failed',
       orgId,
       from: fromNumber,
       phoneNumberId,
       wabaId: entryWabaId,
       messageId,
+      error: aiOutcome.error,
+      sentMsgId: aiOutcome.sentMsgId,
     });
 
     // Desativar sinal de digitação
