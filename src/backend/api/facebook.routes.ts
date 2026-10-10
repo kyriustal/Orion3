@@ -346,6 +346,19 @@ router.post('/webhook', async (req, res) => {
           metadata: { platform: 'facebook', referral: referral || undefined },
         });
 
+        // Emitir evento para o Live Chat (tempo real)
+        try {
+          getIo().to(`org:${orgId}`).emit('new_message', {
+            phone:     senderId,
+            sender:    'user',
+            text:      userText || '[media]',
+            time:      new Date().toLocaleTimeString('pt-PT', { timeZone: 'Africa/Luanda', hour: '2-digit', minute: '2-digit' }),
+            timestamp: new Date().toISOString(),
+            platform:  'facebook',
+            metadata:  { referral: referral || undefined },
+          });
+        } catch (_) { /* sem clientes conectados */ }
+
         // Sincronizar com Google Sheets
         GoogleSheetsService.syncInteraction({
           orgId,
@@ -510,6 +523,20 @@ router.post('/webhook', async (req, res) => {
             text: aiResult.reply,
             metadata: { platform: 'facebook' },
           });
+
+          // Emitir resposta do bot para o Live Chat (tempo real)
+          try {
+            getIo().to(`org:${orgId}`).emit('new_message', {
+              phone:     senderId,
+              sender:    'bot',
+              text:      aiResult.reply,
+              botName:   botName,
+              time:      new Date().toLocaleTimeString('pt-PT', { timeZone: 'Africa/Luanda', hour: '2-digit', minute: '2-digit' }),
+              timestamp: new Date().toISOString(),
+              platform:  'facebook',
+              metadata:  { platform: 'facebook' },
+            });
+          } catch (_) { /* silencioso */ }
 
           // Ativar protocolo de follow-up
           if (!aiResult.transfer && !aiResult.booking) {

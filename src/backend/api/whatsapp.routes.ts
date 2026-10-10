@@ -130,6 +130,7 @@ async function subscribeWhatsAppWebhooks(params: {
   try {
     let wabaSubRes;
     try {
+      // Priorizar subscrição com override_callback_uri explícito para garantir recepção de mensagens
       wabaSubRes = await axios.post(`https://graph.facebook.com/${META_GRAPH_VERSION}/${wabaId}/subscribed_apps`, {
         override_callback_uri: callbackUrl,
         verify_token: verifyToken,
@@ -138,7 +139,7 @@ async function subscribeWhatsAppWebhooks(params: {
         params: { access_token: accessToken },
       });
     } catch (overrideErr: any) {
-      console.warn('[WHATSAPP WEBHOOKS] Override callback falhou; tentando subscrição padrão:', overrideErr.response?.data || overrideErr.message);
+      console.warn('[WHATSAPP WEBHOOKS] Subscrição com override falhou; tentando padrão:', overrideErr.response?.data || overrideErr.message);
       wabaSubRes = await axios.post(`https://graph.facebook.com/${META_GRAPH_VERSION}/${wabaId}/subscribed_apps`, null, {
         params: { access_token: accessToken },
       });

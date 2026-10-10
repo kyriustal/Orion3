@@ -457,6 +457,20 @@ router.post('/webhook', async (req, res) => {
         metadata:       igBotMetadata,
       });
 
+      // Emitir resposta do bot para o Live Chat (tempo real)
+      try {
+        getIo().to(`org:${orgId}`).emit('new_message', {
+          phone:     senderId,
+          sender:    'bot',
+          text:      aiReply,
+          botName:   botName,
+          time:      new Date().toLocaleTimeString('pt-PT', { timeZone: 'Africa/Luanda', hour: '2-digit', minute: '2-digit' }),
+          timestamp: new Date().toISOString(),
+          platform:  'instagram',
+          metadata:  igBotMetadata,
+        });
+      } catch (_) { /* silencioso */ }
+
       // Ativar protocolo de follow-up para todos os clientes sem agendamento e sem transferência para humano
       if (!transfer && !aiResult.booking && !aiResult.bookingData) {
         FollowupService.scheduleSmartFollowup({
