@@ -143,6 +143,38 @@ async function subscribeWhatsAppWebhooks(params: {
   return result;
 }
 
+async function exchangeForLongLivedMetaToken(params: {
+  accessToken: string;
+  appId?: string;
+  appSecret?: string;
+}) {
+  const accessToken = (params.accessToken || '').toString().trim();
+  const appId = (process.env.META_APP_ID || params.appId || '').toString().trim();
+  const appSecret = (process.env.META_APP_SECRET || params.appSecret || '').toString().trim();
+
+  if (!accessToken || !appId || !appSecret) return accessToken;
+
+  try {
+    const { data } = await axios.get(`https://graph.facebook.com/${META_GRAPH_VERSION}/oauth/access_token`, {
+      params: {
+        grant_type: 'fb_exchange_token',
+        client_id: appId,
+        client_secret: appSecret,
+        fb_exchange_token: accessToken,
+      },
+    });
+
+    if (data?.access_token) {
+      console.log('[META TOKEN] Token temporário convertido para token de vida longa.');
+      return data.access_token;
+    }
+  } catch (err: any) {
+    console.warn('[META TOKEN] Não foi possível converter token para vida longa:', err.response?.data || err.message);
+  }
+
+  return accessToken;
+}
+
 // ─── Helper: Upload de média do cliente para o Supabase Storage ───────────────
 async function uploadClientMediaToStorage(
   orgId: string,
@@ -669,16 +701,23 @@ router.post('/config', requireAuth, async (req: AuthRequest, res) => {
     const {
       phone_number_id,
       waba_id,
-      access_token,
+      access_token: rawAccessToken,
       display_name,
       phone,
     } = req.body;
+    let access_token = rawAccessToken;
 
     if (!phone_number_id || !access_token) {
       return res.status(400).json({ error: 'phone_number_id e access_token são obrigatórios.' });
     }
 
     try {
+      access_token = await exchangeForLongLivedMetaToken({
+        accessToken: access_token,
+        appId: req.body.app_id,
+        appSecret: req.body.client_secret,
+      });
+
       // Validar credenciais na Meta
       const metaUrl = `https://graph.facebook.com/v19.0/${phone_number_id}?fields=display_phone_number,verified_name,quality_rating&access_token=${access_token}`;
       const metaResponse = await axios.get(metaUrl);
@@ -780,6 +819,12 @@ router.post('/embedded-signup/complete', requireAuth, async (req: AuthRequest, r
     if (!accessToken) {
       return res.status(400).json({ error: 'A Meta não retornou token de acesso para concluir a conexão.' });
     }
+
+    accessToken = await exchangeForLongLivedMetaToken({
+      accessToken,
+      appId: metaAppId,
+      appSecret: metaAppSecret,
+    });
 
     let resolvedWabaId = (waba_id || '').toString().trim();
     let resolvedPhoneNumberId = (phone_number_id || '').toString().trim();
