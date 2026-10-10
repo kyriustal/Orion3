@@ -30,6 +30,10 @@ function rememberWebhookEvent(event: Record<string, any>) {
   if (recentWebhookEvents.length > 30) recentWebhookEvents.pop();
 }
 
+function normalizeMetaPhone(value?: string) {
+  return (value || '').toString().replace(/\D/g, '');
+}
+
 function getPublicBaseUrl(req: AuthRequest) {
   const configured = process.env.PUBLIC_BASE_URL || process.env.APP_URL || process.env.FRONTEND_URL;
   if (configured) return configured.replace(/\/+$/, '');
@@ -482,7 +486,8 @@ router.get('/history/:phone', requireAuth, async (req: AuthRequest, res) => {
 router.post('/send', requireAuth, async (req: AuthRequest, res) => {
   try {
     const orgId = req.user?.orgId;
-    const { phone, message, clientMsgId } = req.body;
+    const { phone: rawPhone, message, clientMsgId } = req.body;
+    const phone = normalizeMetaPhone(rawPhone);
 
     if (!phone || !message) {
       return res.status(400).json({ error: 'phone e message são obrigatórios.' });
@@ -496,10 +501,9 @@ router.post('/send', requireAuth, async (req: AuthRequest, res) => {
       .maybeSingle();
 
     if (!config) return res.status(404).json({ error: 'Nenhuma configuração WhatsApp activa.' });
-
-    // Pausar a IA por 5 minutos quando o agente humano envia
-    const historyKey = `${orgId}:${phone}`;
-    aiPauses.set(historyKey, Date.now() + 5 * 60 * 1000);
+    if (!config.phone_number_id || !config.access_token?.trim()) {
+      return res.status(400).json({ error: 'Configuração WhatsApp incompleta: Phone Number ID ou token ausente.' });
+    }
 
     const sentId = await WhatsAppService.sendTextMessage(
       config.phone_number_id,
@@ -508,7 +512,15 @@ router.post('/send', requireAuth, async (req: AuthRequest, res) => {
       config.access_token
     );
 
+    if (!sentId) {
+      return res.status(502).json({ error: 'A Meta não confirmou o envio da mensagem. Verifique o token, o Phone Number ID e a janela de atendimento de 24 horas.' });
+    }
+
     if (sentId) botSentMessages.add(sentId);
+
+    // Pausar a IA por 5 minutos quando o agente humano envia com sucesso
+    const historyKey = `${orgId}:${phone}`;
+    aiPauses.set(historyKey, Date.now() + 5 * 60 * 1000);
 
     const agentName = req.user?.name || req.user?.email?.split('@')[0] || 'Agente';
     const metadata = { agentName, clientMsgId };
@@ -546,7 +558,8 @@ router.post('/send', requireAuth, async (req: AuthRequest, res) => {
 router.post('/send-file', requireAuth, upload.single('file'), async (req: AuthRequest, res) => {
   try {
     const orgId = req.user?.orgId;
-    const { phone, message, clientMsgId } = req.body;
+    const { phone: rawPhone, message, clientMsgId } = req.body;
+    const phone = normalizeMetaPhone(rawPhone);
     const file = req.file;
 
     if (!phone) {
@@ -564,10 +577,9 @@ router.post('/send-file', requireAuth, upload.single('file'), async (req: AuthRe
       .maybeSingle();
 
     if (!config) return res.status(404).json({ error: 'Nenhuma configuração WhatsApp activa.' });
-
-    // Pausar a IA por 5 minutos quando o agente humano envia
-    const historyKey = `${orgId}:${phone}`;
-    aiPauses.set(historyKey, Date.now() + 5 * 60 * 1000);
+    if (!config.phone_number_id || !config.access_token?.trim()) {
+      return res.status(400).json({ error: 'Configuração WhatsApp incompleta: Phone Number ID ou token ausente.' });
+    }
 
     // 1. Sanitizar o nome do ficheiro para o Supabase Storage
     const sanitizedName = file.originalname
@@ -616,6 +628,13 @@ router.post('/send-file', requireAuth, upload.single('file'), async (req: AuthRe
     );
 
     if (sentId) botSentMessages.add(sentId);
+    if (!sentId) {
+      return res.status(502).json({ error: 'A Meta não confirmou o envio do ficheiro. Verifique se a URL pública do ficheiro está acessível e se o token continua válido.' });
+    }
+
+    // Pausar a IA por 5 minutos quando o agente humano envia com sucesso
+    const historyKey = `${orgId}:${phone}`;
+    aiPauses.set(historyKey, Date.now() + 5 * 60 * 1000);
 
     const agentName = req.user?.name || req.user?.email?.split('@')[0] || 'Agente';
 
@@ -1748,40 +1767,62 @@ router.post('/webhook', async (req, res) => {
       phoneNumberId: body?.entry?.[0]?.changes?.[0]?.value?.metadata?.phone_number_id,
     });
 
-    if (body.object !== 'whatsapp_business_account') return;
+    if (body.object !== 'whatsapp_business_account') {
+      rememberWebhookEvent({ method: 'POST', outcome: 'ignored_object', object: body?.object });
+      return;
+    }
 
-    const entry    = body.entry?.[0];
-    const changes  = entry?.changes?.[0];
-    const value    = changes?.value;
-    const messages = value?.messages;
-    const statuses = value?.statuses;
-    const metadata = value?.metadata;
-    const entryWabaId = entry?.id;
+    const entries = Array.isArray(body.entry) ? body.entry : [];
+    const allChanges = entries.flatMap((entry: any) =>
+      (Array.isArray(entry?.changes) ? entry.changes : []).map((change: any) => ({ entry, change }))
+    );
 
     // Emissão de atualizações de status de mensagem (sent, delivered, read) via Socket
-    if (statuses && statuses.length > 0) {
-      const statusObj = statuses[0];
-      const recipientPhone = statusObj.recipient_id;
-      const status = statusObj.status; // 'sent', 'delivered', 'read'
-      if (recipientPhone && status) {
-        try {
-          const config = await findWhatsappConfigForWebhook(metadata?.phone_number_id, entryWabaId);
+    for (const item of allChanges) {
+      const statusValue = item.change?.value;
+      const statusMetadata = statusValue?.metadata;
+      const statusWabaId = item.entry?.id;
+      const statuses = statusValue?.statuses;
+      if (!statuses?.length) continue;
 
-          if (config) {
-            getIo().to(`org:${config.org_id}`).emit('message_status', {
-              phone: recipientPhone,
-              messageId: statusObj.id,
-              status: status
-            });
-          }
-        } catch (_) {}
+      for (const statusObj of statuses) {
+        const recipientPhone = normalizeMetaPhone(statusObj.recipient_id);
+        const status = statusObj.status; // 'sent', 'delivered', 'read'
+        if (recipientPhone && status) {
+          try {
+            const config = await findWhatsappConfigForWebhook(statusMetadata?.phone_number_id, statusWabaId);
+
+            if (config) {
+              getIo().to(`org:${config.org_id}`).emit('message_status', {
+                phone: recipientPhone,
+                messageId: statusObj.id,
+                status: status
+              });
+            }
+          } catch (_) {}
+        }
       }
     }
 
+    const messageItem = allChanges.find((item: any) => item.change?.value?.messages?.length > 0);
+    if (!messageItem) {
+      rememberWebhookEvent({ method: 'POST', outcome: 'status_only_or_empty', changes: allChanges.length });
+      return;
+    }
+
+    const entry    = messageItem.entry;
+    const changes  = messageItem.change;
+    const value    = changes?.value;
+    const messages = value?.messages;
+    const metadata = value?.metadata;
+    const entryWabaId = entry?.id;
     const contacts = value?.contacts;
     const profileName = contacts?.[0]?.profile?.name;
 
-    if (!messages || messages.length === 0) return;
+    if (!messages || messages.length === 0) {
+      rememberWebhookEvent({ method: 'POST', outcome: 'empty_messages', changes: allChanges.length });
+      return;
+    }
 
     const incomingMsg = messages[0];
     const messageId   = incomingMsg.id;
@@ -1794,8 +1835,8 @@ router.post('/webhook', async (req, res) => {
     }
 
     // ── 2. Coexistência — detectar humano a responder por fora (Meta Business Suite) ──
-    if (incomingMsg.from === metadata?.display_phone_number || incomingMsg.type === 'echo') {
-      const recipientNumber = incomingMsg.to;
+    if (normalizeMetaPhone(incomingMsg.from) === normalizeMetaPhone(metadata?.display_phone_number) || incomingMsg.type === 'echo') {
+      const recipientNumber = normalizeMetaPhone(incomingMsg.to);
       if (recipientNumber) {
         const config = await findWhatsappConfigForWebhook(metadata?.phone_number_id, entryWabaId);
 
@@ -1822,7 +1863,7 @@ router.post('/webhook', async (req, res) => {
     }
     processedMessages.add(messageId);
 
-    const fromNumber   = incomingMsg.from;
+    const fromNumber   = normalizeMetaPhone(incomingMsg.from);
     const phoneNumberId = metadata?.phone_number_id;
     const referral     = incomingMsg.referral;
 
@@ -1833,6 +1874,14 @@ router.post('/webhook', async (req, res) => {
 
     if (!configData) {
       console.warn(`[WEBHOOK] Nenhuma config activa para phone_number_id=${phoneNumberId || 'n/a'} / waba_id=${entryWabaId || 'n/a'}`);
+      rememberWebhookEvent({
+        method: 'POST',
+        outcome: 'no_active_config',
+        phoneNumberId,
+        wabaId: entryWabaId,
+        from: fromNumber,
+        messageId,
+      });
       return;
     }
 
@@ -1853,6 +1902,17 @@ router.post('/webhook', async (req, res) => {
 
     const botName = orgData?.chatbot_name || configData.display_name || 'Assistente';
     const accessToken = accessTokenRaw?.trim();
+    if (!accessToken) {
+      rememberWebhookEvent({
+        method: 'POST',
+        outcome: 'missing_access_token',
+        orgId,
+        phoneNumberId,
+        wabaId: entryWabaId,
+        from: fromNumber,
+        messageId,
+      });
+    }
 
     let isVip = false;
     if (orgData?.owner_email) {
@@ -2014,6 +2074,17 @@ router.post('/webhook', async (req, res) => {
       metadata: clientMetadata,
     });
 
+    rememberWebhookEvent({
+      method: 'POST',
+      outcome: 'message_saved',
+      orgId,
+      from: fromNumber,
+      phoneNumberId,
+      wabaId: entryWabaId,
+      messageId,
+      type: incomingMsg.type,
+    });
+
     // Cancelar follow-ups pendentes (cliente voltou a responder)
     FollowupService.cancelPendingForPhone(orgId, fromNumber).catch(err =>
       console.warn('[FOLLOWUP] Aviso ao cancelar follow-ups:', err.message)
@@ -2055,6 +2126,16 @@ router.post('/webhook', async (req, res) => {
       detectedLanguage,
     });
 
+    rememberWebhookEvent({
+      method: 'POST',
+      outcome: 'ai_flow_completed',
+      orgId,
+      from: fromNumber,
+      phoneNumberId,
+      wabaId: entryWabaId,
+      messageId,
+    });
+
     // Desativar sinal de digitação
     try {
       getIo().to(`org:${orgId}`).emit('bot_typing', { phone: fromNumber, typing: false });
@@ -2062,6 +2143,11 @@ router.post('/webhook', async (req, res) => {
 
   } catch (err: any) {
     console.error('[WEBHOOK] Erro fatal:', err.message);
+    rememberWebhookEvent({
+      method: 'POST',
+      outcome: 'fatal_error',
+      error: err.message,
+    });
   }
 });
 
