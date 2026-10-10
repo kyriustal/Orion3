@@ -636,6 +636,61 @@ export default function WhatsAppConfig() {
         </div>
       )}
 
+      {webhookDiagnostic && (
+        <Card className="border-zinc-200/80 shadow-xs">
+          <CardHeader className="pb-3">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <CardTitle className="text-sm font-bold flex items-center gap-2 text-zinc-800">
+                  <Webhook className="w-4 h-4 text-emerald-600" />
+                  Diagnóstico do Webhook
+                </CardTitle>
+                <CardDescription className="text-xs">Últimos sinais recebidos da Meta e estado das subscrições.</CardDescription>
+              </div>
+              <Button variant="outline" size="sm" onClick={fetchWebhookDiagnostics} className="text-xs">
+                <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
+                Atualizar
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-3 text-xs text-zinc-600">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+              <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3">
+                <p className="font-semibold text-zinc-900">URL pública</p>
+                <p className="font-mono break-all mt-1">{webhookDiagnostic.callbackUrl}</p>
+              </div>
+              <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3">
+                <p className="font-semibold text-zinc-900">App Webhooks</p>
+                <p className={webhookDiagnostic.appSubscriptionsError ? "text-red-600 mt-1" : "text-emerald-700 mt-1"}>
+                  {webhookDiagnostic.appSubscriptionsError || `${webhookDiagnostic.appSubscriptions?.data?.length || 0} subscrição(ões)`}
+                </p>
+              </div>
+              <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3">
+                <p className="font-semibold text-zinc-900">WABA Subscribed Apps</p>
+                <p className={webhookDiagnostic.subscribedAppsError ? "text-red-600 mt-1" : "text-emerald-700 mt-1"}>
+                  {webhookDiagnostic.subscribedAppsError || `${webhookDiagnostic.subscribedApps?.data?.length || 0} app(s)`}
+                </p>
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-zinc-200 bg-white p-3">
+              <p className="font-semibold text-zinc-900 mb-2">Últimos eventos recebidos</p>
+              {webhookDiagnostic.recentWebhookEvents?.length ? (
+                <div className="space-y-1.5">
+                  {webhookDiagnostic.recentWebhookEvents.slice(0, 5).map((event: any, index: number) => (
+                    <div key={`${event.at}-${index}`} className="font-mono text-[11px] text-zinc-600 bg-zinc-50 border border-zinc-100 rounded p-2 break-all">
+                      {event.at} | {event.method} | object={event.object || "-"} | phone_id={event.phoneNumberId || "-"} | messages={event.hasMessages ? "sim" : "não"} | statuses={event.hasStatuses ? "sim" : "não"}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-zinc-500">Nenhum evento recebido desde o último arranque do backend.</p>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Card Principal: Números Conectados & Pré-visualização de Dados */}
       <Card className="border-zinc-200/80 shadow-sm overflow-hidden">
         <CardHeader className="bg-zinc-50/50 border-b border-zinc-100 pb-4">

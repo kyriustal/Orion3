@@ -997,6 +997,21 @@ router.get('/webhook-diagnostics', requireAuth, async (req: AuthRequest, res) =>
       }
     }
 
+    let appSubscriptions: any = null;
+    let appSubscriptionsError = '';
+    const appId = process.env.META_APP_ID || process.env.VITE_META_APP_ID || '';
+    const appSecret = process.env.META_APP_SECRET || '';
+    if (appId && appSecret) {
+      try {
+        const { data } = await axios.get(`https://graph.facebook.com/${META_GRAPH_VERSION}/${appId}/subscriptions`, {
+          params: { access_token: `${appId}|${appSecret}` },
+        });
+        appSubscriptions = data;
+      } catch (err: any) {
+        appSubscriptionsError = err.response?.data?.error?.message || err.message;
+      }
+    }
+
     return res.json({
       callbackUrl,
       callbackOk,
@@ -1017,6 +1032,8 @@ router.get('/webhook-diagnostics', requireAuth, async (req: AuthRequest, res) =>
         displayName: config.display_name,
         hasAccessToken: !!config.access_token,
       } : null,
+      appSubscriptions,
+      appSubscriptionsError,
       subscribedApps,
       subscribedAppsError,
       recentWebhookEvents,
