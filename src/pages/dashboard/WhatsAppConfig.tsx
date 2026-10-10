@@ -96,6 +96,8 @@ export default function WhatsAppConfig() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isLoadingDiagnostics, setIsLoadingDiagnostics] = useState(false);
+  const [diagnosticsStatus, setDiagnosticsStatus] = useState("");
+  const [diagnosticsError, setDiagnosticsError] = useState("");
   const [isEmbeddedSignupStarting, setIsEmbeddedSignupStarting] = useState(false);
   const embeddedAuthRef = useRef<{ code?: string; accessToken?: string } | null>(null);
   const embeddedSessionRef = useRef<{ wabaId?: string; phoneNumberId?: string } | null>(null);
@@ -174,20 +176,30 @@ export default function WhatsAppConfig() {
 
   const fetchWebhookDiagnostics = async (showToast = false) => {
     setIsLoadingDiagnostics(true);
+    setDiagnosticsError("");
+    setDiagnosticsStatus("A atualizar diagnóstico...");
     try {
       const token = localStorage.getItem("token");
-      if (!token) return;
+      if (!token) {
+        throw new Error("Sessão expirada. Faça login novamente para atualizar o diagnóstico.");
+      }
       const response = await fetch("/api/whatsapp/webhook-diagnostics", {
         headers: { "Authorization": `Bearer ${token}` }
       });
-      const data = await response.json();
+      const contentType = response.headers.get("content-type") || "";
+      const data = contentType.includes("application/json")
+        ? await response.json()
+        : { error: await response.text() };
       if (!response.ok) {
-        throw new Error(data.error || "Erro ao atualizar diagnóstico do webhook.");
+        throw new Error(data.error || `Erro ${response.status} ao atualizar diagnóstico do webhook.`);
       }
       setWebhookDiagnostic(data);
+      setDiagnosticsStatus(`Diagnóstico atualizado às ${new Date().toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}. Eventos recentes: ${data.recentWebhookEvents?.length || 0}.`);
       if (showToast) toast.success("Diagnóstico atualizado.");
     } catch (error: any) {
       console.warn("Erro ao carregar diagnóstico do webhook:", error);
+      setDiagnosticsError(error.message || "Erro ao atualizar diagnóstico do webhook.");
+      setDiagnosticsStatus("");
       if (showToast) toast.error(error.message || "Erro ao atualizar diagnóstico do webhook.");
     } finally {
       setIsLoadingDiagnostics(false);
@@ -687,6 +699,12 @@ export default function WhatsAppConfig() {
                 </p>
               </div>
             </div>
+
+            {(diagnosticsStatus || diagnosticsError) && (
+              <div className={`rounded-lg border p-3 ${diagnosticsError ? "border-red-200 bg-red-50 text-red-700" : "border-emerald-200 bg-emerald-50 text-emerald-800"}`}>
+                {diagnosticsError || diagnosticsStatus}
+              </div>
+            )}
 
             <div className="rounded-lg border border-zinc-200 bg-white p-3">
               <p className="font-semibold text-zinc-900 mb-2">Últimos eventos recebidos</p>
