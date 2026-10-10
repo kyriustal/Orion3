@@ -1747,6 +1747,23 @@ async function triggerAIResponse(params: {
   }
 }
 
+// ─── GET /api/whatsapp/webhook-status — Diagnóstico público protegido ─────────
+router.get('/webhook-status', (req, res) => {
+  const VERIFY_TOKEN = process.env.META_VERIFY_TOKEN || 'orion_webhook_token';
+  const token = req.query.token;
+
+  if (token !== VERIFY_TOKEN) {
+    return res.sendStatus(403);
+  }
+
+  res.json({
+    status: 'ok',
+    webhookUrl: `${getPublicBaseUrl(req as AuthRequest)}/api/whatsapp/webhook`,
+    now: new Date().toISOString(),
+    recentWebhookEvents,
+  });
+});
+
 // ─── GET /api/whatsapp/webhook — Verificação Meta ─────────────────────────────
 router.get('/webhook', (req, res) => {
   const VERIFY_TOKEN = process.env.META_VERIFY_TOKEN || 'orion_webhook_token';
