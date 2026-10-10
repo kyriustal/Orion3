@@ -95,6 +95,7 @@ export default function WhatsAppConfig() {
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isLoadingDiagnostics, setIsLoadingDiagnostics] = useState(false);
   const [isEmbeddedSignupStarting, setIsEmbeddedSignupStarting] = useState(false);
   const embeddedAuthRef = useRef<{ code?: string; accessToken?: string } | null>(null);
   const embeddedSessionRef = useRef<{ wabaId?: string; phoneNumberId?: string } | null>(null);
@@ -171,18 +172,25 @@ export default function WhatsAppConfig() {
     }
   };
 
-  const fetchWebhookDiagnostics = async () => {
+  const fetchWebhookDiagnostics = async (showToast = false) => {
+    setIsLoadingDiagnostics(true);
     try {
       const token = localStorage.getItem("token");
       if (!token) return;
       const response = await fetch("/api/whatsapp/webhook-diagnostics", {
         headers: { "Authorization": `Bearer ${token}` }
       });
-      if (response.ok) {
-        setWebhookDiagnostic(await response.json());
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || "Erro ao atualizar diagnóstico do webhook.");
       }
-    } catch (error) {
+      setWebhookDiagnostic(data);
+      if (showToast) toast.success("Diagnóstico atualizado.");
+    } catch (error: any) {
       console.warn("Erro ao carregar diagnóstico do webhook:", error);
+      if (showToast) toast.error(error.message || "Erro ao atualizar diagnóstico do webhook.");
+    } finally {
+      setIsLoadingDiagnostics(false);
     }
   };
 
@@ -647,9 +655,16 @@ export default function WhatsAppConfig() {
                 </CardTitle>
                 <CardDescription className="text-xs">Últimos sinais recebidos da Meta e estado das subscrições.</CardDescription>
               </div>
-              <Button variant="outline" size="sm" onClick={fetchWebhookDiagnostics} className="text-xs">
-                <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
-                Atualizar
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => fetchWebhookDiagnostics(true)}
+                disabled={isLoadingDiagnostics}
+                className="text-xs"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${isLoadingDiagnostics ? "animate-spin" : ""}`} />
+                {isLoadingDiagnostics ? "A atualizar..." : "Atualizar"}
               </Button>
             </div>
           </CardHeader>
