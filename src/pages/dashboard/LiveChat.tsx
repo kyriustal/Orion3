@@ -144,6 +144,7 @@ export default function LiveChat() {
   // Seleção e pré-visualização de ficheiros
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [filePreviewUrl, setFilePreviewUrl] = useState<string | null>(null);
+  const [isSendingMessage, setIsSendingMessage] = useState(false);
   const [isSendingFile, setIsSendingFile] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -772,9 +773,18 @@ export default function LiveChat() {
     } catch { toast.error("Erro ao carregar histórico."); }
   };
 
+  const activeChat = chats.find(c => c.id === activeChatId) || chats.find(c => c.phone === activeChatId) || chats[0];
+  const activePhone = activeChatId || activeChat?.phone || activeChat?.id || "";
+  const isSending = isSendingMessage || isSendingFile;
+
   const handleSend = async () => {
-    if (!activeChatId) return;
+    const destinationPhone = activePhone;
+    if (!destinationPhone) {
+      toast.error("Selecione uma conversa antes de enviar.");
+      return;
+    }
     if (!message.trim() && !selectedFile) return;
+    if (isSending) return;
 
     let agentName = "Você";
     try {
@@ -820,7 +830,7 @@ export default function LiveChat() {
 
       try {
         const formData = new FormData();
-        formData.append("phone", activeChatId);
+        formData.append("phone", destinationPhone);
         formData.append("file", fileToSend);
         formData.append("clientMsgId", clientMsgId);
         if (text) formData.append("message", text);
@@ -854,6 +864,7 @@ export default function LiveChat() {
         setIsSendingFile(false);
       }
     } else {
+      setIsSendingMessage(true);
       // Registar o clientMsgId para o socket ignorar o eco deste envio
       pendingClientIds.current.add(clientMsgId);
 
@@ -872,13 +883,18 @@ export default function LiveChat() {
         const res = await fetch("/api/whatsapp/send", {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${token()}` },
-          body: JSON.stringify({ phone: activeChatId, message: text, clientMsgId }),
+          body: JSON.stringify({ phone: destinationPhone, message: text, clientMsgId }),
         });
         if (!res.ok) {
           pendingClientIds.current.delete(clientMsgId);
           throw new Error((await res.json()).error || "Falha ao enviar");
         }
-      } catch (err: any) { toast.error(err.message); }
+      } catch (err: any) {
+        toast.error(err.message);
+        setMessages(prev => prev.filter(m => m.id !== optimisticId));
+      } finally {
+        setIsSendingMessage(false);
+      }
     }
   };
 
@@ -888,8 +904,6 @@ export default function LiveChat() {
     await fetch("/api/whatsapp/ai-pause", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token()}` }, body: JSON.stringify({ phone: activeChatId, pause: !next }) });
     toast.info(next ? "IA retomada." : "IA pausada — você está no controlo.");
   };
-
-  const activeChat = chats.find(c => c.id === activeChatId) || chats[0];
 
   const parseLinks = (rawText: string) => {
     if (!rawText) return null;
@@ -1415,7 +1429,7 @@ export default function LiveChat() {
                         return; // Permite a quebra de linha nativa
                       }
                       e.preventDefault();
-                      handleSend();
+                      if (!isSending) handleSend();
                     }
                   }}
                   placeholder={selectedFile ? "Adicione uma legenda ao ficheiro..." : "Escreva como agente humano... (Enter = enviar | Shift+Enter ou Ctrl+Enter = parágrafo)"}
@@ -1424,9 +1438,14 @@ export default function LiveChat() {
                   style={{ fieldSizing: 'content' } as React.CSSProperties}
                 />
 
-                <Button onClick={handleSend} disabled={!message.trim() && !selectedFile} className="shrink-0 bg-emerald-600 hover:bg-emerald-700 gap-2 self-end">
-                  {isSendingFile ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-                  Enviar
+                <Button
+                  type="button"
+                  onClick={handleSend}
+                  disabled={isSending || (!message.trim() && !selectedFile)}
+                  className="shrink-0 bg-emerald-600 hover:bg-emerald-700 gap-2 self-end"
+                >
+                  {isSending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                  {isSending ? "A enviar..." : "Enviar"}
                 </Button>
               </div>
             )}
