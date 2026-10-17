@@ -10,6 +10,7 @@ import { BookingService } from '../services/booking.service';
 import { GoogleSheetsService } from '../services/google_sheets.service';
 import { getIo } from '../socket';
 import { AudioService } from '../services/audio.service';
+import { processInstagramWebhook } from './instagram.routes';
 import axios from 'axios';
 
 const router = Router();
@@ -202,6 +203,10 @@ router.post('/webhook', async (req, res) => {
 
   try {
     const body = req.body;
+    if (body.object === 'instagram') {
+      await processInstagramWebhook(body);
+      return;
+    }
     if (body.object !== 'page') return;
 
     for (const entry of (body.entry || [])) {

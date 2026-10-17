@@ -120,13 +120,9 @@ router.get('/webhook', (req, res) => {
   }
 });
 
-// ─── POST /api/instagram/webhook — Recepção de DMs ────────────────────────────
-router.post('/webhook', async (req, res) => {
-  res.sendStatus(200); // Responder imediatamente à Meta
-
+export async function processInstagramWebhook(body: any) {
   try {
-    const body = req.body;
-
+    if (!body) return;
     // Suportar tanto object='instagram' quanto page (Meta pode enviar ambos)
     if (body.object !== 'instagram' && body.object !== 'page') return;
 
@@ -486,6 +482,12 @@ router.post('/webhook', async (req, res) => {
   } catch (err: any) {
     console.error('[INSTAGRAM WEBHOOK] Erro fatal:', err.message);
   }
+}
+
+// ─── POST /api/instagram/webhook — Recepção de DMs ────────────────────────────
+router.post('/webhook', async (req, res) => {
+  res.sendStatus(200); // Responder imediatamente à Meta
+  await processInstagramWebhook(req.body);
 });
 
 // ─── POST /api/instagram/comment-automation ───────────────────────────────────
