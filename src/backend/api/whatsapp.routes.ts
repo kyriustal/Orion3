@@ -248,8 +248,8 @@ router.get('/config', requireAuth, async (req: AuthRequest, res) => {
       business_category: extraMeta.business_category || (data as any).business_category || '',
       website: extraMeta.website || (data as any).website || '',
       support_email: extraMeta.support_email || (data as any).support_email || '',
-      app_id: extraMeta.app_id || (data as any).app_id || '',
-      client_secret: extraMeta.client_secret || (data as any).client_secret || '',
+      app_id: extraMeta.app_id || (data as any).app_id || process.env.META_APP_ID || '',
+      client_secret: extraMeta.client_secret || (data as any).client_secret || process.env.META_APP_SECRET || '',
       description: extraMeta.about || extraMeta.description || data.description || '',
     });
   } catch (err: any) {

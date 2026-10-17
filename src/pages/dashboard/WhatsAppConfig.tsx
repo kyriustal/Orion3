@@ -37,6 +37,7 @@ type WhatsAppNumber = {
   phoneId: string;
   wabaId: string;
   appId?: string;
+  clientSecret?: string;
   status: 'connected' | 'testing' | 'error';
   token?: string;
   displayName?: string;
@@ -86,11 +87,12 @@ export default function WhatsAppConfig() {
   const [rawConfig, setRawConfig] = useState<WhatsAppConfigData | null>(null);
   const [webhookDiagnostic, setWebhookDiagnostic] = useState<any>(null);
   const [showTokenPreview, setShowTokenPreview] = useState(false);
+  const [showSecretPreview, setShowSecretPreview] = useState(false);
 
   // Modais
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
-  const [pendingCredentialAction, setPendingCredentialAction] = useState<null | 'showToken' | 'copyToken'>(null);
+  const [pendingCredentialAction, setPendingCredentialAction] = useState<null | 'showToken' | 'copyToken' | 'showSecret' | 'copySecret'>(null);
   const [hasCredentialAccess, setHasCredentialAccess] = useState(false);
 
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -137,6 +139,7 @@ export default function WhatsAppConfig() {
           phoneId: data.phone_number_id,
           wabaId: data.waba_id || 'Não especificado',
           appId: data.app_id || '',
+          clientSecret: data.client_secret || '',
           status: 'connected',
           token: data.access_token || '',
           displayName: data.display_name || '',
@@ -220,6 +223,7 @@ export default function WhatsAppConfig() {
       setValue("wabaId", rawConfig.waba_id || "");
       setValue("token", rawConfig.access_token || "");
       setValue("appId", rawConfig.app_id || "");
+      setValue("clientSecret", rawConfig.client_secret || "");
       setValue("displayName", rawConfig.display_name || "Orion Assistant");
       setValue("businessCategory", rawConfig.business_category || "");
       setValue("description", rawConfig.description || "");
@@ -387,8 +391,11 @@ export default function WhatsAppConfig() {
 
   const runCredentialAction = (action: NonNullable<typeof pendingCredentialAction>) => {
     const token = numbers[0]?.token || "";
+    const secret = numbers[0]?.clientSecret || "";
     if (action === 'showToken') setShowTokenPreview(true);
     if (action === 'copyToken') copyToClipboard(token);
+    if (action === 'showSecret') setShowSecretPreview(true);
+    if (action === 'copySecret') copyToClipboard(secret);
   };
 
   const confirmCredentialAccess = async (password: string) => {
@@ -911,6 +918,37 @@ export default function WhatsAppConfig() {
                       </div>
                       <p className="font-mono text-xs font-bold text-zinc-800 select-all">
                         {num.appId || "34557883637136073 (Padrão Orion)"}
+                      </p>
+                    </div>
+
+                    {/* Meta App Secret */}
+                    <div className="bg-white p-3.5 rounded-xl border border-zinc-200 shadow-2xs">
+                      <div className="flex items-center justify-between text-xs text-zinc-500 font-medium mb-1">
+                        <span>Meta App Secret</span>
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => showSecretPreview ? setShowSecretPreview(false) : requestCredentialAccess('showSecret')}
+                            className="p-1 text-zinc-400 hover:text-zinc-700 rounded-md hover:bg-zinc-100 transition-colors"
+                            title={showSecretPreview ? "Ocultar Secret" : "Mostrar Secret"}
+                          >
+                            {showSecretPreview ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                          </button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => requestCredentialAccess('copySecret')}
+                            className="h-6 w-6 text-zinc-400 hover:text-zinc-700"
+                            title="Copiar App Secret"
+                          >
+                            <Copy className="w-3 h-3" />
+                          </Button>
+                        </div>
+                      </div>
+                      <p className="font-mono text-xs font-semibold text-zinc-800 truncate select-all">
+                        {showSecretPreview
+                          ? (num.clientSecret || "Não configurado")
+                          : (num.clientSecret ? `${num.clientSecret.substring(0, 6)}••••••••••••${num.clientSecret.substring(num.clientSecret.length - 4)}` : "••••••••••••••••")}
                       </p>
                     </div>
 
