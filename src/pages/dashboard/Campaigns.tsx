@@ -5,7 +5,8 @@ import { Label } from "@/src/components/ui/label";
 import {
   Megaphone, Plus, PlayCircle, PauseCircle, Settings2, Loader2, MousePointer2, Link2,
   Phone, Trash2, ChevronDown, ChevronUp, FileText, CheckCircle2, XCircle, Search,
-  Users, Upload, RefreshCw, X, UploadCloud, FileSpreadsheet, AlertCircle
+  Users, Upload, RefreshCw, X, UploadCloud, FileSpreadsheet, AlertCircle, Eye, EyeOff,
+  UserMinus, UserCheck, ListChecks
 } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 import { toast } from "sonner";
@@ -84,17 +85,62 @@ export default function Campaigns() {
     delay_seconds: 5
   });
 
+  const [estimatedCount, setEstimatedCount] = useState<number | null>(null);
+  const [isEstimating, setIsEstimating] = useState(false);
+  const [modalContactSearch, setModalContactSearch] = useState("");
+
+  // --- Preview de contatos no modal de campanha ---
+  const [previewContacts, setPreviewContacts] = useState<{ id: string | null; phone: string; name: string; email?: string | null; source?: string | null }[]>([]);
+  const [excludedPhones, setExcludedPhones] = useState<Set<string>>(new Set());
+  const [showContactPreview, setShowContactPreview] = useState(false);
+  const [previewSearch, setPreviewSearch] = useState("");
+
   const authHeaders = () => ({ "Authorization": `Bearer ${localStorage.getItem("token")}` });
 
   // ─── Fetch data ───────────────────────────────────────────────────────────────
   useEffect(() => {
     fetchCampaigns();
     fetchApprovedTemplates();
+    fetchContacts();
   }, []);
 
   useEffect(() => {
     if (activeTab === "contacts") fetchContacts();
   }, [activeTab]);
+
+  const updateAudiencePreview = async (audience: string, filters: string, contactIds: string[]) => {
+    setIsEstimating(true);
+    try {
+      const res = await fetch("/api/campaigns/preview-audience", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({
+          audience,
+          filters,
+          contact_ids: audience === "selected" ? contactIds : []
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setEstimatedCount(data.count);
+        setPreviewContacts(data.contacts || []);
+      }
+    } catch (e) {
+      if (audience === "selected") setEstimatedCount(contactIds.length);
+      else setEstimatedCount(contacts.length);
+      setPreviewContacts([]);
+    } finally {
+      setIsEstimating(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!isModalOpen) return;
+    const timer = setTimeout(() => {
+      updateAudiencePreview(newCampaign.audience, newCampaign.filters, Array.from(selectedContactIds));
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [isModalOpen, newCampaign.audience, newCampaign.filters, selectedContactIds]);
 
   const fetchCampaigns = async () => {
     try {
@@ -341,10 +387,60 @@ export default function Campaigns() {
     return buttons;
   };
 
+  // Contatos efetivos para envio (exclui os removidos temporariamente)
+  const effectivePreviewContacts = previewContacts.filter(c => !excludedPhones.has(c.phone));
+  const effectiveSendCount = effectivePreviewContacts.length;
+
+  // Contatos filtrados na busca do preview
+  const filteredPreviewContacts = previewContacts.filter(c => {
+    if (!previewSearch) return true;
+    const q = previewSearch.toLowerCase();
+    return (
+      c.phone?.includes(previewSearch) ||
+      c.name?.toLowerCase().includes(q) ||
+      c.email?.toLowerCase().includes(q)
+    );
+  });
+
+  const toggleExcludePhone = (phone: string) => {
+    setExcludedPhones(prev => {
+      const next = new Set(prev);
+      next.has(phone) ? next.delete(phone) : next.add(phone);
+      return next;
+    });
+  };
+
+  const excludeAllVisible = () => {
+    setExcludedPhones(prev => {
+      const next = new Set(prev);
+      filteredPreviewContacts.forEach(c => next.add(c.phone));
+      return next;
+    });
+  };
+
+  const includeAllVisible = () => {
+    setExcludedPhones(prev => {
+      const next = new Set(prev);
+      filteredPreviewContacts.forEach(c => next.delete(c.phone));
+      return next;
+    });
+  };
+
   const handleStartCampaign = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newCampaign.name) { toast.error("Dê um nome à campanha."); return; }
     if (!newCampaign.template) { toast.error("Selecione um template aprovado."); return; }
+
+    if (newCampaign.audience === "selected" && selectedContactIds.size === 0) {
+      toast.error("Selecione ao menos um contato para o disparo.");
+      return;
+    }
+
+    // Verificar se todos foram excluídos
+    if (effectiveSendCount === 0 && previewContacts.length > 0) {
+      toast.error("Todos os contatos foram excluídos deste envio. Inclua ao menos um contato.");
+      return;
+    }
 
     const effectiveButtons = getEffectiveButtons();
     for (const btn of effectiveButtons) {
@@ -358,7 +454,13 @@ export default function Campaigns() {
       const res = await fetch("/api/campaigns/send", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders() },
-        body: JSON.stringify({ ...newCampaign, template_variables: templateVars, buttons: effectiveButtons })
+        body: JSON.stringify({ 
+          ...newCampaign, 
+          template_variables: templateVars, 
+          buttons: effectiveButtons,
+          contact_ids: newCampaign.audience === "selected" ? Array.from(selectedContactIds) : [],
+          exclude_phones: Array.from(excludedPhones)
+        })
       });
 
       if (!res.ok) {
@@ -372,6 +474,9 @@ export default function Campaigns() {
       setNewCampaign({ name: "", template: approvedTemplates[0]?.name || "", audience: "all", filters: "", delay_seconds: 5 });
       setTemplateVars({});
       setButtons([]);
+      setExcludedPhones(new Set());
+      setShowContactPreview(false);
+      setPreviewSearch("");
       setTimeout(fetchCampaigns, 1500);
     } catch (error: any) {
       toast.error(error.message || "Erro ao iniciar a campanha.");
@@ -920,6 +1025,190 @@ export default function Campaigns() {
                   <p className="text-[10px] text-zinc-500 italic">Recomendamos no mínimo 5 segundos para evitar bloqueios de spam da Meta.</p>
                 </div>
 
+                {/* ── PREVIEW DE CONTATOS PARA ENVIO ── */}
+                <div className="space-y-3 border border-zinc-200 rounded-lg p-4 bg-zinc-50">
+                  <button
+                    type="button"
+                    className="w-full flex items-center justify-between text-sm font-semibold text-zinc-700"
+                    onClick={() => setShowContactPreview(v => !v)}
+                  >
+                    <span className="flex items-center gap-2">
+                      <ListChecks className="w-4 h-4 text-emerald-600" />
+                      Revisar Contatos para Envio
+                      {isEstimating ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin text-zinc-400" />
+                      ) : previewContacts.length > 0 ? (
+                        <span className="flex items-center gap-1.5">
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">
+                            {effectiveSendCount} para envio
+                          </span>
+                          {excludedPhones.size > 0 && (
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">
+                              {excludedPhones.size} excluído(s)
+                            </span>
+                          )}
+                        </span>
+                      ) : null}
+                    </span>
+                    {showContactPreview ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                  </button>
+
+                  {showContactPreview && (
+                    <div className="space-y-3 pt-1">
+                      {isEstimating ? (
+                        <div className="flex items-center justify-center py-8">
+                          <Loader2 className="w-6 h-6 animate-spin text-emerald-600" />
+                          <span className="ml-2 text-sm text-zinc-500">Carregando contatos...</span>
+                        </div>
+                      ) : previewContacts.length === 0 ? (
+                        <div className="border-2 border-dashed border-zinc-200 rounded-lg py-6 text-center text-zinc-400 text-xs">
+                          <Users className="w-6 h-6 mx-auto mb-2 opacity-40" />
+                          Nenhum contato encontrado para o público e filtros selecionados.
+                        </div>
+                      ) : (
+                        <>
+                          {/* Barra de ações */}
+                          <div className="flex items-center justify-between flex-wrap gap-2">
+                            <div className="relative flex-1 min-w-[200px]">
+                              <Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-zinc-400" />
+                              <Input
+                                placeholder="Buscar nome, telefone ou email..."
+                                className="pl-8 h-9 text-xs"
+                                value={previewSearch}
+                                onChange={e => setPreviewSearch(e.target.value)}
+                              />
+                            </div>
+                            <div className="flex gap-1.5">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="gap-1 text-xs"
+                                onClick={includeAllVisible}
+                                title="Incluir todos os visíveis no envio"
+                              >
+                                <UserCheck className="w-3.5 h-3.5 text-emerald-600" />
+                                Incluir Todos
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="gap-1 text-xs"
+                                onClick={excludeAllVisible}
+                                title="Excluir todos os visíveis deste envio"
+                              >
+                                <UserMinus className="w-3.5 h-3.5 text-amber-600" />
+                                Excluir Todos
+                              </Button>
+                              {excludedPhones.size > 0 && (
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  className="gap-1 text-xs text-zinc-500"
+                                  onClick={() => setExcludedPhones(new Set())}
+                                  title="Limpar todas as exclusões"
+                                >
+                                  <RefreshCw className="w-3 h-3" />
+                                  Resetar
+                                </Button>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Info box */}
+                          <div className="flex items-center gap-2 p-2.5 rounded-lg bg-blue-50 border border-blue-200 text-xs text-blue-800">
+                            <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                            Contatos excluídos aqui são removidos <strong>apenas deste envio</strong>. Eles continuam na base para campanhas futuras.
+                          </div>
+
+                          {/* Lista de contatos */}
+                          <div className="border border-zinc-200 rounded-xl overflow-hidden bg-white max-h-64 overflow-y-auto">
+                            <table className="w-full text-xs text-left">
+                              <thead className="bg-zinc-50 text-zinc-600 border-b border-zinc-200 sticky top-0 z-10">
+                                <tr>
+                                  <th className="px-3 py-2.5 font-semibold w-10">Status</th>
+                                  <th className="px-3 py-2.5 font-semibold">Nome</th>
+                                  <th className="px-3 py-2.5 font-semibold">Telefone</th>
+                                  <th className="px-3 py-2.5 font-semibold hidden sm:table-cell">Fonte</th>
+                                  <th className="px-3 py-2.5 w-10"></th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-zinc-100">
+                                {filteredPreviewContacts.map(c => {
+                                  const isExcluded = excludedPhones.has(c.phone);
+                                  return (
+                                    <tr
+                                      key={c.phone}
+                                      className={`transition-colors cursor-pointer ${
+                                        isExcluded
+                                          ? "bg-amber-50/60 hover:bg-amber-50"
+                                          : "hover:bg-zinc-50/80"
+                                      }`}
+                                      onClick={() => toggleExcludePhone(c.phone)}
+                                    >
+                                      <td className="px-3 py-2.5 text-center">
+                                        {isExcluded ? (
+                                          <EyeOff className="w-3.5 h-3.5 text-amber-500 mx-auto" />
+                                        ) : (
+                                          <Eye className="w-3.5 h-3.5 text-emerald-500 mx-auto" />
+                                        )}
+                                      </td>
+                                      <td className={`px-3 py-2.5 font-medium ${isExcluded ? "text-zinc-400 line-through" : "text-zinc-900"}`}>
+                                        {c.name || "—"}
+                                      </td>
+                                      <td className={`px-3 py-2.5 font-mono ${isExcluded ? "text-zinc-400 line-through" : "text-zinc-700"}`}>
+                                        {c.phone}
+                                      </td>
+                                      <td className="px-3 py-2.5 hidden sm:table-cell">
+                                        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+                                          isExcluded ? "bg-zinc-100 text-zinc-400" :
+                                          c.source === "upload" ? "bg-blue-100 text-blue-700" :
+                                          c.source === "whatsapp" ? "bg-emerald-100 text-emerald-700" :
+                                          c.source === "booking" ? "bg-purple-100 text-purple-700" :
+                                          "bg-zinc-100 text-zinc-600"
+                                        }`}>
+                                          {c.source || "sistema"}
+                                        </span>
+                                      </td>
+                                      <td className="px-3 py-2.5">
+                                        <button
+                                          type="button"
+                                          onClick={(e) => { e.stopPropagation(); toggleExcludePhone(c.phone); }}
+                                          className={`text-xs font-medium px-2 py-1 rounded-md transition-colors ${
+                                            isExcluded
+                                              ? "bg-emerald-100 text-emerald-700 hover:bg-emerald-200"
+                                              : "bg-amber-100 text-amber-700 hover:bg-amber-200"
+                                          }`}
+                                          title={isExcluded ? "Incluir neste envio" : "Excluir deste envio"}
+                                        >
+                                          {isExcluded ? "Incluir" : "Excluir"}
+                                        </button>
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+
+                          {/* Resumo */}
+                          <div className="flex items-center justify-between text-xs text-zinc-500 pt-1">
+                            <span>
+                              Mostrando {filteredPreviewContacts.length} de {previewContacts.length} contato(s)
+                              {previewSearch && ` (filtrado por "${previewSearch}")`}
+                            </span>
+                            <span className="font-semibold text-zinc-700">
+                              Serão enviados: <span className="text-emerald-700">{effectiveSendCount}</span> / {previewContacts.length}
+                            </span>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+
                 <div className="bg-amber-50 border border-amber-200 rounded-md p-3 mt-2">
                   <p className="text-xs text-amber-800 font-medium flex gap-1.5 items-start">
                     <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
@@ -927,12 +1216,25 @@ export default function Campaigns() {
                   </p>
                 </div>
               </CardContent>
-              <CardFooter className="bg-zinc-50 border-t border-zinc-200 py-4 flex justify-end gap-2 rounded-b-xl">
-                <Button type="button" variant="outline" onClick={() => setIsModalOpen(false)} disabled={isSubmitting}>Cancelar</Button>
-                <Button type="submit" disabled={isSubmitting} className="min-w-[140px]">
-                  {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <PlayCircle className="w-4 h-4 mr-2" />}
-                  {isSubmitting ? "Iniciando..." : "Iniciar Disparo"}
-                </Button>
+              <CardFooter className="bg-zinc-50 border-t border-zinc-200 py-4 flex justify-between items-center gap-2 rounded-b-xl">
+                <div className="text-xs text-zinc-500">
+                  {previewContacts.length > 0 && (
+                    <span className="flex items-center gap-1.5">
+                      <Users className="w-3.5 h-3.5" />
+                      <span className="font-semibold text-zinc-700">{effectiveSendCount}</span> contato(s) receberão o disparo
+                      {excludedPhones.size > 0 && (
+                        <span className="text-amber-600">({excludedPhones.size} excluído{excludedPhones.size > 1 ? "s" : ""})</span>
+                      )}
+                    </span>
+                  )}
+                </div>
+                <div className="flex gap-2">
+                  <Button type="button" variant="outline" onClick={() => { setIsModalOpen(false); setExcludedPhones(new Set()); setShowContactPreview(false); setPreviewSearch(""); }} disabled={isSubmitting}>Cancelar</Button>
+                  <Button type="submit" disabled={isSubmitting || effectiveSendCount === 0} className="min-w-[140px]">
+                    {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <PlayCircle className="w-4 h-4 mr-2" />}
+                    {isSubmitting ? "Iniciando..." : `Iniciar Disparo (${effectiveSendCount})`}
+                  </Button>
+                </div>
               </CardFooter>
             </form>
           </Card>

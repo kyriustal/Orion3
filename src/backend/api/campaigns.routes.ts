@@ -33,11 +33,16 @@ function sleep(ms: number) {
 }
 
 interface TargetContact {
+  id?: string;
   phone: string;
   name: string;
+  email?: string;
+  source?: string;
+  notes?: string;
+  tags?: string[];
 }
 
-/** Agrupa e resolve todos os contatos únicos da empresa a partir de todas as fontes ativas */
+/** Agrupa e resolve todos os contatos únicos da empresa a partir de todas as fontes ativas e aplica filtros */
 async function resolveCampaignAudience(orgId: string, audience: string, filters: any): Promise<TargetContact[]> {
   const contactMap = new Map<string, TargetContact>();
 
@@ -46,35 +51,55 @@ async function resolveCampaignAudience(orgId: string, audience: string, filters:
     return p.replace(/[^\d]/g, '');
   };
 
-  const addContact = (rawPhone: string, rawName?: string) => {
+  const addContact = (rawPhone: string, rawName?: string, extra?: Partial<TargetContact>) => {
     const phone = normalizePhone(rawPhone);
     if (!phone || phone.length < 8) return;
     const existing = contactMap.get(phone);
     const validName = (rawName && rawName.trim() !== 'Sem nome') ? rawName.trim() : '';
     const name = validName || (existing?.name && existing.name !== 'Cliente' ? existing.name : 'Cliente');
-    contactMap.set(phone, { phone, name });
+    contactMap.set(phone, {
+      id: extra?.id || existing?.id,
+      phone,
+      name,
+      email: extra?.email || existing?.email,
+      source: extra?.source || existing?.source,
+      notes: extra?.notes || existing?.notes,
+      tags: extra?.tags || existing?.tags || []
+    });
   };
 
-  // 1. Tabela `contacts`
-  const { data: dbContacts } = await supabaseAdmin
-    .from('contacts')
-    .select('phone, name')
-    .eq('org_id', orgId);
-  (dbContacts || []).forEach(c => addContact(c.phone, c.name));
+  // 1. Tabela `contacts` (com tratamento seguro para tags e notas)
+  try {
+    const { data: dbContacts, error: dbErr } = await supabaseAdmin
+      .from('contacts')
+      .select('*')
+      .eq('org_id', orgId);
+    if (!dbErr && dbContacts) {
+      dbContacts.forEach((c: any) => addContact(c.phone, c.name, {
+        id: c.id,
+        email: c.email,
+        source: c.source,
+        notes: c.notes,
+        tags: Array.isArray(c.tags) ? c.tags : (c.tags ? [c.tags] : [])
+      }));
+    }
+  } catch (contactsErr: any) {
+    console.warn('[CAMPAIGNS] Aviso ao consultar contacts:', contactsErr.message);
+  }
 
   // 2. Tabela `conversation_history`
   const { data: histContacts } = await supabaseAdmin
     .from('conversation_history')
     .select('customer_phone')
     .eq('org_id', orgId);
-  (histContacts || []).forEach(c => addContact(c.customer_phone));
+  (histContacts || []).forEach(c => addContact(c.customer_phone, undefined, { source: 'whatsapp' }));
 
   // 3. Tabela `followup_schedules`
   const { data: followupContacts } = await supabaseAdmin
     .from('followup_schedules')
     .select('customer_phone, customer_name')
     .eq('org_id', orgId);
-  (followupContacts || []).forEach(c => addContact(c.customer_phone, c.customer_name));
+  (followupContacts || []).forEach(c => addContact(c.customer_phone, c.customer_name, { source: 'whatsapp' }));
 
   // 4. Tabela `bookings`
   const { data: bookingContacts } = await supabaseAdmin
@@ -83,7 +108,7 @@ async function resolveCampaignAudience(orgId: string, audience: string, filters:
     .eq('org_id', orgId);
   (bookingContacts || []).forEach(c => {
     const fullName = [c.first_name, c.last_name].filter(Boolean).join(' ');
-    addContact(c.phone, fullName);
+    addContact(c.phone, fullName, { source: 'booking' });
   });
 
   let allContacts = Array.from(contactMap.values());
@@ -95,7 +120,7 @@ async function resolveCampaignAudience(orgId: string, audience: string, filters:
         org_id: orgId,
         phone: c.phone,
         name: c.name,
-        source: 'whatsapp'
+        source: c.source || 'whatsapp'
       }));
       await supabaseAdmin.from('contacts').upsert(inserts, { onConflict: 'org_id, phone' });
     } catch (upsertErr: any) {
@@ -103,8 +128,20 @@ async function resolveCampaignAudience(orgId: string, audience: string, filters:
     }
   }
 
-  // Filtragem por Público Alvo:
-  if (audience === 'active_24h') {
+  // ─── 1. FILTRAGEM POR AUDIÊNCIA OU CONTATOS SELECIONADOS ───
+  const contactIds: string[] = Array.isArray(filters?.contact_ids) ? filters.contact_ids.filter(Boolean) : [];
+  const targetPhones: string[] = Array.isArray(filters?.target_phones) ? filters.target_phones.filter(Boolean) : [];
+
+  if (audience === 'selected' || contactIds.length > 0 || targetPhones.length > 0) {
+    const selectedIdSet = new Set(contactIds);
+    const selectedPhoneSet = new Set(targetPhones.map(normalizePhone).filter(Boolean));
+
+    allContacts = allContacts.filter(c => {
+      if (c.id && selectedIdSet.has(c.id)) return true;
+      if (selectedPhoneSet.has(c.phone)) return true;
+      return false;
+    });
+  } else if (audience === 'active_24h') {
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
     const { data: activeHist } = await supabaseAdmin
       .from('conversation_history')
@@ -127,6 +164,40 @@ async function resolveCampaignAudience(orgId: string, audience: string, filters:
       .eq('org_id', orgId);
     const customerSet = new Set((bList || []).map(b => normalizePhone(b.phone)).filter(Boolean));
     allContacts = allContacts.filter(c => !customerSet.has(c.phone));
+  }
+
+  // ─── 2. FILTRAGEM POR TAGS / PALAVRAS-CHAVE ADICIONAIS (FILTROS) ───
+  const rawTags = filters?.tags;
+  const filterTags: string[] = Array.isArray(rawTags)
+    ? rawTags.map((t: any) => String(t).trim().toLowerCase()).filter(Boolean)
+    : (typeof rawTags === 'string'
+        ? rawTags.split(',').map((t: string) => t.trim().toLowerCase()).filter(Boolean)
+        : []);
+
+  if (filterTags.length > 0) {
+    allContacts = allContacts.filter(c => {
+      const contactTags = (c.tags || []).map((t: string) => t.toLowerCase());
+      const notesLower = (c.notes || '').toLowerCase();
+      const sourceLower = (c.source || '').toLowerCase();
+      const nameLower = (c.name || '').toLowerCase();
+      const phoneClean = c.phone;
+
+      return filterTags.some(tag => {
+        if (contactTags.some(t => t.includes(tag))) return true;
+        if (notesLower.includes(tag)) return true;
+        if (sourceLower.includes(tag)) return true;
+        if (nameLower.includes(tag)) return true;
+        if (phoneClean.includes(tag)) return true;
+        return false;
+      });
+    });
+  }
+
+  // ─── 3. EXCLUSÃO TEMPORÁRIA (POR ENVIO) ───
+  const excludePhones: string[] = Array.isArray(filters?.exclude_phones) ? filters.exclude_phones.map(normalizePhone).filter(Boolean) : [];
+  if (excludePhones.length > 0) {
+    const excludeSet = new Set(excludePhones);
+    allContacts = allContacts.filter(c => !excludeSet.has(c.phone));
   }
 
   return allContacts;
@@ -157,12 +228,15 @@ async function processCampaign(campaignId: string, orgId: string) {
       ? campaign.buttons
       : (tmpl?.buttons || []);
 
-    // Buscar credenciais WhatsApp
+    // Buscar credenciais WhatsApp (com fallback robusto)
     const { data: waConfig } = await supabaseAdmin
       .from('whatsapp_config')
       .select('phone_number_id, access_token')
       .eq('org_id', orgId)
       .maybeSingle();
+
+    const phoneNumberId = waConfig?.phone_number_id || process.env.META_PHONE_NUMBER_ID || process.env.DEFAULT_PHONE_NUMBER_ID || '';
+    const accessToken = waConfig?.access_token || process.env.META_ACCESS_TOKEN || '';
 
     // Resolver contatos da audiência selecionada
     const targetContacts = await resolveCampaignAudience(orgId, campaign.audience || 'all', campaign.filters);
@@ -188,13 +262,13 @@ async function processCampaign(campaignId: string, orgId: string) {
       const contact = targetContacts[i];
       if (!contact.phone) continue;
 
-      // Verificar se a campanha foi pausada
+      // Verificar se a campanha foi pausada ou cancelada
       const { data: currentCamp } = await supabaseAdmin
         .from('campaigns')
         .select('status')
         .eq('id', campaignId)
         .single();
-      if (currentCamp?.status === 'PAUSED') break;
+      if (currentCamp?.status === 'PAUSED' || currentCamp?.status === 'CANCELLED') break;
 
       const variables = { ...(campaign.template_variables || {}) };
       if (!variables['1'] && contact.name) {
@@ -203,15 +277,15 @@ async function processCampaign(campaignId: string, orgId: string) {
 
       let sentId: string | null = null;
 
-      if (waConfig?.phone_number_id && waConfig?.access_token) {
+      if (phoneNumberId && accessToken) {
         sentId = await WhatsAppService.sendTemplateMessage(
-          waConfig.phone_number_id,
+          phoneNumberId,
           contact.phone,
           campaign.template,
           templateLanguage,
           variables,
           templateButtons,
-          waConfig.access_token,
+          accessToken,
           templateContent
         );
       } else if (templateButtons && templateButtons.length > 0) {
@@ -228,6 +302,16 @@ async function processCampaign(campaignId: string, orgId: string) {
           contact.phone,
           filledText,
           formattedBtns
+        );
+      } else if (templateContent) {
+        let filledText = templateContent;
+        Object.keys(variables).forEach(k => {
+          filledText = filledText.replace(new RegExp(`\\{\\{${k}\\}\\}`, 'g'), variables[k] || '');
+        });
+        sentId = await WhatsAppService.sendTextMessage(
+          process.env.DEFAULT_PHONE_NUMBER_ID || '',
+          contact.phone,
+          filledText
         );
       }
 
@@ -275,13 +359,45 @@ async function processCampaign(campaignId: string, orgId: string) {
 router.post('/send', requireAuth, async (req: any, res) => {
   try {
     const orgId = req.user!.orgId;
-    const { name, template, template_variables, buttons, audience, filters, delay_seconds } = req.body;
+    const { 
+      name, 
+      template, 
+      template_variables, 
+      buttons, 
+      audience, 
+      filters, 
+      delay_seconds,
+      contact_ids,
+      target_phones,
+      exclude_phones
+    } = req.body;
 
     if (!name || !template) {
       return res.status(400).json({ error: 'Nome e template são obrigatórios.' });
     }
 
-    // 1. Registra a campanha no histórico
+    const parsedTags = filters
+      ? (typeof filters === 'string' ? filters.split(',').map((t: string) => t.trim()).filter(Boolean) : filters)
+      : [];
+
+    const campaignFilters = {
+      tags: parsedTags,
+      delay_seconds: Number(delay_seconds) || 5,
+      contact_ids: Array.isArray(contact_ids) ? contact_ids.filter(Boolean) : [],
+      target_phones: Array.isArray(target_phones) ? target_phones.filter(Boolean) : [],
+      exclude_phones: Array.isArray(exclude_phones) ? exclude_phones.filter(Boolean) : []
+    };
+
+    // 1. Resolver audiência com antecedência para validar alvos
+    const targetContacts = await resolveCampaignAudience(orgId, audience || 'all', campaignFilters);
+
+    if (targetContacts.length === 0) {
+      return res.status(400).json({ 
+        error: 'Nenhum contato encontrado para o público ou filtros selecionados. Verifique se os filtros estão corretos ou selecione ao menos um contato.' 
+      });
+    }
+
+    // 2. Registra a campanha no histórico
     const { data, error } = await supabaseAdmin
       .from('campaigns')
       .insert({
@@ -293,30 +409,56 @@ router.post('/send', requireAuth, async (req: any, res) => {
         audience: audience || 'all',
         status: 'SENDING',
         progress: 0,
-        filters: {
-          tags: filters ? filters.split(',').map((t: string) => t.trim()).filter(Boolean) : [],
-          delay_seconds: delay_seconds || 5
-        }
+        total_contacts: targetContacts.length,
+        filters: campaignFilters
       })
       .select()
       .single();
 
     if (error) throw error;
 
-    // 2. Inicia o worker em background
+    // 3. Inicia o worker em background
     processCampaign(data.id, orgId).catch(err => {
       console.error(`[CAMPAIGN WORKER] Falha em background para ${data.id}:`, err.message);
     });
 
     res.status(200).json({ 
-        message: 'Campanha iniciada com sucesso! O progresso será atualizado em tempo real.',
-        campaignId: data.id 
+      message: `Campanha iniciada com sucesso para ${targetContacts.length} contato(s)! O progresso será atualizado em tempo real.`,
+      campaignId: data.id,
+      totalContacts: targetContacts.length
     });
   } catch (error: any) {
     console.error('[CAMPAIGN] Erro ao criar campanha:', error.message);
     res.status(500).json({ error: error.message });
   }
 });
+
+// Pré-visualizar quantidade de contatos com filtros aplicados
+router.post('/preview-audience', requireAuth, async (req: any, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const { audience, filters, contact_ids, target_phones } = req.body;
+
+    const parsedTags = filters
+      ? (typeof filters === 'string' ? filters.split(',').map((t: string) => t.trim()).filter(Boolean) : filters)
+      : [];
+
+    const contacts = await resolveCampaignAudience(orgId, audience || 'all', {
+      tags: parsedTags,
+      contact_ids: Array.isArray(contact_ids) ? contact_ids.filter(Boolean) : [],
+      target_phones: Array.isArray(target_phones) ? target_phones.filter(Boolean) : []
+    });
+
+    res.json({
+      count: contacts.length,
+      sample: contacts.slice(0, 5).map(c => ({ phone: c.phone, name: c.name })),
+      contacts: contacts.map(c => ({ id: c.id || null, phone: c.phone, name: c.name, email: c.email || null, source: c.source || null }))
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 
 // Obter relatório detalhado da campanha (inclui números que receberam o disparo)
 router.get('/:id/report', requireAuth, async (req: any, res) => {
