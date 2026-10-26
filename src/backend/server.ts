@@ -144,4 +144,9 @@ httpServer.listen(PORT, () => {
   import('./workers/email_inbox.worker').catch(err =>
     console.error('[EMAIL-INBOX-BOOT] Erro ao iniciar worker de e-mails:', err.message)
   );
+
+  // Iniciar worker de agendamento de campanhas em massa (SCHEDULED)
+  import('./workers/campaign_scheduler.worker').catch(err =>
+    console.error('[CAMPAIGN-SCHEDULER-BOOT] Erro ao iniciar worker de agendamento de campanhas:', err.message)
+  );
 });

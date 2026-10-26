@@ -1,7 +1,7 @@
 import fs from 'fs';
 import { supabaseAdmin } from '../config/supabase';
 import { getIo } from '../socket';
-import { AIService, CustomerProfile } from './ai.service';
+import { AIService, CustomerProfile, ButtonContext } from './ai.service';
 import { WhatsAppService } from './whatsapp.service';
 import { AudioService } from './audio.service';
 import { DocumentService } from './document.service';
@@ -173,11 +173,13 @@ export async function triggerAIResponse(params: {
   isAudio?: boolean;
   isVoiceAllowed?: boolean;
   detectedLanguage?: string;
+  buttonContext?: ButtonContext;
 }): Promise<{ ok: boolean; error?: string; sentMsgId?: string | null }> {
   const {
     orgId, fromNumber, phoneNumberId, accessToken, botName,
     message, incomingMessageId, senderName, media, referral, isAudio, isVoiceAllowed,
     detectedLanguage = 'pt',
+    buttonContext,
   } = params;
 
   // Verificar se o atendimento por IA está pausado para este cliente (humano no controlo)
@@ -196,12 +198,13 @@ export async function triggerAIResponse(params: {
       await WhatsAppService.sendTypingIndicator(phoneNumberId, incomingMessageId, accessToken);
     } catch (_) { /* silencioso */ }
 
-    // Buscar histórico completo recente (últimas 60 mensagens)
+    // Buscar histórico completo recente (últimas 60 mensagens) com suporte a ambos formatos de telefone (+ e sem +)
+    const phoneVariants = [fromNumber, `+${fromNumber}`];
     const { data: dbHistory } = await supabaseAdmin
       .from('conversation_history')
       .select('sender, text, created_at')
       .eq('org_id', orgId)
-      .eq('customer_phone', fromNumber)
+      .in('customer_phone', phoneVariants)
       .order('created_at', { ascending: false })
       .limit(60);
 
@@ -321,6 +324,7 @@ export async function triggerAIResponse(params: {
           referral,
           timeSinceLastMessageHours,
           customerProfile,
+          buttonContext,
         });
 
         if (!aiResult?.reply) {
@@ -847,12 +851,251 @@ export async function processWhatsAppWebhook(body: any, recorder: WebhookEventRe
       let detectedLanguage = 'pt';
       const referral = incomingMsg.referral;
 
-      if (incomingMsg.type === 'text') {
+      let buttonContext: ButtonContext | undefined = undefined;
+
+      // Suporte completo a botões oficiais da Meta (quick_reply / interactive) e respostas em texto a campanhas
+      const isExplicitButton = incomingMsg.type === 'interactive' || incomingMsg.type === 'button';
+      const contextMsgId = incomingMsg.context?.id;
+
+      if (isExplicitButton) {
+        const buttonTitle = incomingMsg.interactive?.button_reply?.title ||
+                            incomingMsg.interactive?.list_reply?.title ||
+                            incomingMsg.button?.text ||
+                            '';
+        const buttonId = incomingMsg.interactive?.button_reply?.id ||
+                         incomingMsg.interactive?.list_reply?.id ||
+                         incomingMsg.button?.payload ||
+                         '';
+        userText = buttonTitle || (incomingMsg.type === 'button' ? 'Botão clicado' : 'Opção selecionada');
+        console.log(`[WEBHOOK-BUTTON] 🔘 Clique de botão detectado de ${fromNumber}: "${buttonTitle}" (ID: ${buttonId}) | ContextMsgId: ${contextMsgId || 'nenhum'}`);
+      } else if (incomingMsg.type === 'text') {
         userText = incomingMsg.text?.body || '';
-      } else if (incomingMsg.type === 'interactive') {
-        userText = incomingMsg.interactive?.button_reply?.title || incomingMsg.interactive?.list_reply?.title || '';
-      } else if (incomingMsg.type === 'button') {
-        userText = incomingMsg.button?.text || incomingMsg.button?.payload || '';
+      }
+
+      // ── BUSCA ROBUSTA DO CONTEXTO DE CAMPANHA (para cliques em botões e respostas textuais) ──
+      const phoneVariants = [fromNumber, `+${fromNumber}`];
+      let campaignName: string | undefined;
+      let campaignMessageText: string | undefined;
+      let buttonOptions: string[] = [];
+
+      // 1. Procurar em conversation_history via contextMsgId
+      if (contextMsgId) {
+        try {
+          const { data: origMsg } = await supabaseAdmin
+            .from('conversation_history')
+            .select('text, metadata')
+            .eq('org_id', orgId)
+            .contains('metadata', { message_id: contextMsgId })
+            .maybeSingle();
+
+          if (origMsg) {
+            campaignMessageText = origMsg.text;
+            campaignName = origMsg.metadata?.campaign_name;
+            if (Array.isArray(origMsg.metadata?.buttons)) {
+              buttonOptions = origMsg.metadata.buttons.map((b: any) => b.text || b.title).filter(Boolean);
+            }
+          }
+        } catch (_) {}
+
+        if (!campaignName) {
+          try {
+            const { data: origMsg2 } = await supabaseAdmin
+              .from('conversation_history')
+              .select('text, metadata')
+              .eq('org_id', orgId)
+              .eq('metadata->>message_id', contextMsgId)
+              .maybeSingle();
+
+            if (origMsg2) {
+              campaignMessageText = origMsg2.text;
+              campaignName = origMsg2.metadata?.campaign_name;
+              if (Array.isArray(origMsg2.metadata?.buttons)) {
+                buttonOptions = origMsg2.metadata.buttons.map((b: any) => b.text || b.title).filter(Boolean);
+              }
+            }
+          } catch (_) {}
+        }
+      }
+
+      // 2. Se não encontrou por contextMsgId, consultar em campaign_logs pelo message_id
+      if (!campaignName && contextMsgId) {
+        try {
+          const { data: campLog } = await supabaseAdmin
+            .from('campaign_logs')
+            .select('campaign_id')
+            .eq('org_id', orgId)
+            .eq('message_id', contextMsgId)
+            .maybeSingle();
+
+          if (campLog?.campaign_id) {
+            const { data: camp } = await supabaseAdmin
+              .from('campaigns')
+              .select('name, template, buttons')
+              .eq('id', campLog.campaign_id)
+              .maybeSingle();
+
+            if (camp) {
+              campaignName = camp.name;
+              if (Array.isArray(camp.buttons)) {
+                buttonOptions = camp.buttons.map((b: any) => b.text || b.title).filter(Boolean);
+              }
+              const { data: tmpl } = await supabaseAdmin
+                .from('templates')
+                .select('content')
+                .eq('org_id', orgId)
+                .eq('name', camp.template)
+                .maybeSingle();
+              if (tmpl?.content) campaignMessageText = tmpl.content;
+            }
+          }
+        } catch (_) {}
+      }
+
+      // 3. Fallback: buscar a última mensagem de CAMPANHA enviada pelo bot para este número
+      const cleanDigits = fromNumber.replace(/\D/g, '');
+      const phoneVariantsExtended = [
+        fromNumber,
+        cleanDigits,
+        `+${cleanDigits}`,
+        cleanDigits.replace(/^244/, ''),
+        cleanDigits.replace(/^351/, ''),
+        cleanDigits.replace(/^55/, ''),
+        `244${cleanDigits.replace(/^244/, '')}`,
+        `351${cleanDigits.replace(/^351/, '')}`,
+        `55${cleanDigits.replace(/^55/, '')}`,
+      ].filter((v, i, arr) => v && v.length >= 8 && arr.indexOf(v) === i);
+
+      const maxHours = isExplicitButton ? 168 : 120; // 7 dias para cliques em botões, 5 dias para respostas de texto
+
+      if (!campaignMessageText) {
+        try {
+          const { data: lastCampaignMsg } = await supabaseAdmin
+            .from('conversation_history')
+            .select('text, metadata, created_at')
+            .eq('org_id', orgId)
+            .in('customer_phone', phoneVariantsExtended)
+            .eq('sender', 'bot')
+            .order('created_at', { ascending: false })
+            .limit(5);
+
+          if (lastCampaignMsg && lastCampaignMsg.length > 0) {
+            // Encontrar a mensagem mais recente que seja de campanha ou que tenha botões
+            const match = lastCampaignMsg.find((m: any) => 
+              m.metadata?.is_campaign === true || 
+              m.metadata?.is_campaign === 'true' || 
+              m.metadata?.campaign_id || 
+              m.metadata?.campaign_name ||
+              (Array.isArray(m.metadata?.buttons) && m.metadata.buttons.length > 0)
+            );
+
+            if (match) {
+              const msgTime = new Date(match.created_at).getTime();
+              const hoursSince = (Date.now() - msgTime) / (1000 * 60 * 60);
+              if (hoursSince < maxHours) {
+                campaignMessageText = match.text;
+                campaignName = match.metadata?.campaign_name;
+                if (Array.isArray(match.metadata?.buttons)) {
+                  buttonOptions = match.metadata.buttons.map((b: any) => b.text || b.title).filter(Boolean);
+                }
+              }
+            }
+          }
+        } catch (_) {}
+      }
+
+      // 4. Fallback 2: buscar a campanha mais recente enviada para este número em campaign_logs
+      if (!campaignName) {
+        try {
+          const { data: recentLog } = await supabaseAdmin
+            .from('campaign_logs')
+            .select('campaign_id, created_at')
+            .eq('org_id', orgId)
+            .in('customer_phone', phoneVariantsExtended)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (recentLog?.campaign_id) {
+            const logTime = new Date(recentLog.created_at).getTime();
+            const hoursSinceLog = (Date.now() - logTime) / (1000 * 60 * 60);
+            if (hoursSinceLog < maxHours) {
+              const { data: camp } = await supabaseAdmin
+                .from('campaigns')
+                .select('name, template, buttons')
+                .eq('id', recentLog.campaign_id)
+                .maybeSingle();
+
+              if (camp) {
+                campaignName = camp.name;
+                if (buttonOptions.length === 0 && Array.isArray(camp.buttons)) {
+                  buttonOptions = camp.buttons.map((b: any) => b.text || b.title).filter(Boolean);
+                }
+                if (!campaignMessageText && camp.template) {
+                  let { data: tmpl } = await supabaseAdmin
+                    .from('templates')
+                    .select('content')
+                    .eq('org_id', orgId)
+                    .eq('name', camp.template)
+                    .maybeSingle();
+
+                  if (!tmpl?.content) {
+                    const { data: tmplFuzzy } = await supabaseAdmin
+                      .from('templates')
+                      .select('content')
+                      .eq('org_id', orgId)
+                      .ilike('name', camp.template)
+                      .maybeSingle();
+                    tmpl = tmplFuzzy;
+                  }
+
+                  if (tmpl?.content) campaignMessageText = tmpl.content;
+                }
+              }
+            }
+          }
+        } catch (_) {}
+      }
+
+      // ── DETECTAR SE É CLIQUE EM BOTÃO OU RESPOSTA DE TEXTO À CAMPANHA ──
+
+      if (isExplicitButton) {
+        const buttonTitle = incomingMsg.interactive?.button_reply?.title ||
+                            incomingMsg.interactive?.list_reply?.title ||
+                            incomingMsg.button?.text ||
+                            userText;
+        const buttonId = incomingMsg.interactive?.button_reply?.id ||
+                         incomingMsg.interactive?.list_reply?.id ||
+                         incomingMsg.button?.payload ||
+                         'btn_click';
+
+        buttonContext = {
+          buttonTitle,
+          buttonId,
+          campaignName,
+          campaignMessageText,
+          buttonOptions,
+        };
+      } else if (incomingMsg.type === 'text' && (campaignName || campaignMessageText)) {
+        // Verificar se o texto do cliente é uma resposta direta à campanha ou corresponde aos botões
+        const lowerUser = userText.trim().toLowerCase();
+        const matchedBtn = buttonOptions.find(opt => {
+          const lOpt = opt.toLowerCase();
+          return lowerUser.includes(lOpt) || lOpt.includes(lowerUser);
+        });
+
+        const intentRegex = /\b(interess|interesse|quero|sim|saber mais|informaç|valores|preço|agendar|comprar|como funciona|tenho|gostaria|obrigad)\b/i;
+        const isCampaignReply = !!matchedBtn || intentRegex.test(lowerUser) || !!contextMsgId;
+
+        if (isCampaignReply) {
+          console.log(`[WEBHOOK-CAMPAIGN-REPLY] 🎯 Cliente ${fromNumber} respondeu à campanha "${campaignName || 'Campanha'}": "${userText}"`);
+          buttonContext = {
+            buttonTitle: matchedBtn || userText,
+            buttonId: 'text_campaign_reply',
+            campaignName,
+            campaignMessageText,
+            buttonOptions,
+          };
+        }
       } else if (incomingMsg.type === 'location') {
         const lat = incomingMsg.location?.latitude;
         const lng = incomingMsg.location?.longitude;
@@ -945,6 +1188,17 @@ export async function processWhatsAppWebhook(body: any, recorder: WebhookEventRe
       if (referral) {
         clientMetadata.referral = referral;
       }
+      if (buttonContext) {
+        clientMetadata.is_button_click = true;
+        clientMetadata.button_title = buttonContext.buttonTitle;
+        clientMetadata.button_id = buttonContext.buttonId;
+        if (buttonContext.campaignName) {
+          clientMetadata.campaign_name = buttonContext.campaignName;
+        }
+        if (buttonContext.campaignMessageText) {
+          clientMetadata.campaign_message = buttonContext.campaignMessageText;
+        }
+      }
 
       // G) Gravar mensagem do cliente no histórico
       const { error: clientInsertError } = await supabaseAdmin.from('conversation_history').insert({
@@ -1015,6 +1269,7 @@ export async function processWhatsAppWebhook(body: any, recorder: WebhookEventRe
         isAudio: isAudioMessage,
         isVoiceAllowed,
         detectedLanguage,
+        buttonContext,
       });
 
       try {

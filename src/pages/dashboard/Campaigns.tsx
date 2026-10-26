@@ -6,7 +6,7 @@ import {
   Megaphone, Plus, PlayCircle, PauseCircle, Settings2, Loader2, MousePointer2, Link2,
   Phone, Trash2, ChevronDown, ChevronUp, FileText, CheckCircle2, XCircle, Search,
   Users, Upload, RefreshCw, X, UploadCloud, FileSpreadsheet, AlertCircle, Eye, EyeOff,
-  UserMinus, UserCheck, ListChecks
+  UserMinus, UserCheck, ListChecks, Calendar, CalendarClock, Zap, Building2, User, Mail, Sparkles, MessageSquare
 } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 import { toast } from "sonner";
@@ -50,7 +50,7 @@ export default function Campaigns() {
   const [campaigns, setCampaigns] = useState<any[]>([]);
   const [approvedTemplates, setApprovedTemplates] = useState<any[]>([]);
   const [selectedTemplate, setSelectedTemplate] = useState<any>(null);
-  const [templateVars, setTemplateVars] = useState<Record<string, string>>({});
+  const [templateVars, setTemplateVars] = useState<Record<string, any>>({});
   const [buttons, setButtons] = useState<CampaignButton[]>([]);
   const [useTemplateButtons, setUseTemplateButtons] = useState(true);
   const [showButtonConfig, setShowButtonConfig] = useState(false);
@@ -84,6 +84,10 @@ export default function Campaigns() {
     filters: "",
     delay_seconds: 5
   });
+
+  // --- Agendamento / Calendarização ---
+  const [scheduleMode, setScheduleMode] = useState<"now" | "scheduled">("now");
+  const [scheduledDateTime, setScheduledDateTime] = useState("");
 
   const [estimatedCount, setEstimatedCount] = useState<number | null>(null);
   const [isEstimating, setIsEstimating] = useState(false);
@@ -160,12 +164,32 @@ export default function Campaigns() {
         const approved = (data || []).filter((t: any) => t.status === "approved");
         setApprovedTemplates(approved);
         if (approved.length > 0) {
-          setNewCampaign(prev => ({ ...prev, template: approved[0].name }));
-          setSelectedTemplate(approved[0]);
+          const firstTmpl = approved[0];
+          setNewCampaign(prev => ({ ...prev, template: firstTmpl.name }));
+          setSelectedTemplate(firstTmpl);
+          // Pre-populate vars for first template
+          if (firstTmpl.content) {
+            const varMatches = (firstTmpl.content.match(/\{\{\d+\}\}/g) || []) as string[];
+            const uniqueVars = [...new Set(varMatches)].sort();
+            const defaults: Record<string, any> = {};
+            uniqueVars.forEach((varToken: string, idx: number) => {
+              const varIndexStr = varToken.replace(/\{\{|\}\}/g, '');
+              const inner = varToken.replace(/^\{\{|\}\}$|^\[|\]$/g, '').trim();
+              const lower = inner.toLowerCase();
+              let source = 'client_name';
+              if (lower.includes('empresa') || lower.includes('loja') || lower.includes('company')) source = 'company_name';
+              else if (lower.includes('telefone') || lower.includes('phone')) source = 'client_phone';
+              else if (lower.includes('email') || lower.includes('mail')) source = 'client_email';
+              else if (/^\d+$/.test(inner) && idx > 0) source = 'company_name';
+              defaults[varIndexStr] = { source };
+            });
+            setTemplateVars(defaults);
+          }
         }
       }
     } catch (e) { console.error(e); }
   };
+
 
   const fetchContacts = async () => {
     setContactsLoading(true);
@@ -353,10 +377,58 @@ export default function Campaigns() {
     return [...new Set(matches)].sort();
   };
 
+  /** Infers the default data source for a variable based on its name/position in the content */
+  const inferVarSource = (content: string, varToken: string, varIndex: number): string => {
+    // Extract the inner name: {{1}} → "1", [Nome] → "Nome"
+    const inner = varToken.replace(/^\{\{|\}\}$|^\[|\]$/g, '').trim();
+    const lower = inner.toLowerCase();
+
+    if (lower.includes('empresa') || lower.includes('loja') || lower.includes('company') || lower.includes('org')) {
+      return 'company_name';
+    }
+    if (lower.includes('nome') || lower.includes('cliente') || lower === 'name') {
+      return 'client_name';
+    }
+    if (lower.includes('telefone') || lower.includes('phone') || lower.includes('tel')) {
+      return 'client_phone';
+    }
+    if (lower.includes('email') || lower.includes('mail')) {
+      return 'client_email';
+    }
+
+    // Numeric variable: guess from context around the token
+    if (/^\d+$/.test(inner)) {
+      const tokenPos = content.indexOf(varToken);
+      const prefix = tokenPos > 0 ? content.substring(Math.max(0, tokenPos - 35), tokenPos).toLowerCase() : '';
+      const isCompanyPrefix = /\b(a|da|na|pela|empresa|loja|equipa|equipe|bem-vindo\s+à|bem-vindo\s+a)\s*$/i.test(prefix);
+      const isClientPrefix = /\b(olá|ola|oi|hey|caro|cara|prezado|prezada|estimado|estimada|senhor|senhora|sr|sra)\s*$/i.test(prefix);
+      if (isCompanyPrefix) return 'company_name';
+      if (isClientPrefix) return 'client_name';
+      // First variable defaults to client_name, second to company_name
+      return varIndex === 0 ? 'client_name' : 'company_name';
+    }
+
+    return 'client_name';
+  };
+
   const handleTemplateChange = (templateName: string) => {
     const tmpl = approvedTemplates.find(t => t.name === templateName);
     setSelectedTemplate(tmpl || null);
-    setTemplateVars({});
+
+    // Pre-populate templateVars with smart defaults so users always see the right mapping
+    if (tmpl?.content) {
+      const vars = extractVariables(tmpl.content);
+      const defaults: Record<string, any> = {};
+      vars.forEach((varToken, idx) => {
+        const varIndexStr = varToken.replace(/\{\{|\}\}/g, '');
+        const source = inferVarSource(tmpl.content, varToken, idx);
+        defaults[varIndexStr] = { source };
+      });
+      setTemplateVars(defaults);
+    } else {
+      setTemplateVars({});
+    }
+
     setButtons([]);
     setUseTemplateButtons(true);
     setNewCampaign(prev => ({ ...prev, template: templateName }));
@@ -442,6 +514,19 @@ export default function Campaigns() {
       return;
     }
 
+    // Validar agendamento se o modo calendarizado estiver ativo
+    if (scheduleMode === "scheduled") {
+      if (!scheduledDateTime) {
+        toast.error("Por favor, selecione a data e a hora para o agendamento.");
+        return;
+      }
+      const scheduledTimeMs = new Date(scheduledDateTime).getTime();
+      if (isNaN(scheduledTimeMs) || scheduledTimeMs <= Date.now()) {
+        toast.error("A data e a hora do agendamento devem ser futuras.");
+        return;
+      }
+    }
+
     const effectiveButtons = getEffectiveButtons();
     for (const btn of effectiveButtons) {
       if (!btn.text.trim()) { toast.error("Todos os botões precisam de texto."); return; }
@@ -459,7 +544,8 @@ export default function Campaigns() {
           template_variables: templateVars, 
           buttons: effectiveButtons,
           contact_ids: newCampaign.audience === "selected" ? Array.from(selectedContactIds) : [],
-          exclude_phones: Array.from(excludedPhones)
+          exclude_phones: Array.from(excludedPhones),
+          scheduled_at: scheduleMode === "scheduled" ? new Date(scheduledDateTime).toISOString() : null
         })
       });
 
@@ -472,6 +558,8 @@ export default function Campaigns() {
       toast.success(data.message);
       setIsModalOpen(false);
       setNewCampaign({ name: "", template: approvedTemplates[0]?.name || "", audience: "all", filters: "", delay_seconds: 5 });
+      setScheduleMode("now");
+      setScheduledDateTime("");
       setTemplateVars({});
       setButtons([]);
       setExcludedPhones(new Set());
@@ -494,7 +582,7 @@ export default function Campaigns() {
       PAUSED: { label: "Pausada", cls: "bg-amber-100 text-amber-700" },
       CANCELLED: { label: "Cancelada", cls: "bg-red-100 text-red-700" },
       FAILED: { label: "Falhada", cls: "bg-red-100 text-red-700" },
-      SCHEDULED: { label: "Agendada", cls: "bg-zinc-100 text-zinc-700" },
+      SCHEDULED: { label: "Agendada", cls: "bg-indigo-100 text-indigo-700 border border-indigo-200" },
     };
     const s = map[status] || { label: status, cls: "bg-zinc-100 text-zinc-500" };
     return (
@@ -860,19 +948,70 @@ export default function Campaigns() {
                 )}
 
                 {templateVariables.length > 0 && (
-                  <div className="space-y-3">
-                    <p className="text-sm font-medium text-zinc-700">Variáveis do Template (Copy)</p>
+                  <div className="space-y-3 border border-zinc-200 rounded-lg p-4 bg-zinc-50">
+                    <div className="flex items-center gap-2 mb-1">
+                      <Sparkles className="w-4 h-4 text-emerald-600" />
+                      <p className="text-sm font-semibold text-zinc-700">Variáveis do Template</p>
+                    </div>
+                    <p className="text-xs text-zinc-500 -mt-1">Defina o que cada variável representará na mensagem enviada a cada contacto.</p>
                     {templateVariables.map(varToken => {
                       const varIndex = varToken.replace(/\{\{|\}\}/g, "");
+                      const currentVal = templateVars[varIndex];
+                      // Support both legacy string and new {source, customValue} object
+                      const currentSource: string = typeof currentVal === 'object' && currentVal !== null
+                        ? (currentVal as any).source || 'client_name'
+                        : (currentVal || 'client_name');
+                      const isCustom = currentSource === 'custom';
+                      const customText: string = typeof currentVal === 'object' && currentVal !== null
+                        ? (currentVal as any).customValue || ''
+                        : '';
+
+                      const sourceOptions = [
+                        { value: 'client_name', label: '👤 Nome do Cliente', description: 'Ex: João Silva' },
+                        { value: 'company_name', label: '🏢 Nome da Empresa', description: 'O nome da sua empresa nas configurações' },
+                        { value: 'client_phone', label: '📞 Telefone do Cliente', description: 'Ex: +351 912 345 678' },
+                        { value: 'client_email', label: '✉️ E-mail do Cliente', description: 'Ex: cliente@email.com' },
+                        { value: 'custom', label: '✏️ Texto personalizado', description: 'Mesmo texto para todos os contactos' },
+                      ];
+
+                      const selectedOption = sourceOptions.find(o => o.value === currentSource) || sourceOptions[0];
+
                       return (
-                        <div key={varToken} className="space-y-1">
-                          <Label htmlFor={`var_${varIndex}`}>Variável {varToken}</Label>
-                          <Input
+                        <div key={varToken} className="space-y-2 bg-white border border-zinc-200 rounded-md p-3">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-mono font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded">{varToken}</span>
+                            <span className="text-xs text-zinc-400">→</span>
+                            <span className="text-xs text-zinc-500">{selectedOption.description}</span>
+                          </div>
+                          <select
                             id={`var_${varIndex}`}
-                            placeholder={`Ex: valor para ${varToken}`}
-                            value={templateVars[varIndex] || ""}
-                            onChange={e => setTemplateVars(prev => ({ ...prev, [varIndex]: e.target.value }))}
-                          />
+                            className="flex h-9 w-full rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+                            value={currentSource}
+                            onChange={e => {
+                              const newSource = e.target.value;
+                              setTemplateVars(prev => ({
+                                ...prev,
+                                [varIndex]: newSource === 'custom'
+                                  ? { source: 'custom', customValue: customText }
+                                  : { source: newSource }
+                              }));
+                            }}
+                          >
+                            {sourceOptions.map(opt => (
+                              <option key={opt.value} value={opt.value}>{opt.label}</option>
+                            ))}
+                          </select>
+                          {isCustom && (
+                            <Input
+                              placeholder="Texto fixo para todos os contactos..."
+                              value={customText}
+                              onChange={e => setTemplateVars(prev => ({
+                                ...prev,
+                                [varIndex]: { source: 'custom', customValue: e.target.value }
+                              }))}
+                              className="text-sm"
+                            />
+                          )}
                         </div>
                       );
                     })}

@@ -104,8 +104,10 @@ export class FacebookService {
    * Subscreve a página para receber eventos de webhook da aplicação (messages, messaging_postbacks, etc.)
    */
   static async subscribePageToApp(pageId: string, accessToken: string): Promise<{ success: boolean; error?: string }> {
+    const url = `https://graph.facebook.com/v19.0/${pageId}/subscribed_apps`;
+
+    // Tentativa 1: Campos completos (mensagens + feed)
     try {
-      const url = `https://graph.facebook.com/v19.0/${pageId}/subscribed_apps`;
       const res = await axios.post(url, {
         subscribed_fields: ['messages', 'messaging_postbacks', 'messaging_optins', 'message_deliveries', 'message_reads', 'feed']
       }, {
@@ -116,11 +118,45 @@ export class FacebookService {
         timeout: 10000
       });
 
-      console.log(`[FACEBOOK] Subscrição de webhook da página ${pageId} realizada com sucesso:`, res.data);
+      console.log(`[FACEBOOK] Subscrição de webhook da página ${pageId} realizada com sucesso (campos completos):`, res.data);
+      return { success: true };
+    } catch (err: any) {
+      console.warn(`[FACEBOOK] Tentativa 1 falhou com feed, tentando apenas campos de mensagens...`);
+    }
+
+    // Tentativa 2: Apenas campos essenciais de mensagens do Messenger
+    try {
+      const res = await axios.post(url, {
+        subscribed_fields: ['messages', 'messaging_postbacks', 'messaging_optins', 'message_deliveries', 'message_reads']
+      }, {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 10000
+      });
+
+      console.log(`[FACEBOOK] Subscrição de webhook da página ${pageId} realizada com sucesso (apenas mensagens):`, res.data);
+      return { success: true };
+    } catch (err: any) {
+      console.warn(`[FACEBOOK] Tentativa 2 falhou, tentando subscrição padrão do app...`);
+    }
+
+    // Tentativa 3: Subscrição padrão sem body explícito (usa configurações da Meta App)
+    try {
+      const res = await axios.post(url, {}, {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 10000
+      });
+
+      console.log(`[FACEBOOK] Subscrição de webhook padrão realizada com sucesso:`, res.data);
       return { success: true };
     } catch (err: any) {
       const detail = err.response?.data?.error?.message || err.message;
-      console.warn(`[FACEBOOK] Falha ao subscrever app à página ${pageId}: ${detail}`);
+      console.warn(`[FACEBOOK] Falha definitiva ao subscrever app à página ${pageId}: ${detail}`);
       return { success: false, error: detail };
     }
   }

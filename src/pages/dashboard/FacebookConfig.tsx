@@ -602,10 +602,32 @@ export default function FacebookConfig() {
                     Página Conectada à Plataforma
                   </div>
                   {diagnostic?.validation?.valid ? (
-                    <div className="space-y-1.5 text-zinc-700 bg-white/90 p-3 rounded-xl border border-blue-100 shadow-2xs">
+                    <div className="space-y-2 text-zinc-700 bg-white/90 p-3 rounded-xl border border-blue-100 shadow-2xs">
                       <p><strong>Página:</strong> {diagnostic.validation.pageName || 'Detectada'}</p>
                       <p><strong>Permissão Mensagens:</strong> {diagnostic.validation.hasMessaging ? <span className="text-emerald-600 font-bold">Ativa (OK)</span> : <span className="text-amber-600 font-bold">Ausente</span>}</p>
-                      <p><strong>Webhook Subscrito:</strong> {diagnostic.subscribed ? <span className="text-emerald-600 font-bold">Sim</span> : <span className="text-amber-600 font-bold">Pendente</span>}</p>
+                      <div>
+                        <p><strong>Webhook Subscrito:</strong> {diagnostic.subscribed ? <span className="text-emerald-600 font-bold">Sim</span> : <span className="text-amber-600 font-bold">Pendente</span>}</p>
+                        {!diagnostic.subscribed && (
+                          <div className="mt-1.5 p-2 bg-amber-50 border border-amber-200 rounded text-[11px] text-amber-900 space-y-1.5">
+                            {diagnostic.subscribeError && (
+                              <p><strong>Erro Meta:</strong> <span className="font-mono text-[10px] break-all">{diagnostic.subscribeError}</span></p>
+                            )}
+                            <p className="text-[10px] text-zinc-600">
+                              O token precisa da permissão <code className="bg-amber-100 px-1 py-0.2 rounded font-mono font-semibold">pages_manage_metadata</code> ou a subscrição da página deve ser feita no portal Meta Developers (Webhooks → Page).
+                            </p>
+                            <Button 
+                              size="sm" 
+                              variant="outline" 
+                              onClick={handleTestConnection} 
+                              disabled={isTesting}
+                              className="w-full h-6 text-[10px] bg-white border-amber-300 text-amber-900 hover:bg-amber-100"
+                            >
+                              {isTesting ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <RefreshCw className="w-3 h-3 mr-1" />}
+                              Tentar Subscrever Novamente
+                            </Button>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   ) : null}
                 </>
@@ -627,6 +649,7 @@ export default function FacebookConfig() {
               <li>Em <strong>Add Permissions</strong>, adicione:
                 <ul className="list-disc pl-4 mt-0.5 space-y-0.5 text-zinc-500 font-mono text-[10px]">
                   <li>pages_messaging</li>
+                  <li>pages_manage_metadata <span className="text-blue-600">(subscrição do webhook)</span></li>
                   <li>pages_read_engagement</li>
                   <li>pages_show_list</li>
                 </ul>

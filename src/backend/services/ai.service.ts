@@ -19,6 +19,14 @@ export interface CustomerProfile {
   isReturning?: boolean; // tem histórico anterior às últimas 24h
 }
 
+export interface ButtonContext {
+  buttonTitle: string;
+  buttonId?: string;
+  campaignName?: string;
+  campaignMessageText?: string;
+  buttonOptions?: string[];
+}
+
 export interface GenerateOptions {
   message: string;
   orgId: string;
@@ -29,6 +37,7 @@ export interface GenerateOptions {
   referral?: any;
   timeSinceLastMessageHours?: number;
   customerProfile?: CustomerProfile;
+  buttonContext?: ButtonContext;
 }
 
 export interface BookingData {
@@ -293,7 +302,8 @@ function buildSystemPrompt(
   timeSinceLastMessageHours?: number,
   urlContext?: string,
   customerProfile?: CustomerProfile,
-  businessHoursText?: string
+  businessHoursText?: string,
+  buttonContext?: ButtonContext
 ): string {
   const temporal = getAngolaTemporalContext();
 
@@ -486,6 +496,36 @@ INSTRUÇÕES CRÍTICAS PARA ATENDIMENTO DE LEADS DE ANÚNCIOS:
 - CONFIRMAÇÃO DE ATENDIMENTO REALIZADO: Se o cliente confirmar que já esteve no atendimento/consultoria presencial ou online (ex: "já fui atendido", "estive aí hoje", "já fiz a consultoria", "fui atendido"), inclua no início da sua resposta o token [ATENDIMENTO:CONFIRMADO].
 - REMARCAÇÃO POR FALTA DE COMPARÊNCIA (NO-SHOW): Se o cliente informar que faltou, não conseguiu comparecer ao agendamento anterior ou deseja remarcar por falta (ex: "não pude ir", "faltei à reunião", "não consegui comparecer e quero remarcar"), acolha-o cordialmente, auxilie a agendar uma nova data e inclua no início da sua resposta o token [REMARCACAO:FALTA].`;
 
+  // ── Construir buttonRule ANTES do return (era dead code depois do return) ──
+  let buttonRule = '';
+  if (buttonContext && buttonContext.buttonTitle) {
+    const campaignMsgSection = buttonContext.campaignMessageText
+      ? `- Mensagem da campanha que o cliente recebeu:\n"""\n${buttonContext.campaignMessageText}\n"""`
+      : '';
+    const buttonOptsSection = buttonContext.buttonOptions && buttonContext.buttonOptions.length > 0
+      ? `- Opções de botões da mensagem: ${buttonContext.buttonOptions.join(' | ')}`
+      : '';
+    buttonRule = `
+═══════════════════════════════════════════════════════════════════════════════
+🚨 CONTEXTO CRÍTICO: INTERAÇÃO VIA BOTÃO DE CAMPANHA / MENSAGEM INTERATIVA
+═══════════════════════════════════════════════════════════════════════════════
+O cliente acabou de clicar no BOTÃO oficial de uma campanha ou mensagem interativa enviada pela empresa!
+- Campanha de Origem: "${buttonContext.campaignName || 'Campanha Promocional'}"
+${campaignMsgSection}
+${buttonOptsSection}
+- BOTÃO EXATO CLICADO PELO CLIENTE: 👉 "${buttonContext.buttonTitle}" 👈
+
+INSTRUÇÕES OBRIGATÓRIAS E INEGOCIÁVEIS DE ATENDIMENTO:
+1. RECONHECIMENTO IMEDIATO: O cliente escolheu a opção "${buttonContext.buttonTitle}". Reconheça de imediato essa escolha no contexto da campanha enviada, com entusiasmo e assertividade.
+2. PROIBIDO PERGUNTAR "Como posso ajudar?": NUNCA pergunte genericamente "Olá, como posso ajudar hoje?" nem aja de forma genérica como se fosse uma primeira mensagem avulsa. O cliente está respondendo diretamente ao botão da campanha!
+3. SEGUIMENTO DIRETO E ASSERTIVO:
+   - Se o botão indicar interesse em agendar, comprar, aproveitar a promoção ou saber valores: conduza diretamente para os horários disponíveis, condições especiais da campanha ou agendamento de data/hora.
+   - Se o botão indicar mais informações ou tirar dúvidas: explique objetivamente as regras ou benefícios da campanha e pergunte sobre qual aspecto específico ele gostaria de saber mais.
+   - Se o botão indicar recusa ("Não tenho interesse", "Agora não"): responda com extrema simpatia e cordialidade, agradecendo a atenção e deixando a empresa à disposição para o futuro.
+═══════════════════════════════════════════════════════════════════════════════
+`;
+  }
+
   return `Você é ${botName}, assistente virtual oficial da empresa "${companyName}".
 ${temporal.promptContext}
 ${customerMemorySection}
@@ -499,6 +539,7 @@ ${sector ? `Sector de actividade: ${sector}.` : ''}
   * Exemplo de saudação padrão: "Olá! Sou a/o ${botName}, assistente da ${companyName}..."
   * Se já souber o nome do cliente (${firstName || 'Nome'}), saúde-o pelo nome: "Olá, ${firstName || ''}! Sou a/o ${botName} da ${companyName}..."
   * NUNCA omita o seu nome ao se apresentar.
+  * ⚠️ QUANDO O CLIENTE CLICAR NUM BOTÃO OU RESPONDER A UMA CAMPANHA: Diga o seu nome brevemente, mas continue IMEDIATAMENTE o contexto da campanha e da opção clicada (ex: "Olá ${firstName || ''}! Sou o/a ${botName} da ${companyName}. Que excelente saber do seu interesse nas nossas oportunidades..."). NUNCA pergunte genericamente "Como posso ajudar?" nem aja como se não soubesse o que ele quer!
 
 ═══ SUA PERSONALIDADE E COMPORTAMENTO (DEFINIDOS PELO USUÁRIO NO PAINEL) ═══
 ${org?.ai_prompt ? org.ai_prompt : 'Você deve agir como um assistente extremamente simpático, cordial, prestativo, persuasivo e carismático.'}
@@ -528,6 +569,7 @@ ${knowledge ? knowledge : 'Você deve agir como um assistente cordial e prestati
 ${referralContext}
 ${urlContextSection}
 ${selectedToneInstructions}
+${buttonRule}
 
 ═══ REGRAS ESTRITAS SOBRE ARQUIVOS E DOCUMENTOS (ASSETS) ═══
 - Você SÓ PODE enviar ou referenciar ficheiros, catálogos, orçamentos em PDF ou documentos que estejam EXPLICITAMENTE CADASTRADOS na secção "ARQUIVOS QUE VOCÊ PODE ENVIAR AO CLIENTE" com o seu respectivo ID.
@@ -562,6 +604,7 @@ ${attendanceAndNoShowRule}`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+
 //  Construção do histórico de conversa para Gemini
 // ─────────────────────────────────────────────────────────────────────────────
 function buildContents(
@@ -851,6 +894,7 @@ export class AIService {
       referral,
       timeSinceLastMessageHours,
       customerProfile,
+      buttonContext,
     } = options;
 
     // 0. Leitura e extração inteligente de URLs da mensagem e do anúncio (referral)
@@ -1372,8 +1416,17 @@ export class AIService {
       timeSinceLastMessageHours,
       urlSystemContext,
       customerProfile,
-      businessHoursText  // ← FIX: era construído mas nunca passado ao prompt
+      businessHoursText,
+      buttonContext
     );
+
+    // Se a mensagem for decorrente de clique num botão de campanha, enriquecer a mensagem com a indicação explícita
+    if (buttonContext && buttonContext.buttonTitle) {
+      const btnHeader = `[O cliente clicou no botão "${buttonContext.buttonTitle}"${buttonContext.campaignName ? ` da campanha "${buttonContext.campaignName}"` : ''}]`;
+      if (!enrichedMessage.includes(btnHeader)) {
+        enrichedMessage = `${btnHeader}\n${enrichedMessage}`.trim();
+      }
+    }
 
     // mediaForAI é undefined após processamento multimodal (image/video/audio/doc foram convertidos para texto em enrichedMessage)
     // Passamos mediaForAI (não o media original) para evitar re-envio de dados binários brutos ao Gemini fallback

@@ -232,6 +232,260 @@ export class WhatsAppService {
     }
 
     /**
+     * Extrai e mapeia detalhadamente todas as variáveis de um conteúdo de template.
+     * Suporta padrões como [Nome], [Empresa], [Telefone], [Produto], {{1}}, {{nome}}, etc.
+     */
+    static parseTemplateVariables(content: string): {
+        index: number;
+        key: string;
+        token: string;
+        name: string;
+        defaultType: 'client_name' | 'company_name' | 'client_phone' | 'client_email' | 'custom';
+        label: string;
+        example: string;
+    }[] {
+        if (!content) return [];
+        const matches: { raw: string; inner: string }[] = [];
+        const regex = /\[([^\]]+)\]|\{\{([^}]+)\}\}/g;
+        let m;
+        while ((m = regex.exec(content)) !== null) {
+            const rawToken = m[0];
+            const inner = (m[1] || m[2] || '').trim();
+            if (!matches.some(x => x.inner === inner)) {
+                matches.push({ raw: rawToken, inner });
+            }
+        }
+
+        return matches.map((item, idx) => {
+            const lower = item.inner.toLowerCase();
+            let defaultType: 'client_name' | 'company_name' | 'client_phone' | 'client_email' | 'custom' = 'custom';
+            let label = `Variável {{${idx + 1}}}`;
+            let example = `Valor ${idx + 1}`;
+
+            if (lower.includes('empresa') || lower.includes('loja') || lower.includes('company') || lower.includes('org')) {
+                defaultType = 'company_name';
+                label = 'Nome da Empresa';
+                example = 'Sua Empresa';
+            } else if (lower.includes('nome') || lower.includes('cliente') || lower === 'name') {
+                defaultType = 'client_name';
+                label = 'Nome do Cliente';
+                example = 'Maria';
+            } else if (lower.includes('telefone') || lower.includes('phone') || lower.includes('telemovel') || lower.includes('tel')) {
+                defaultType = 'client_phone';
+                label = 'Telefone do Cliente';
+                example = '+351 912 345 678';
+            } else if (lower.includes('email') || lower.includes('mail')) {
+                defaultType = 'client_email';
+                label = 'E-mail do Cliente';
+                example = 'cliente@email.com';
+            } else if (lower.includes('produto') || lower.includes('servico') || lower.includes('product')) {
+                defaultType = 'custom';
+                label = 'Produto / Serviço';
+                example = 'Plano Pro';
+            } else if (/^\d+$/.test(item.inner)) {
+                // Verificar o contexto textual ao redor de {{1}}, {{2}}, etc.
+                const tokenIdx = content.indexOf(item.raw);
+                const prefix = tokenIdx > 0 ? content.substring(Math.max(0, tokenIdx - 35), tokenIdx).toLowerCase() : '';
+                const isCompanyPrefix = /\b(a|da|na|pela|empresa|loja|equipa|equipe|bem-vindo\s+à|bem-vindo\s+a)\s*$/i.test(prefix);
+                const isClientPrefix = /\b(olá|ola|oi|hey|caro|cara|prezado|prezada|estimado|estimada|senhor|senhora|sr|sra)\s*$/i.test(prefix);
+
+                if (isCompanyPrefix) {
+                    defaultType = 'company_name';
+                    label = `Variável {{${item.inner}}} (Nome da Empresa)`;
+                    example = 'Sua Empresa';
+                } else if (isClientPrefix) {
+                    defaultType = 'client_name';
+                    label = `Variável {{${item.inner}}} (Nome do Cliente)`;
+                    example = 'Maria';
+                } else if (idx === 0) {
+                    defaultType = 'client_name';
+                    label = `Variável {{${item.inner}}} (Nome do Cliente)`;
+                    example = 'Maria';
+                } else if (idx === 1) {
+                    defaultType = 'company_name';
+                    label = `Variável {{${item.inner}}} (Nome da Empresa)`;
+                    example = 'Sua Empresa';
+                }
+            }
+
+            return {
+                index: idx + 1,
+                key: String(idx + 1),
+                token: item.raw,
+                name: item.inner,
+                defaultType,
+                label,
+                example
+            };
+        });
+    }
+
+    /**
+     * Resolve os valores reais de cada variável do template para um contato específico,
+     * respeitando as configurações da campanha, o nome da empresa e o perfil do contato.
+     * Retorna tanto o mapa numérico para a Meta ({"1": "...", "2": "..."})
+     * quanto o texto final renderizado da mensagem (para histórico e fallbacks).
+     */
+    static resolveVariables(
+        content: string,
+        configuredVars: Record<string, any> = {},
+        contact: { name?: string; phone: string; email?: string },
+        companyName: string = 'Nossa Empresa'
+    ): {
+        variablesForMeta: Record<string, string>;
+        renderedText: string;
+    } {
+        const parsed = this.parseTemplateVariables(content);
+        const variablesForMeta: Record<string, string> = {};
+
+        const cleanCompanyName = companyName?.trim() || 'Nossa Empresa';
+        const cleanClientName = (contact.name && contact.name.trim() !== 'Sem nome')
+            ? contact.name.trim().split(/\s+/)[0]
+            : 'Cliente';
+        const cleanPhone = contact.phone || '';
+        const cleanEmail = contact.email || '';
+
+        // Para cada variável encontrada no template
+        parsed.forEach(v => {
+            const rawConfig = configuredVars[v.key] ??
+                              configuredVars[String(v.index)] ??
+                              configuredVars[v.name] ??
+                              configuredVars[v.token] ??
+                              configuredVars[v.name.toLowerCase()] ??
+                              configuredVars[v.key.toLowerCase()];
+
+            let source = v.defaultType;
+            let customVal = '';
+
+            if (typeof rawConfig === 'object' && rawConfig !== null) {
+                source = (rawConfig.source || v.defaultType) as any;
+                customVal = rawConfig.customValue || rawConfig.value || '';
+            } else if (typeof rawConfig === 'string' && rawConfig.trim() !== '') {
+                const lowerStr = rawConfig.trim().toLowerCase();
+                if (
+                    lowerStr === 'company_name' ||
+                    lowerStr === 'empresa' ||
+                    lowerStr === 'nome da empresa' ||
+                    lowerStr === 'nome_empresa' ||
+                    lowerStr === '{{company_name}}' ||
+                    lowerStr === '[empresa]' ||
+                    lowerStr === 'company'
+                ) {
+                    source = 'company_name';
+                } else if (
+                    lowerStr === 'client_name' ||
+                    lowerStr === 'nome' ||
+                    lowerStr === 'cliente' ||
+                    lowerStr === 'nome do cliente' ||
+                    lowerStr === 'nome_cliente' ||
+                    lowerStr === '{{client_name}}' ||
+                    lowerStr === '[nome]' ||
+                    lowerStr === 'client'
+                ) {
+                    source = 'client_name';
+                } else if (
+                    lowerStr === 'client_phone' ||
+                    lowerStr === 'telefone' ||
+                    lowerStr === 'telefone do cliente' ||
+                    lowerStr === '{{client_phone}}' ||
+                    lowerStr === '[telefone]' ||
+                    lowerStr === '[phone]' ||
+                    lowerStr === 'phone'
+                ) {
+                    source = 'client_phone';
+                } else if (
+                    lowerStr === 'client_email' ||
+                    lowerStr === 'email' ||
+                    lowerStr === 'e-mail' ||
+                    lowerStr === 'email do cliente' ||
+                    lowerStr === '{{client_email}}' ||
+                    lowerStr === 'mail'
+                ) {
+                    source = 'client_email';
+                } else {
+                    source = 'custom';
+                    customVal = rawConfig.trim();
+                }
+            }
+
+            let resolvedValue = '';
+            if (source === 'company_name') {
+                resolvedValue = cleanCompanyName;
+            } else if (source === 'client_name') {
+                resolvedValue = cleanClientName;
+            } else if (source === 'client_phone') {
+                resolvedValue = cleanPhone;
+            } else if (source === 'client_email') {
+                resolvedValue = cleanEmail;
+            } else if (source === 'custom') {
+                resolvedValue = customVal || cleanCompanyName;
+            } else {
+                // Fallback de segurança estrito: NUNCA colocar o nome do cliente onde deve ser Empresa!
+                if (v.name.toLowerCase().includes('empresa') || v.name.toLowerCase().includes('loja')) {
+                    resolvedValue = cleanCompanyName;
+                } else if (v.name.toLowerCase().includes('nome') || v.name.toLowerCase().includes('cliente')) {
+                    resolvedValue = cleanClientName;
+                } else {
+                    resolvedValue = customVal || (v.index === 1 ? cleanClientName : cleanCompanyName);
+                }
+            }
+
+            variablesForMeta[String(v.index)] = resolvedValue;
+        });
+
+        // Se houver chaves numéricas avulsas passadas na configuração
+        Object.keys(configuredVars).forEach(k => {
+            if (/^\d+$/.test(k) && !variablesForMeta[k]) {
+                const val = configuredVars[k];
+                if (typeof val === 'object' && val !== null) {
+                    const src = val.source || '';
+                    if (src === 'company_name') variablesForMeta[k] = cleanCompanyName;
+                    else if (src === 'client_name') variablesForMeta[k] = cleanClientName;
+                    else if (src === 'client_phone') variablesForMeta[k] = cleanPhone;
+                    else if (src === 'client_email') variablesForMeta[k] = cleanEmail;
+                    else variablesForMeta[k] = val.customValue || val.value || cleanCompanyName;
+                } else if (typeof val === 'string') {
+                    const lVal = val.toLowerCase().trim();
+                    if (lVal === 'company_name' || lVal === 'empresa' || lVal === 'nome da empresa') variablesForMeta[k] = cleanCompanyName;
+                    else if (lVal === 'client_name' || lVal === 'nome' || lVal === 'cliente') variablesForMeta[k] = cleanClientName;
+                    else if (lVal === 'client_phone' || lVal === 'telefone') variablesForMeta[k] = cleanPhone;
+                    else if (lVal === 'client_email' || lVal === 'email') variablesForMeta[k] = cleanEmail;
+                    else variablesForMeta[k] = val;
+                }
+            }
+        });
+
+        // Construir o renderedText substituindo todos os tokens conhecidos
+        let renderedText = content || '';
+
+        // 1. Substituir tokens de índice numérico: {{1}}, {{2}}, etc.
+        Object.keys(variablesForMeta).forEach(idxKey => {
+            const val = variablesForMeta[idxKey] || '';
+            renderedText = renderedText.replace(new RegExp(`\\{\\{${idxKey}\\}\\}`, 'g'), val);
+        });
+
+        // 2. Substituir tokens semânticos conhecidos: [Nome], [Empresa], [Produto], [Telefone]
+        renderedText = renderedText
+            .replace(/\[(?:Nome|nome|Cliente|cliente)\]/g, cleanClientName)
+            .replace(/\{\{(?:Nome|nome|Cliente|cliente)\}\}/g, cleanClientName)
+            .replace(/\[(?:Empresa|empresa|Loja|loja|Company)\]/g, cleanCompanyName)
+            .replace(/\{\{(?:Empresa|empresa|Loja|loja|Company)\}\}/g, cleanCompanyName)
+            .replace(/\[(?:Telefone|telefone|Phone|phone)\]/g, cleanPhone)
+            .replace(/\{\{(?:Telefone|telefone|Phone|phone)\}\}/g, cleanPhone);
+
+        // 3. Substituir qualquer variável configurada com nome próprio
+        parsed.forEach(v => {
+            const val = variablesForMeta[String(v.index)] || '';
+            if (v.token) {
+                const escaped = v.token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                renderedText = renderedText.replace(new RegExp(escaped, 'g'), val);
+            }
+        });
+
+        return { variablesForMeta, renderedText };
+    }
+
+    /**
      * Prepara o texto do template para a Meta:
      * Converte [Nome], [Empresa], [Produto], {{nome}}, {{empresa}}, etc., para {{1}}, {{2}}, {{3}}
      * e gera os exemplos obrigatórios exigidos pela API da Meta.

@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { supabaseAdmin } from '../config/supabase';
 import { requireAuth } from '../middleware/auth';
 import { WhatsAppService } from '../services/whatsapp.service';
+import { getIo } from '../socket';
 import multer from 'multer';
 import * as XLSX from 'xlsx';
 
@@ -204,7 +205,7 @@ async function resolveCampaignAudience(orgId: string, audience: string, filters:
 }
 
 /** Executa o disparo em massa da campanha em segundo plano */
-async function processCampaign(campaignId: string, orgId: string) {
+export async function processCampaign(campaignId: string, orgId: string) {
   try {
     const { data: campaign } = await supabaseAdmin
       .from('campaigns')
@@ -213,6 +214,17 @@ async function processCampaign(campaignId: string, orgId: string) {
       .single();
 
     if (!campaign) return;
+
+    // Se estiver cancelada ou pausada, aborta
+    if (campaign.status === 'CANCELLED' || campaign.status === 'PAUSED') return;
+
+    // Se estava agendada, atualiza para SENDING
+    if (campaign.status === 'SCHEDULED') {
+      await supabaseAdmin
+        .from('campaigns')
+        .update({ status: 'SENDING', updated_at: new Date().toISOString() })
+        .eq('id', campaignId);
+    }
 
     // Buscar template associado para pegar conteúdo e botões
     const { data: tmpl } = await supabaseAdmin
@@ -237,6 +249,16 @@ async function processCampaign(campaignId: string, orgId: string) {
 
     const phoneNumberId = waConfig?.phone_number_id || process.env.META_PHONE_NUMBER_ID || process.env.DEFAULT_PHONE_NUMBER_ID || '';
     const accessToken = waConfig?.access_token || process.env.META_ACCESS_TOKEN || '';
+
+    // Buscar dados da organização (nome da empresa) para preenchimento de variáveis
+    const { data: orgData } = await supabaseAdmin
+      .from('organizations')
+      .select('name, first_name')
+      .eq('id', orgId)
+      .maybeSingle();
+    const companyName = (orgData?.name && orgData.name.trim() !== '')
+      ? orgData.name.trim()
+      : (orgData?.first_name ? `${orgData.first_name.trim()} Empresa` : 'Nossa Empresa');
 
     // Resolver contatos da audiência selecionada
     const targetContacts = await resolveCampaignAudience(orgId, campaign.audience || 'all', campaign.filters);
@@ -270,10 +292,13 @@ async function processCampaign(campaignId: string, orgId: string) {
         .single();
       if (currentCamp?.status === 'PAUSED' || currentCamp?.status === 'CANCELLED') break;
 
-      const variables = { ...(campaign.template_variables || {}) };
-      if (!variables['1'] && contact.name) {
-        variables['1'] = contact.name.trim().split(/\s+/)[0];
-      }
+      // Resolução inteligente e precisa das variáveis para este contato específico
+      const { variablesForMeta, renderedText } = WhatsAppService.resolveVariables(
+        templateContent,
+        campaign.template_variables || {},
+        contact,
+        companyName
+      );
 
       let sentId: string | null = null;
 
@@ -283,16 +308,12 @@ async function processCampaign(campaignId: string, orgId: string) {
           contact.phone,
           campaign.template,
           templateLanguage,
-          variables,
+          variablesForMeta,
           templateButtons,
           accessToken,
-          templateContent
+          renderedText
         );
       } else if (templateButtons && templateButtons.length > 0) {
-        let filledText = templateContent;
-        Object.keys(variables).forEach(k => {
-          filledText = filledText.replace(new RegExp(`\\{\\{${k}\\}\\}`, 'g'), variables[k] || '');
-        });
         const formattedBtns = templateButtons.map((b: any, idx: number) => ({
           id: b.id || `btn_${idx + 1}`,
           title: b.text || b.title || `Opção ${idx + 1}`
@@ -300,30 +321,73 @@ async function processCampaign(campaignId: string, orgId: string) {
         sentId = await WhatsAppService.sendInteractiveButtons(
           process.env.DEFAULT_PHONE_NUMBER_ID || '',
           contact.phone,
-          filledText,
+          renderedText,
           formattedBtns
         );
-      } else if (templateContent) {
-        let filledText = templateContent;
-        Object.keys(variables).forEach(k => {
-          filledText = filledText.replace(new RegExp(`\\{\\{${k}\\}\\}`, 'g'), variables[k] || '');
-        });
+      } else if (renderedText) {
         sentId = await WhatsAppService.sendTextMessage(
           process.env.DEFAULT_PHONE_NUMBER_ID || '',
           contact.phone,
-          filledText
+          renderedText
         );
       }
 
-      if (sentId) sentCount++;
-      else failedCount++;
+      const normalizedTargetPhone = contact.phone.replace(/\D/g, '');
+
+      if (sentId) {
+        sentCount++;
+
+        // 1. Gravar mensagem enviada no histórico de conversa com metadata da campanha
+        try {
+          await supabaseAdmin.from('conversation_history').insert({
+            org_id: orgId,
+            customer_phone: normalizedTargetPhone,
+            sender: 'bot',
+            text: renderedText,
+            metadata: {
+              is_campaign: true,
+              campaign_id: campaignId,
+              campaign_name: campaign.name,
+              template_name: campaign.template,
+              buttons: templateButtons,
+              variables: variablesForMeta,
+              message_id: sentId,
+              platform: 'whatsapp',
+              raw_phone: contact.phone
+            }
+          });
+
+          // 2. Notificar o Live Chat em tempo real via Socket.io
+          try {
+            getIo().to(`org:${orgId}`).emit('new_message', {
+              phone: normalizedTargetPhone,
+              sender: 'bot',
+              text: renderedText,
+              time: new Date().toLocaleTimeString('pt-PT', { timeZone: 'Africa/Luanda', hour: '2-digit', minute: '2-digit' }),
+              timestamp: new Date().toISOString(),
+              platform: 'whatsapp',
+              metadata: {
+                is_campaign: true,
+                campaign_id: campaignId,
+                campaign_name: campaign.name,
+                buttons: templateButtons,
+                message_id: sentId
+              }
+            });
+          } catch (_) {}
+        } catch (histErr: any) {
+          console.warn('[CAMPAIGN] Erro ao gravar mensagem no conversation_history:', histErr.message);
+        }
+      } else {
+        failedCount++;
+      }
 
       // Gravar log individual por número de telefone para o relatório
       try {
         await supabaseAdmin.from('campaign_logs').insert({
           campaign_id: campaignId,
           org_id: orgId,
-          customer_phone: contact.phone,
+          customer_phone: normalizedTargetPhone,
           customer_name: contact.name || null,
           status: sentId ? 'sent' : 'failed',
           message_id: sentId || null
@@ -369,12 +433,26 @@ router.post('/send', requireAuth, async (req: any, res) => {
       delay_seconds,
       contact_ids,
       target_phones,
-      exclude_phones
+      exclude_phones,
+      scheduled_at
     } = req.body;
 
     if (!name || !template) {
       return res.status(400).json({ error: 'Nome e template são obrigatórios.' });
     }
+
+    // Verificar se foi solicitado agendamento para data/hora futura
+    let isScheduled = false;
+    let scheduledDateIso: string | null = null;
+    if (scheduled_at) {
+      const parsedDate = new Date(scheduled_at);
+      if (!isNaN(parsedDate.getTime()) && parsedDate.getTime() > Date.now()) {
+        isScheduled = true;
+        scheduledDateIso = parsedDate.toISOString();
+      }
+    }
+
+    const campaignStatus = isScheduled ? 'SCHEDULED' : 'SENDING';
 
     const parsedTags = filters
       ? (typeof filters === 'string' ? filters.split(',').map((t: string) => t.trim()).filter(Boolean) : filters)
@@ -385,7 +463,8 @@ router.post('/send', requireAuth, async (req: any, res) => {
       delay_seconds: Number(delay_seconds) || 5,
       contact_ids: Array.isArray(contact_ids) ? contact_ids.filter(Boolean) : [],
       target_phones: Array.isArray(target_phones) ? target_phones.filter(Boolean) : [],
-      exclude_phones: Array.isArray(exclude_phones) ? exclude_phones.filter(Boolean) : []
+      exclude_phones: Array.isArray(exclude_phones) ? exclude_phones.filter(Boolean) : [],
+      scheduled_at: scheduledDateIso
     };
 
     // 1. Resolver audiência com antecedência para validar alvos
@@ -398,35 +477,64 @@ router.post('/send', requireAuth, async (req: any, res) => {
     }
 
     // 2. Registra a campanha no histórico
-    const { data, error } = await supabaseAdmin
+    const insertPayload: any = {
+      org_id: orgId,
+      name,
+      template,
+      template_variables: template_variables || {},
+      buttons: buttons || [],
+      audience: audience || 'all',
+      status: campaignStatus,
+      progress: 0,
+      total_contacts: targetContacts.length,
+      filters: campaignFilters
+    };
+
+    if (scheduledDateIso) {
+      insertPayload.scheduled_at = scheduledDateIso;
+    }
+
+    let insertResult = await supabaseAdmin
       .from('campaigns')
-      .insert({
-        org_id: orgId,
-        name,
-        template,
-        template_variables: template_variables || {},
-        buttons: buttons || [],
-        audience: audience || 'all',
-        status: 'SENDING',
-        progress: 0,
-        total_contacts: targetContacts.length,
-        filters: campaignFilters
-      })
+      .insert(insertPayload)
       .select()
       .single();
 
-    if (error) throw error;
+    // Fallback: se a coluna scheduled_at ainda não existir no schema do Supabase, salvar sem a coluna (já está em filters.scheduled_at)
+    if (insertResult.error && insertResult.error.message.includes('scheduled_at')) {
+      delete insertPayload.scheduled_at;
+      insertResult = await supabaseAdmin
+        .from('campaigns')
+        .insert(insertPayload)
+        .select()
+        .single();
+    }
 
-    // 3. Inicia o worker em background
-    processCampaign(data.id, orgId).catch(err => {
-      console.error(`[CAMPAIGN WORKER] Falha em background para ${data.id}:`, err.message);
-    });
+    if (insertResult.error) throw insertResult.error;
+    const data = insertResult.data;
 
-    res.status(200).json({ 
-      message: `Campanha iniciada com sucesso para ${targetContacts.length} contato(s)! O progresso será atualizado em tempo real.`,
-      campaignId: data.id,
-      totalContacts: targetContacts.length
-    });
+    // 3. Execução imediata vs Agendada
+    if (!isScheduled) {
+      processCampaign(data.id, orgId).catch(err => {
+        console.error(`[CAMPAIGN WORKER] Falha em background para ${data.id}:`, err.message);
+      });
+
+      res.status(200).json({ 
+        message: `Campanha iniciada com sucesso para ${targetContacts.length} contato(s)! O progresso será atualizado em tempo real.`,
+        campaignId: data.id,
+        totalContacts: targetContacts.length,
+        status: 'SENDING'
+      });
+    } else {
+      const formattedDate = new Date(scheduledDateIso!).toLocaleString('pt-BR');
+      res.status(200).json({ 
+        message: `Campanha calendarizada com sucesso para ${formattedDate}! O disparo ocorrerá automaticamente na data e hora definidas.`,
+        campaignId: data.id,
+        totalContacts: targetContacts.length,
+        scheduled_at: scheduledDateIso,
+        status: 'SCHEDULED'
+      });
+    }
   } catch (error: any) {
     console.error('[CAMPAIGN] Erro ao criar campanha:', error.message);
     res.status(500).json({ error: error.message });
@@ -529,21 +637,36 @@ router.get('/', requireAuth, async (req: any, res) => {
 
     if (error && error.code !== 'PGRST116') throw error;
 
-    const campaigns = (data || []).map((c: any) => ({
-      id: c.id,
-      name: c.name,
-      template: c.template,
-      buttons: c.buttons || [],
-      status: c.status,
-      progress: c.progress || 0,
-      sentCount: c.sent_count || 0,
-      failedCount: c.failed_count || 0,
-      totalContacts: c.total_contacts || 0,
-      date: new Date(c.created_at).toLocaleDateString('pt-BR', {
-        day: '2-digit', month: '2-digit', year: 'numeric',
-        hour: '2-digit', minute: '2-digit'
-      })
-    }));
+    const campaigns = (data || []).map((c: any) => {
+      const scheduledAtRaw = c.scheduled_at || c.filters?.scheduled_at || null;
+      let scheduledAtFormatted: string | null = null;
+      if (scheduledAtRaw) {
+        try {
+          scheduledAtFormatted = new Date(scheduledAtRaw).toLocaleDateString('pt-BR', {
+            day: '2-digit', month: '2-digit', year: 'numeric',
+            hour: '2-digit', minute: '2-digit'
+          });
+        } catch (_) {}
+      }
+
+      return {
+        id: c.id,
+        name: c.name,
+        template: c.template,
+        buttons: c.buttons || [],
+        status: c.status,
+        progress: c.progress || 0,
+        sentCount: c.sent_count || 0,
+        failedCount: c.failed_count || 0,
+        totalContacts: c.total_contacts || 0,
+        scheduledAt: scheduledAtRaw,
+        scheduledAtFormatted,
+        date: new Date(c.created_at).toLocaleDateString('pt-BR', {
+          day: '2-digit', month: '2-digit', year: 'numeric',
+          hour: '2-digit', minute: '2-digit'
+        })
+      };
+    });
 
     res.json({ campaigns });
   } catch (error: any) {
@@ -551,26 +674,64 @@ router.get('/', requireAuth, async (req: any, res) => {
   }
 });
 
-// ─── Pausar / Cancelar campanha ───────────────────────────────────────────────
+// ─── Pausar / Cancelar / Disparar campanha ────────────────────────────────────
 router.patch('/:id/status', requireAuth, async (req: any, res) => {
   try {
     const orgId = req.user!.orgId;
     const { id } = req.params;
-    const { status } = req.body; // 'PAUSED' | 'CANCELLED'
+    const { status } = req.body; // 'PAUSED' | 'CANCELLED' | 'SENDING' | 'SCHEDULED'
 
-    const allowed = ['PAUSED', 'CANCELLED', 'SENDING'];
+    const allowed = ['PAUSED', 'CANCELLED', 'SENDING', 'SCHEDULED'];
     if (!allowed.includes(status)) {
       return res.status(400).json({ error: 'Status inválido.' });
     }
 
     const { error } = await supabaseAdmin
       .from('campaigns')
-      .update({ status })
+      .update({ 
+        status, 
+        updated_at: new Date().toISOString() 
+      })
       .eq('id', id)
       .eq('org_id', orgId);
 
     if (error) throw error;
+
+    // Se o usuário optou por disparar imediatamente uma campanha agendada ou pausada
+    if (status === 'SENDING') {
+      processCampaign(id, orgId).catch(err => {
+        console.error(`[CAMPAIGN WORKER] Falha ao iniciar/retomar ${id}:`, err.message);
+      });
+    }
+
     res.json({ success: true, status });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ─── Disparar campanha agendada agora (atalho) ─────────────────────────────────
+router.post('/:id/trigger', requireAuth, async (req: any, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const { id } = req.params;
+
+    const { error } = await supabaseAdmin
+      .from('campaigns')
+      .update({ 
+        status: 'SENDING', 
+        updated_at: new Date().toISOString() 
+      })
+      .eq('id', id)
+      .eq('org_id', orgId);
+
+    if (error) throw error;
+
+    processCampaign(id, orgId).catch(err => {
+      console.error(`[CAMPAIGN WORKER] Falha ao disparar ${id}:`, err.message);
+    });
+
+    res.json({ success: true, message: 'Disparo da campanha iniciado com sucesso!' });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
