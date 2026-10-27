@@ -652,6 +652,9 @@ export async function triggerAIResponse(params: {
         botReply:     ptReplyText,
         lastMessageId: sentMsgId || undefined,
       }).catch(err => console.warn('[FOLLOWUP] Aviso follow-up:', err.message));
+    } else if (aiResult?.booking || aiResult?.bookingData) {
+      // Se a conversa concluiu com agendamento, cancelar imediatamente qualquer follow-up de vendas
+      FollowupService.cancelPendingForPhone(orgId, fromNumber).catch(() => {});
     }
 
     return { ok: true, sentMsgId };

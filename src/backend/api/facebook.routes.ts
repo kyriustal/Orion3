@@ -543,8 +543,10 @@ router.post('/webhook', async (req, res) => {
             });
           } catch (_) { /* silencioso */ }
 
-          // Ativar protocolo de follow-up
-          if (!aiResult.transfer && !aiResult.booking) {
+          // Ativar protocolo de follow-up ou cancelar se agendou
+          if (aiResult.booking || (aiResult as any).bookingData) {
+            FollowupService.cancelPendingForPhone(orgId, senderId).catch(() => {});
+          } else if (!aiResult.transfer) {
             FollowupService.scheduleSmartFollowup({
               orgId,
               phone:    senderId,

@@ -3,6 +3,7 @@ import { createGoogleCalendarEvent, createMicrosoftCalendarEvent, syncCalendarEv
 import { EmailService } from './email.service';
 import { TelcoSMSService } from './telcosms.service';
 import { GoogleSheetsService } from './google_sheets.service';
+import { FollowupService } from './followup.service';
 
 export interface BookingValidationInput {
   name?: string;
@@ -532,13 +533,8 @@ export class BookingService {
       // Agendar também no canal de mensagens instantâneas (WhatsApp / Followup Schedules)
       if (phone) {
         try {
-          // Cancelar follow-ups de vendas pendentes para o cliente
-          await supabaseAdmin
-            .from('followup_schedules')
-            .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
-            .eq('org_id', orgId)
-            .eq('customer_phone', phone)
-            .eq('status', 'pending');
+          // Cancelar follow-ups de vendas pendentes para o cliente (todas as variantes)
+          await FollowupService.cancelPendingForPhone(orgId, phone);
 
           // Agendar mensagem de avaliação pós-atendimento
           await supabaseAdmin
@@ -735,6 +731,11 @@ export class BookingService {
       }
     } catch (dbErr: any) {
       console.warn('[BookingService] Erro ao persistir remarcação:', dbErr.message);
+    }
+
+    // Cancelar qualquer follow-up de vendas pendente para o cliente remarcado
+    if (phone) {
+      await FollowupService.cancelPendingForPhone(orgId, phone);
     }
 
     // 2. Sincronizar novo evento na agenda

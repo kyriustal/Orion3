@@ -467,8 +467,10 @@ export async function processInstagramWebhook(body: any) {
         });
       } catch (_) { /* silencioso */ }
 
-      // Ativar protocolo de follow-up para todos os clientes sem agendamento e sem transferência para humano
-      if (!transfer && !aiResult.booking && !aiResult.bookingData) {
+      // Ativar protocolo de follow-up ou cancelar se agendou
+      if (aiResult.booking || aiResult.bookingData) {
+        FollowupService.cancelPendingForPhone(orgId, senderId).catch(() => {});
+      } else if (!transfer) {
         FollowupService.scheduleSmartFollowup({
           orgId,
           phone:    senderId,

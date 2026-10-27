@@ -399,32 +399,37 @@ export function isFarewellText(text: string): boolean {
   // Mensagens longas (> 160 chars) raramente são apenas despedidas
   if (clean.length > 160) return false;
 
-  // Se o cliente fez uma pergunta, NÃO é despedida
-  if (clean.includes('?') || /\b(quanto|quando|como|onde|qual|quais|porque|por que|mas|porem|porém)\b/i.test(clean)) {
-    return false;
+  // Se o cliente fez uma pergunta inquisitiva de novo assunto/preço, NÃO é despedida
+  if (clean.includes('?') && !/(onde|qual o local|onde fica|localiza[cç][aã]o|posso ir|amanh[aã]|levar|documentos)/i.test(clean)) {
+    if (/\b(quanto|quando|como|qual|quais|porque|por que|preço|preco|custo|valor)\b/i.test(clean)) {
+      return false;
+    }
   }
 
-  // Se for uma objeção conhecida (esposa, sócio, preparar melhor, amanhã volto), NÃO é despedida
+  // Se for uma objeção conhecida (esposa, sócio, preparar melhor, amanhã volto), NÃO é despedida simples
   if (detectObjectionText(clean)) {
     return false;
   }
 
   // Apenas emojis de encerramento / joinha / agradecimento
-  if (/^[👍👋🙏🤝✨👌👏🌹❤️]+$/u.test(clean)) {
+  if (/^[👍👋🙏🤝✨👌👏🌹❤️😊🙏🏾👍🏾👏🏾🎉]+$/u.test(clean)) {
     return true;
   }
 
   const farewellPatterns = [
     /\b(tchau|tchauzinho|xau|xauzinho|chau|chauzinho|adeus)\b/i,
-    /\b(at[eé]\s*(logo|mais|breve|[aà]\s*pr[oó]xima|j[aá]|segunda|ter[cç]a|quarta|quinta|sexta|s[aá]bado|domingo))\b/i,
-    /\b(obrigad[ao]|obg|obgd|obgda|muito\s*obrigad[ao]|agradecid[ao]|grato|grata)\b/i,
-    /\b(bom\s*descanso|bom\s*fim\s*de\s*semana|bom\s*final\s*de\s*semana|boa\s*semana|bom\s*trabalho)\b/i,
-    /\b(continua[cç][aã]o\s*de\s*(um\s*)?(bom|boa))\b/i,
+    /\b(at[eé]\s*(logo|mais|breve|[aà]\s*pr[oó]xima|j[aá]|l[aá]|amanh[aã]|segunda|ter[cç]a|quarta|quinta|sexta|s[aá]bado|domingo))\b/i,
+    /\b(obrigad[ao]|obrigad[aã]o|obg|obgd|obgda|muito\s*obrigad[ao]|agradecid[ao]|agrade[cç]o|grato|grata|muito\s*grato|gratid[aã]o)\b/i,
+    /\b(bom\s*descanso|bom\s*fim\s*de\s*semana|bom\s*final\s*de\s*semana|boa\s*semana|bom\s*trabalho|continua[cç][aã]o\s*de\s*bom|resto\s*de\s*(um\s*)?bom)\b/i,
+    /\b(continua[cç][aã]o\s*de\s*(um\s*)?(bom|boa)|boa\s*continua[cç][aã]o|resto\s*de\s*boa)\b/i,
     /\b(um\s*abra[cç]o|abra[cç]os?|forte\s*abra[cç]o|beijo|beijos?|beijinhos?|bjs)\b/i,
     /\b(valeu|vlw|falou|flw)\b/i,
-    /\b(foi\s*um\s*prazer|igualmente|foi\s*[oó]timo|foi\s*bom\s*falar)\b/i,
+    /\b(foi\s*um\s*prazer|igualmente|foi\s*[oó]timo|foi\s*bom\s*falar|prazer\s*em\s*falar)\b/i,
+    /\b(fique\s*com\s*deus|deus\s*aben[cç]oe|com\s*deus|am[eé]m)\b/i,
     /\b(n[aã]o\s*(preciso|quero|tenho\s*interesse)|deixa\s*(pra|para)\s*l[aá]|pode\s*(cancelar|fechar)|encerrar?|dispensad[ao]|n[aã]o\s*quero\s*mais)\b/i,
-    /^(perfeito|combinado|entendido|tudo\s*certo|est[aá]\s*bem|t[aá]\s*bom|ok)\s*(,?|\.|\!)?\s*(obrigad[ao]|obg|agradecid[ao]|valeu|abra[cç]o)?$/i,
+    /\b(passo\s*a[ií]\s*amanh[aã]|apare[cç]o\s*(a[ií]|l[aá])\s*amanh[aã]|vemo-nos\s*amanh[aã]|vemo-nos\s*l[aá]|nos\s*vemos\s*amanh[aã]|estarei\s*a[ií])\b/i,
+    /\b(era\s*s[oó]\s*isso|por\s*hoje\s*[eé]\s*tudo|por\s*agora\s*[eé]\s*s[oó]|tudo\s*esclarecido|tudo\s*claro|j[aá]\s*entendi|esclarecido|compreendido|n[aã]o\s*preciso\s*de\s*mais\s*nada)\b/i,
+    /^(perfeito|combinado|combinad[ií]ssimo|entendido|tudo\s*certo|est[aá]\s*bem|t[aá]\s*bom|ok|certo|est[aá]\s*tudo\s*bem|sim\s*obrigad[ao])\s*(,?|\.|\!|\s)*(obrigad[ao]|obg|agradecid[ao]|valeu|abra[cç]o|at[eé]\s*(logo|amanh[aã]|mais)|at[eé]\s*l[aá]|amigo)?$/i,
   ];
 
   for (const pattern of farewellPatterns) {
@@ -437,8 +442,85 @@ export function isFarewellText(text: string): boolean {
   if (/\b(boa\s*tarde)\b/i.test(clean) && /\b(obrigad[ao]|obg|at[eé]|abra[cç]o|valeu)\b/i.test(clean)) {
     return true;
   }
+  if (/\b(bom\s*dia)\b/i.test(clean) && /\b(obrigad[ao]|obg|at[eé]|abra[cç]o|valeu)\b/i.test(clean)) {
+    return true;
+  }
 
   return false;
+}
+
+/**
+ * Detecta se a conversa terminou com um agendamento / marcação confirmada.
+ * Regra: se o bot confirmou agendamento recentemente na conversa (token [BOOKING_CONFIRMED]
+ * ou frase inequívoca de confirmação de agendamento) e o cliente não iniciou uma nova
+ * dúvida não respondida depois disso (apenas agradeceu, confirmou presença ou a conversa parou aí).
+ */
+export function hasConversationEndedWithBooking(
+  history: { sender: string; text: string }[]
+): boolean {
+  if (!history || history.length === 0) return false;
+
+  // Procurar por confirmações de agendamento na conversa recente (últimas 15 mensagens)
+  const recentMsgs = history.slice(-15);
+
+  let lastBookingIndex = -1;
+  for (let i = recentMsgs.length - 1; i >= 0; i--) {
+    const msg = recentMsgs[i];
+    const text = (msg.text || '').toLowerCase();
+
+    const isBookingConfirmation =
+      text.includes('[booking_confirmed:') ||
+      text.includes('[atendimento confirmado') ||
+      text.includes('[agendamento confirmado') ||
+      (msg.sender === 'bot' && (
+        (text.includes('marcação') || text.includes('agendamento') || text.includes('consulta')) &&
+        (
+          text.includes('confirmada com sucesso') ||
+          text.includes('confirmado com sucesso') ||
+          text.includes('está confirmada') ||
+          text.includes('está confirmado') ||
+          text.includes('foi confirmada') ||
+          text.includes('foi confirmado') ||
+          text.includes('marcada para') ||
+          text.includes('marcado para') ||
+          text.includes('agendada para') ||
+          text.includes('agendado para') ||
+          text.includes('lembretes de confirmação') ||
+          text.includes('lembretes e alertas')
+        )
+      ));
+
+    if (isBookingConfirmation) {
+      lastBookingIndex = i;
+      break;
+    }
+  }
+
+  if (lastBookingIndex === -1) {
+    return false;
+  }
+
+  // Verificar as mensagens posteriores à confirmação do agendamento
+  const msgsAfterBooking = recentMsgs.slice(lastBookingIndex + 1);
+  if (msgsAfterBooking.length === 0) {
+    // Terminou exatamente na mensagem de confirmação do agendamento
+    return true;
+  }
+
+  // Se houver mensagens posteriores, verificar se são apenas agradecimentos, despedidas ou perguntas de localização
+  for (const m of msgsAfterBooking) {
+    if (m.sender === 'user') {
+      const clean = (m.text || '').trim().toLowerCase();
+      // Se o cliente fez pergunta inquisitiva sobre um assunto diferente do agendamento
+      if (clean.includes('?') && !/(onde|qual o local|onde fica|localiza[cç][aã]o|posso ir|amanh[aã]|levar|documento)/i.test(clean)) {
+        if (/(quanto custa|qual o valor|outro serviço|outra pessoa|orçamento|proposta)/i.test(clean)) {
+          return false;
+        }
+      }
+    }
+  }
+
+  return true;
 }
 
 /**
@@ -447,9 +529,12 @@ export function isFarewellText(text: string): boolean {
  */
 export function isConversationEndedInFarewell(
   history: { sender: string; text: string }[],
-  _currentBotReply?: string
+  currentBotReply?: string
 ): boolean {
-  if (!history || history.length === 0) return false;
+  if (!history || history.length === 0) {
+    if (currentBotReply && isFarewellText(currentBotReply)) return true;
+    return false;
+  }
 
   const validMsgs = history.filter(h => 
     !h.text.startsWith('[ERRO INTERNO') && 
@@ -463,21 +548,49 @@ export function isConversationEndedInFarewell(
   const lastUserMsg = userMsgs[userMsgs.length - 1];
   const lastUserText = (lastUserMsg.text || '').trim();
 
-  // Se a última mensagem do cliente foi uma despedida
+  // 1. Se a última mensagem do cliente foi uma despedida
   if (isFarewellText(lastUserText)) {
     return true;
   }
 
-  // Verificar se o bot encerrou formalmente os lembretes ou o atendimento
+  // 2. Se a penúltima mensagem do cliente também foi uma despedida (e a última for emoji ou "ok" ou "obrigado")
+  if (userMsgs.length >= 2) {
+    const prevUserText = (userMsgs[userMsgs.length - 2].text || '').trim();
+    if (isFarewellText(prevUserText) && (lastUserText.length <= 25 || /^[👍👋🙏🤝✨👌👏🌹❤️😊🙏🏾👍🏾👏🏾🎉]+$/u.test(lastUserText))) {
+      return true;
+    }
+  }
+
+  // 3. Verificar se o bot encerrou formalmente os lembretes ou o atendimento
   const lastMsg = validMsgs[validMsgs.length - 1];
   if (lastMsg.sender === 'bot') {
     const lastBotText = (lastMsg.text || '').toLowerCase();
     if (
       lastBotText.includes('vou encerrar os nossos lembretes') || 
       lastBotText.includes('atendimento encerrado') || 
-      lastBotText.includes('estaremos sempre à sua disposição na on visa quando desejar')
+      lastBotText.includes('estaremos sempre à sua disposição') ||
+      lastBotText.includes('tenha um excelente dia') ||
+      lastBotText.includes('tenham um excelente dia') ||
+      lastBotText.includes('ficamos à sua espera') ||
+      lastBotText.includes('até amanhã') ||
+      lastBotText.includes('até logo')
     ) {
-      return true;
+      if (isFarewellText(lastUserText) || /^(ok|perfeito|combinado|entendido|obrigad[ao]|obg|certo|tá bom|está bem)/i.test(lastUserText)) {
+        return true;
+      }
+    }
+  }
+
+  // 4. Se a resposta recém-gerada pelo bot for um encerramento cordial/despedida em resposta a um agradecimento
+  if (currentBotReply) {
+    const cleanBot = currentBotReply.toLowerCase();
+    if (
+      (cleanBot.includes('de nada') || cleanBot.includes('disponha') || cleanBot.includes('à disposição') || cleanBot.includes('a sua disposição')) &&
+      (cleanBot.includes('tenha um') || cleanBot.includes('ótimo dia') || cleanBot.includes('bom dia') || cleanBot.includes('boa tarde') || cleanBot.includes('boa noite') || cleanBot.includes('até amanhã') || cleanBot.includes('até logo'))
+    ) {
+      if (isFarewellText(lastUserText)) {
+        return true;
+      }
     }
   }
 
@@ -610,9 +723,10 @@ export class FollowupService {
   /**
    * Ativa o protocolo de follow-up (inteligente ou de objeções).
    * Regras estritas:
-   * 1. NÃO envia/agenda se o cliente tiver algum agendamento marcado.
-   * 2. NÃO envia/agenda se a conversa tiver terminada em despedida, mesmo que a última mensagem seja da IA.
-   * 3. Se a conversa terminou com objeção, agenda o protocolo específico de objeção (B2C/B2B com botões).
+   * 1. NÃO envia/agenda se o cliente tiver algum agendamento marcado (confirmado ou ativo).
+   * 2. NÃO envia/agenda se a conversa tiver terminado com agendamento marcado no chat.
+   * 3. NÃO envia/agenda se a conversa tiver terminado em despedida, mesmo que a última mensagem seja da IA.
+   * 4. Se a conversa terminou com objeção, agenda o protocolo específico de objeção (B2C/B2B com botões).
    */
   static async scheduleSmartFollowup(params: {
     orgId:         string;
@@ -623,13 +737,20 @@ export class FollowupService {
     lastMessageId?: string;
   }) {
     try {
-      // 1. Cancelar eventuais follow-ups anteriores pendentes
+      // 1. Cancelar eventuais follow-ups anteriores pendentes (usando variantes de telefone)
       await this.cancelPendingForPhone(params.orgId, params.phone);
 
-      // 2. REGRA 1: Verificar se o cliente tem agendamento marcado ativo ou futuro
+      // 2. REGRA 1: Verificar se o cliente tem agendamento marcado ativo, recente ou confirmado na base de dados
       const hasBooking = await this.hasActiveBooking(params.orgId, params.phone);
       if (hasBooking) {
-        console.log(`[FOLLOWUP] ℹ️ Cliente ${params.phone} já possui agendamento marcado/ativo. Follow-up cancelado/ignorado.`);
+        console.log(`[FOLLOWUP] 🚫 Cliente ${params.phone} já possui agendamento confirmado/ativo. Follow-up não será agendado.`);
+        await this.concludeConversation({
+          orgId: params.orgId,
+          phone: params.phone,
+          platform: params.platform,
+          customerName: params.customerName,
+          reason: 'has_active_booking',
+        });
         return;
       }
 
@@ -648,9 +769,22 @@ export class FollowupService {
         if (contact?.name) clientName = contact.name.trim().split(/\s+/)[0];
       }
 
-      // 4. REGRA 2: Não enviar se a conversa terminou em despedida, mesmo que a última mensagem seja da IA
+      // 4. REGRA 1b: Verificar se a conversa terminou com agendamento
+      if (hasConversationEndedWithBooking(history)) {
+        console.log(`[FOLLOWUP] 🚫 Conversa com ${params.phone} terminou com agendamento confirmado no chat. Follow-up cancelado/ignorado.`);
+        await this.concludeConversation({
+          orgId: params.orgId,
+          phone: params.phone,
+          platform: params.platform,
+          customerName: clientName,
+          reason: 'booking_completed_in_chat',
+        });
+        return;
+      }
+
+      // 5. REGRA 2: Não enviar se a conversa terminou em despedida ou agradecimento de encerramento
       if (isConversationEndedInFarewell(history, params.botReply)) {
-        console.log(`[FOLLOWUP] ℹ️ Conversa com ${params.phone} terminada em despedida. Follow-up não agendado.`);
+        console.log(`[FOLLOWUP] 🚫 Conversa com ${params.phone} terminada em despedida. Follow-up não agendado.`);
         await this.concludeConversation({
           orgId: params.orgId,
           phone: params.phone,
@@ -746,19 +880,34 @@ export class FollowupService {
     }
   }
 
-  /** Cancela todos os follow-ups pendentes de um número (cliente voltou a responder) */
+  /** Cancela todos os follow-ups pendentes de um número (cliente respondeu, agendou ou despediu-se) */
   static async cancelPendingForPhone(orgId: string, phone: string) {
-    const { error } = await supabaseAdmin
-      .from('followup_schedules')
-      .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
-      .eq('org_id', orgId)
-      .eq('customer_phone', phone)
-      .eq('status', 'pending');
+    if (!phone) return;
+    try {
+      const rawDigits = phone.replace(/\D/g, '');
+      const phoneVariants = Array.from(new Set([
+        phone,
+        rawDigits,
+        `+${rawDigits}`,
+        rawDigits.startsWith('244') ? rawDigits.slice(3) : `244${rawDigits}`,
+        rawDigits.slice(-9),
+        rawDigits.slice(-8),
+      ].filter(p => p && p.length >= 8)));
 
-    if (error) {
-      console.warn(`[FOLLOWUP] Aviso ao cancelar follow-ups de ${phone}:`, error.message);
-    } else {
-      console.log(`[FOLLOWUP] ✅ Follow-ups pendentes cancelados para ${phone} (cliente respondeu)`);
+      const { error } = await supabaseAdmin
+        .from('followup_schedules')
+        .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
+        .eq('org_id', orgId)
+        .in('customer_phone', phoneVariants)
+        .eq('status', 'pending');
+
+      if (error) {
+        console.warn(`[FOLLOWUP] Aviso ao cancelar follow-ups de ${phone}:`, error.message);
+      } else {
+        console.log(`[FOLLOWUP] ✅ Follow-ups pendentes cancelados para ${phone} (variantes: ${phoneVariants.join(', ')})`);
+      }
+    } catch (err: any) {
+      console.warn(`[FOLLOWUP] Erro ao cancelar follow-ups de ${phone}:`, err.message);
     }
   }
 
@@ -803,11 +952,18 @@ export class FollowupService {
 
   /** Devolve o histórico de conversa (últimas 40 msgs) para contexto */
   static async fetchContext(orgId: string, phone: string) {
+    const rawDigits = (phone || '').replace(/\D/g, '');
+    const phoneVariants = Array.from(new Set([
+      phone,
+      rawDigits,
+      `+${rawDigits}`,
+    ].filter(Boolean)));
+
     const { data, error } = await supabaseAdmin
       .from('conversation_history')
       .select('sender, text, metadata')
       .eq('org_id', orgId)
-      .eq('customer_phone', phone)
+      .in('customer_phone', phoneVariants)
       .order('created_at', { ascending: true })
       .limit(40);
 
@@ -815,50 +971,74 @@ export class FollowupService {
     return (data ?? []).map(m => ({ sender: m.sender as 'user' | 'bot', text: m.text }));
   }
 
-  /** Verifica com precisão se o cliente tem agendamento ativo (hoje ou futuro, não cancelado) */
+  /** Verifica com precisão se o cliente tem agendamento ativo ou confirmado no sistema */
   static async hasActiveBooking(orgId: string, phone: string): Promise<boolean> {
     try {
-      const todayIso = new Date().toISOString().split('T')[0];
+      if (!phone) return false;
       const rawDigits = (phone || '').replace(/\D/g, '');
+      if (rawDigits.length < 8) return false;
+
+      const last9 = rawDigits.slice(-9);
       const last8 = rawDigits.slice(-8);
 
-      // 1. Tabela bookings (a coluna correta é appointment_date)
+      // Função de correspondência flexível entre números
+      const matchesPhone = (targetPhone?: string | null): boolean => {
+        if (!targetPhone) return false;
+        const targetDigits = targetPhone.replace(/\D/g, '');
+        if (!targetDigits) return false;
+        if (targetPhone === phone || targetDigits === rawDigits) return true;
+        if (last9.length >= 9 && targetDigits.endsWith(last9)) return true;
+        if (targetDigits.length >= 9 && rawDigits.endsWith(targetDigits.slice(-9))) return true;
+        if (last8.length >= 8 && targetDigits.endsWith(last8)) return true;
+        return false;
+      };
+
+      // 1. Tabela bookings (seleciona com segurança sem quebrar se a coluna status não existir)
       const { data: bookings, error: bErr } = await supabaseAdmin
         .from('bookings')
-        .select('id, phone, appointment_date, status')
-        .eq('org_id', orgId)
-        .gte('appointment_date', todayIso);
+        .select('*')
+        .eq('org_id', orgId);
 
       if (!bErr && bookings && bookings.length > 0) {
         const hasMatch = bookings.some(b => {
-          if (b.status === 'cancelled') return false;
-          const bDigits = (b.phone || '').replace(/\D/g, '');
-          if (!bDigits) return false;
-          if (b.phone === phone || bDigits === rawDigits) return true;
-          if (last8.length >= 8 && bDigits.endsWith(last8)) return true;
-          if (bDigits.length >= 8 && rawDigits.endsWith(bDigits.slice(-8))) return true;
-          return false;
+          if ((b as any).status === 'cancelled') return false;
+          return matchesPhone(b.phone);
         });
-        if (hasMatch) return true;
+        if (hasMatch) {
+          console.log(`[FOLLOWUP] 📅 Agendamento confirmado encontrado na tabela bookings para ${phone}`);
+          return true;
+        }
       }
 
       // 2. Tabela appointment_reminders
       const { data: reminders, error: rErr } = await supabaseAdmin
         .from('appointment_reminders')
-        .select('id, customer_phone, appointment_date, status')
-        .eq('org_id', orgId)
-        .gte('appointment_date', todayIso)
-        .neq('status', 'cancelled');
+        .select('id, customer_phone, status')
+        .eq('org_id', orgId);
 
       if (!rErr && reminders && reminders.length > 0) {
         const hasMatch = reminders.some(r => {
-          const rDigits = (r.customer_phone || '').replace(/\D/g, '');
-          if (!rDigits) return false;
-          if (r.customer_phone === phone || rDigits === rawDigits) return true;
-          if (last8.length >= 8 && rDigits.endsWith(last8)) return true;
-          return false;
+          if (r.status === 'cancelled') return false;
+          return matchesPhone(r.customer_phone);
         });
-        if (hasMatch) return true;
+        if (hasMatch) {
+          console.log(`[FOLLOWUP] 📅 Lembrete de agendamento ativo encontrado para ${phone}`);
+          return true;
+        }
+      }
+
+      // 3. Tabela contacts
+      const phoneVariants = [phone, rawDigits, `+${rawDigits}`].filter(Boolean);
+      const { data: contact } = await supabaseAdmin
+        .from('contacts')
+        .select('phone, is_booked, status')
+        .eq('org_id', orgId)
+        .in('phone', phoneVariants)
+        .maybeSingle();
+
+      if (contact && (contact.is_booked || contact.status === 'agendado' || contact.status === 'confirmado')) {
+        console.log(`[FOLLOWUP] 📅 Contacto com estatuto de agendado/confirmado encontrado para ${phone}`);
+        return true;
       }
 
       return false;
@@ -866,6 +1046,11 @@ export class FollowupService {
       console.warn('[FOLLOWUP] Erro ao verificar agendamentos ativos:', err.message);
       return false;
     }
+  }
+
+  /** Verifica se a conversa terminou com agendamento */
+  static hasConversationEndedWithBooking(history: { sender: string; text: string }[]): boolean {
+    return hasConversationEndedWithBooking(history);
   }
 
   /** Verifica se a conversa com o cliente terminou em despedida (mesmo que a última msg seja da IA) */

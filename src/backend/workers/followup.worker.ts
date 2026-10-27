@@ -14,6 +14,7 @@ import {
   fillPlaceholders,
   getObjectionScheduledDate,
   isConversationEndedInFarewell,
+  hasConversationEndedWithBooking,
   formatGreeting,
 } from '../services/followup.service';
 import { WhatsAppService } from '../services/whatsapp.service';
@@ -157,19 +158,36 @@ async function runFollowups() {
           continue;
         }
 
-        // ── 1b. REGRA 1 (re-check): Verificar se o cliente adquiriu agendamento desde que o follow-up foi marcado ──
+        // ── 1b. REGRA 1 (re-check): Verificar se o cliente possui agendamento confirmado/ativo ──
         const hasBooking = await FollowupService.hasActiveBooking(item.org_id, item.customer_phone);
         if (hasBooking) {
-          console.log(`[FOLLOWUP] ℹ️ Cliente ${item.customer_phone} já possui agendamento. Follow-up ${item.id} cancelado no envio.`);
+          console.log(`[FOLLOWUP] 🚫 Cliente ${item.customer_phone} já possui agendamento confirmado/ativo. Follow-up ${item.id} cancelado no envio.`);
           await FollowupService.setStatus(item.id, 'cancelled');
+          await FollowupService.cancelPendingForPhone(item.org_id, item.customer_phone);
           continue;
         }
 
-        // ── 1c. REGRA 2 (re-check): Verificar se a conversa terminou em despedida desde que o follow-up foi agendado ──
+        // ── 1c. REGRA 1b (re-check): Verificar se a conversa terminou com agendamento ──
         const history = await FollowupService.fetchContext(item.org_id, item.customer_phone);
-        if (isConversationEndedInFarewell(history)) {
-          console.log(`[FOLLOWUP] ℹ️ Conversa com ${item.customer_phone} terminou em despedida. Follow-up ${item.id} cancelado no envio.`);
+        if (hasConversationEndedWithBooking(history)) {
+          console.log(`[FOLLOWUP] 🚫 Conversa com ${item.customer_phone} terminou com agendamento confirmado no chat. Follow-up ${item.id} cancelado no envio.`);
           await FollowupService.setStatus(item.id, 'cancelled');
+          await FollowupService.cancelPendingForPhone(item.org_id, item.customer_phone);
+          await FollowupService.concludeConversation({
+            orgId: item.org_id,
+            phone: item.customer_phone,
+            platform: item.platform || 'whatsapp',
+            customerName: item.customer_name,
+            reason: 'booking_completed_in_chat',
+          });
+          continue;
+        }
+
+        // ── 1d. REGRA 2 (re-check): Verificar se a conversa terminou em despedida desde que o follow-up foi agendado ──
+        if (isConversationEndedInFarewell(history)) {
+          console.log(`[FOLLOWUP] 🚫 Conversa com ${item.customer_phone} terminou em despedida. Follow-up ${item.id} cancelado no envio.`);
+          await FollowupService.setStatus(item.id, 'cancelled');
+          await FollowupService.cancelPendingForPhone(item.org_id, item.customer_phone);
           await FollowupService.concludeConversation({
             orgId: item.org_id,
             phone: item.customer_phone,
