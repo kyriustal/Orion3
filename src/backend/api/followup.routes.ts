@@ -4,6 +4,20 @@ import { requireAuth, AuthRequest } from '../middleware/auth';
 import { FollowupService, parseDelay } from '../services/followup.service';
 import { supabaseAdmin } from '../config/supabase';
 
+// ─── Defaults de configuração (usados quando a org ainda não personalizou) ──
+export const FOLLOWUP_SETTINGS_DEFAULTS = {
+  enabled:           true,
+  step1_enabled:     true,
+  step1_delay_hours: 12,
+  step1_message:     null,   // null = usar template dinâmico da followup.service
+  step2_enabled:     false,
+  step2_delay_hours: 24,
+  step2_message:     null,
+  send_window_start: '09:00',
+  send_window_end:   '20:00',
+  allowed_days:      [1, 2, 3, 4, 5, 6], // Seg-Sab
+};
+
 const router = Router();
 
 // ─── POST /api/followup — Agendar um follow-up ────────────────────────────────
@@ -80,6 +94,82 @@ router.delete('/followup/:id', requireAuth, async (req: AuthRequest, res: Respon
     await FollowupService.setStatus(id, 'cancelled');
     res.json({ message: 'Follow-up cancelado com sucesso.' });
   } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── GET /api/followup/settings — Ler configurações da org ──────────────────
+router.get('/followup/settings', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const orgId = req.user!.orgId!;
+    const { data } = await supabaseAdmin
+      .from('followup_settings')
+      .select('*')
+      .eq('org_id', orgId)
+      .maybeSingle();
+
+    // Mesclar com defaults para garantir que todos os campos existam
+    res.json({ ...FOLLOWUP_SETTINGS_DEFAULTS, ...(data ?? {}), org_id: orgId });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── PUT /api/followup/settings — Guardar configurações da org ───────────────
+router.put('/followup/settings', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const orgId = req.user!.orgId!;
+    const {
+      enabled,
+      step1_enabled,
+      step1_delay_hours,
+      step1_message,
+      step2_enabled,
+      step2_delay_hours,
+      step2_message,
+      send_window_start,
+      send_window_end,
+      allowed_days,
+    } = req.body;
+
+    // Validações básicas
+    if (step1_delay_hours !== undefined && (typeof step1_delay_hours !== 'number' || step1_delay_hours < 1 || step1_delay_hours > 168)) {
+      return res.status(400).json({ error: 'step1_delay_hours deve estar entre 1 e 168 horas.' });
+    }
+    if (step2_delay_hours !== undefined && (typeof step2_delay_hours !== 'number' || step2_delay_hours < 1 || step2_delay_hours > 720)) {
+      return res.status(400).json({ error: 'step2_delay_hours deve estar entre 1 e 720 horas.' });
+    }
+    if (allowed_days !== undefined && (!Array.isArray(allowed_days) || allowed_days.length === 0)) {
+      return res.status(400).json({ error: 'allowed_days deve ser um array não vazio.' });
+    }
+
+    const payload: Record<string, any> = {
+      org_id:            orgId,
+      updated_at:        new Date().toISOString(),
+    };
+
+    if (enabled           !== undefined) payload.enabled           = enabled;
+    if (step1_enabled     !== undefined) payload.step1_enabled     = step1_enabled;
+    if (step1_delay_hours !== undefined) payload.step1_delay_hours = step1_delay_hours;
+    if (step1_message     !== undefined) payload.step1_message     = step1_message || null;
+    if (step2_enabled     !== undefined) payload.step2_enabled     = step2_enabled;
+    if (step2_delay_hours !== undefined) payload.step2_delay_hours = step2_delay_hours;
+    if (step2_message     !== undefined) payload.step2_message     = step2_message || null;
+    if (send_window_start !== undefined) payload.send_window_start = send_window_start;
+    if (send_window_end   !== undefined) payload.send_window_end   = send_window_end;
+    if (allowed_days      !== undefined) payload.allowed_days      = allowed_days;
+
+    const { data, error } = await supabaseAdmin
+      .from('followup_settings')
+      .upsert(payload, { onConflict: 'org_id' })
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    res.json({ message: 'Configurações de follow-up guardadas com sucesso.', settings: data });
+  } catch (err: any) {
+    console.error('[FOLLOWUP SETTINGS] Erro ao guardar:', err.message);
     res.status(500).json({ error: err.message });
   }
 });

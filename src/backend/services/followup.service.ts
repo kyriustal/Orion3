@@ -69,20 +69,9 @@ export const FOLLOWUP_MESSAGES = {
     }
   },
 
-  /** Step 2 — após +24h (encerramento cordial; último contacto do fluxo padrão) */
-  step2: (name: string, scenario: number = 4, ctx?: FollowupContext): string => {
-    const n = formatGreeting(name);
-    const company = ctx?.orgName || 'nossa assessoria';
-    switch (scenario) {
-      case 1: // 📄 Cenário 1: Documentos
-        return `${n} Vou encerrar os nossos lembretes automáticos sobre os documentos por aqui para não incomodar. Estaremos sempre à sua disposição na ${company} quando desejar dar o próximo passo. Tenha um excelente dia!`;
-      case 2: // 💰 Cenário 2: Orçamento
-        return `${n} Vou encerrar os nossos lembretes automáticos sobre a proposta por aqui para não incomodar. Estaremos sempre à sua disposição na ${company} quando desejar avançar. Tenha um excelente dia!`;
-      case 3: // 📅 Cenário 3: Agendamento
-        return `${n} Vou encerrar os nossos lembretes automáticos sobre o agendamento por aqui para não incomodar. Estaremos sempre à sua disposição na ${company} quando desejar agendar a sua consultoria. Tenha um excelente dia!`;
-      default: // 🌍 Cenário 4: Geral
-        return `${n} Vou encerrar os nossos lembretes automáticos por aqui para não incomodar. Estaremos sempre à sua disposição na ${company} quando desejar dar o próximo passo. Tenha um excelente dia!`;
-    }
+  /** Step 2 — Desativado a pedido do utilizador (não enviar mensagem de encerramento) */
+  step2: (_name: string, _scenario: number = 4, _ctx?: FollowupContext): string => {
+    return '';
   },
 };
 

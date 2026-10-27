@@ -1,6 +1,6 @@
 // src/backend/workers/followup.worker.ts
 // Worker que executa a cada minuto e dispara follow-ups agendados
-// Fluxo padrão: Step 1 (12h) → Step 2 (24h, encerramento cordial) → fim silencioso
+// Fluxo padrão: Step 1 (configurável) → Step 2 (configurável, inativo por defeito) → fim silencioso
 // Protocolo de Objeções: mensagens específicas B2C/B2B com botões interativos (inalterado)
 // Intervalo de 5 segundos entre envios para números diferentes (evitar spam)
 
@@ -16,10 +16,51 @@ import {
   isConversationEndedInFarewell,
   hasConversationEndedWithBooking,
   formatGreeting,
+  cleanGreetingName,
 } from '../services/followup.service';
+import { FOLLOWUP_SETTINGS_DEFAULTS } from '../api/followup.routes';
 import { WhatsAppService } from '../services/whatsapp.service';
 import { FacebookService } from '../services/facebook.service';
 import { supabaseAdmin }   from '../config/supabase';
+
+/** Cache em memória das configurações por org (refrescado a cada ciclo) */
+const orgSettingsCache = new Map<string, any>();
+
+/** Carregar (ou usar cache de) definições de follow-up da org */
+async function getOrgFollowupSettings(orgId: string): Promise<any> {
+  if (orgSettingsCache.has(orgId)) return orgSettingsCache.get(orgId);
+  try {
+    const { data } = await supabaseAdmin
+      .from('followup_settings')
+      .select('*')
+      .eq('org_id', orgId)
+      .maybeSingle();
+    const settings = { ...FOLLOWUP_SETTINGS_DEFAULTS, ...(data ?? {}) };
+    orgSettingsCache.set(orgId, settings);
+    // TTL de 5 minutos
+    setTimeout(() => orgSettingsCache.delete(orgId), 5 * 60 * 1000);
+    return settings;
+  } catch {
+    return { ...FOLLOWUP_SETTINGS_DEFAULTS };
+  }
+}
+
+/** Verifica se o momento atual está dentro da janela de envio configurada */
+function isWithinSendWindow(settings: any): boolean {
+  const now = new Date();
+  const luandaOffset = 60; // WAT = UTC+1
+  const luandaMs = now.getTime() + (luandaOffset - now.getTimezoneOffset()) * 60000;
+  const luanda = new Date(luandaMs);
+
+  const currentDay = luanda.getDay(); // 0=Dom .. 6=Sab
+  const allowedDays: number[] = Array.isArray(settings.allowed_days) ? settings.allowed_days : [1,2,3,4,5,6];
+  if (!allowedDays.includes(currentDay)) return false;
+
+  const currentHHMM = `${String(luanda.getHours()).padStart(2,'0')}:${String(luanda.getMinutes()).padStart(2,'0')}`;
+  const start = settings.send_window_start || '09:00';
+  const end   = settings.send_window_end   || '20:00';
+  return currentHHMM >= start && currentHHMM <= end;
+}
 
 /** Helper: aguardar N milissegundos */
 function sleep(ms: number): Promise<void> {
@@ -55,8 +96,8 @@ function isObjectionFlow(item: any): boolean {
   }
 }
 
-/** Constrói a mensagem certa para o step atual (fluxo padrão de vendas: 2 steps) */
-async function buildFollowupMessage(item: any): Promise<string> {
+/** Constrói a mensagem certa para o step atual, respeitando configurações da org */
+async function buildFollowupMessage(item: any, settings: any): Promise<string> {
   const step     = item.followup_step ?? 1;
   const name     = item.customer_name || '';
   const scenario = await resolveScenario(item);
@@ -92,9 +133,34 @@ async function buildFollowupMessage(item: any): Promise<string> {
     return `${greeting} Esperamos que tenha corrido tudo bem com a sua consultoria na ${orgName} (${subject}). 😊\n\nGostaríamos muito de saber: como foi o atendimento? A sua avaliação e feedback são muito importantes para nós! ⭐`;
   }
 
-  // Step 1: retoma leve | Step 2: encerramento cordial (defaulta para step2 se step > 2)
-  if (step === 1) return FOLLOWUP_MESSAGES.step1(name, scenario, context);
-  return FOLLOWUP_MESSAGES.step2(name, scenario, context);
+  // Step 1: verificar se está ativo e se existe mensagem personalizada
+  if (step === 1) {
+    if (settings.step1_enabled === false) return ''; // step desativado
+    if (settings.step1_message && settings.step1_message.trim()) {
+      // Substituir variáveis na mensagem personalizada
+      const firstName = cleanGreetingName(name);
+      return settings.step1_message
+        .replace(/\{nome\}/gi, firstName || 'Cliente')
+        .replace(/\{servico\}/gi, service)
+        .replace(/\{empresa\}/gi, orgName);
+    }
+    return FOLLOWUP_MESSAGES.step1(name, scenario, context);
+  }
+
+  // Step 2: verificar se está ativo e se existe mensagem personalizada
+  if (step === 2) {
+    if (settings.step2_enabled === false) return ''; // step desativado
+    if (settings.step2_message && settings.step2_message.trim()) {
+      const firstName = cleanGreetingName(name);
+      return settings.step2_message
+        .replace(/\{nome\}/gi, firstName || 'Cliente')
+        .replace(/\{servico\}/gi, service)
+        .replace(/\{empresa\}/gi, orgName);
+    }
+    return FOLLOWUP_MESSAGES.step2(name, scenario, context);
+  }
+
+  return '';
 }
 
 /** Constrói a mensagem e botões para follow-ups de objeção (B2C/B2B) */
@@ -142,8 +208,23 @@ async function runFollowups() {
 
     for (const item of due) {
       try {
-        // ── 0. Identificar se é fluxo de objeção ou padrão ────────────────
+        // ── 0. Carregar definições da org para este follow-up ─────────────
+        const orgSettings = await getOrgFollowupSettings(item.org_id);
+
+        // Se os follow-ups estão globalmente desativados para a org, cancelar
+        if (orgSettings.enabled === false) {
+          console.log(`[FOLLOWUP] 🚫 Follow-ups desativados para a org ${item.org_id}. Cancelando ${item.id}.`);
+          await FollowupService.setStatus(item.id, 'cancelled');
+          continue;
+        }
+
+        // ── 0b. Verificar janela de envio (apenas fluxo padrão) ───────────
         const objectionFlow = isObjectionFlow(item);
+        if (!objectionFlow && !isWithinSendWindow(orgSettings)) {
+          // Não cancelar — reagendar para dentro da janela automaticamente
+          console.log(`[FOLLOWUP] ⏰ Fora da janela de envio (${orgSettings.send_window_start}–${orgSettings.send_window_end}). Follow-up ${item.id} adiado.`);
+          continue;
+        }
 
         // ── 1. Verificar se o cliente respondeu depois do momento agendado ──
         const replied = await FollowupService.clientRepliedAfter(
@@ -364,8 +445,17 @@ async function runFollowups() {
         // ═══════════════════════════════════════════════════════════════════
         // ── FLUXO PADRÃO DE VENDAS (steps 1-5 com mensagens fixas) ────────
         // ═══════════════════════════════════════════════════════════════════
-        const message = await buildFollowupMessage(item);
+        const message = await buildFollowupMessage(item, orgSettings);
         const currentStep = item.followup_step ?? 1;
+
+        // ── Step desativado (mensagem vazia) → cancelar silenciosamente ─────
+        if (!message || message.trim() === '') {
+          console.log(`[FOLLOWUP] ⏭ Step ${currentStep} para ${item.customer_phone} desativado (mensagem vazia). Cancelando silenciosamente.`);
+          await FollowupService.setStatus(item.id, 'cancelled');
+          await FollowupService.cancelPendingForPhone(item.org_id, item.customer_phone);
+          await sleep(5000);
+          continue;
+        }
 
         console.log(`[FOLLOWUP] Enviando step ${currentStep} para ${item.customer_phone} (${item.platform}): "${message.substring(0, 60)}..."`);
 
