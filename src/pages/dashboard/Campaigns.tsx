@@ -122,6 +122,18 @@ export default function Campaigns() {
     if (activeTab === "contacts") fetchContacts();
   }, [activeTab]);
 
+  // Auto-refresh a cada 4s enquanto houver campanhas ativas em envio
+  useEffect(() => {
+    const hasActiveSending = campaigns.some(c => c.status === "SENDING");
+    if (!hasActiveSending) return;
+
+    const interval = setInterval(() => {
+      fetchCampaigns();
+    }, 4000);
+
+    return () => clearInterval(interval);
+  }, [campaigns]);
+
   const updateAudiencePreview = async (audience: string, filters: string, contactIds: string[]) => {
     setIsEstimating(true);
     try {
@@ -289,6 +301,8 @@ export default function Campaigns() {
 
   // ─── Campaign status ──────────────────────────────────────────────────────────
   const handleCampaignStatus = async (campaignId: string, status: string) => {
+    // Atualização otimista imediata na interface
+    setCampaigns(prev => prev.map(c => c.id === campaignId ? { ...c, status } : c));
     try {
       const res = await fetch(`/api/campaigns/${campaignId}/status`, {
         method: "PATCH",
@@ -296,10 +310,11 @@ export default function Campaigns() {
         body: JSON.stringify({ status })
       });
       if (!res.ok) throw new Error("Erro ao alterar status");
-      toast.success(`Campanha ${status === "PAUSED" ? "pausada" : status === "CANCELLED" ? "cancelada" : "retomada"}.`);
-      fetchCampaigns();
+      toast.success(`Campanha ${status === "PAUSED" ? "pausada com sucesso" : status === "CANCELLED" ? "cancelada" : "retomada"}.`);
+      setTimeout(fetchCampaigns, 600);
     } catch (e: any) {
-      toast.error(e.message);
+      toast.error(e.message || "Erro ao alterar status da campanha.");
+      fetchCampaigns();
     }
   };
 
@@ -753,18 +768,38 @@ export default function Campaigns() {
                           </>
                         )}
                         {camp.status === "SENDING" && (
-                          <Button variant="outline" size="icon" title="Pausar" onClick={() => handleCampaignStatus(camp.id, "PAUSED")}>
-                            <PauseCircle className="w-4 h-4 text-amber-600" />
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            title="Pausar Envio da Campanha"
+                            className="h-8 gap-1 text-xs font-medium text-amber-700 border-amber-300 hover:bg-amber-50"
+                            onClick={() => handleCampaignStatus(camp.id, "PAUSED")}
+                          >
+                            <PauseCircle className="w-3.5 h-3.5 text-amber-600" />
+                            <span>Pausar</span>
                           </Button>
                         )}
                         {camp.status === "PAUSED" && (
-                          <Button variant="outline" size="icon" title="Retomar" onClick={() => handleCampaignStatus(camp.id, "SENDING")}>
-                            <PlayCircle className="w-4 h-4 text-emerald-600" />
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            title="Retomar Envio da Campanha"
+                            className="h-8 gap-1 text-xs font-medium text-emerald-700 border-emerald-300 hover:bg-emerald-50"
+                            onClick={() => handleCampaignStatus(camp.id, "SENDING")}
+                          >
+                            <PlayCircle className="w-3.5 h-3.5 text-emerald-600" />
+                            <span>Retomar</span>
                           </Button>
                         )}
                         {(camp.status === "SENDING" || camp.status === "PAUSED") && (
-                          <Button variant="outline" size="icon" title="Cancelar" onClick={() => handleCampaignStatus(camp.id, "CANCELLED")}>
-                            <X className="w-4 h-4 text-red-500" />
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            title="Cancelar Campanha"
+                            className="h-8 w-8 text-red-500 hover:bg-red-50 hover:text-red-700 border-zinc-200"
+                            onClick={() => handleCampaignStatus(camp.id, "CANCELLED")}
+                          >
+                            <X className="w-4 h-4" />
                           </Button>
                         )}
                         <Button variant="outline" size="icon" title="Ver Relatório" onClick={() => handleOpenReport(camp.id)}>

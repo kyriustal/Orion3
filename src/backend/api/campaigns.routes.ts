@@ -204,8 +204,19 @@ async function resolveCampaignAudience(orgId: string, audience: string, filters:
   return allContacts;
 }
 
+// Controle em memória de campanhas ativas e pausadas
+export const pausedCampaigns = new Set<string>();
+export const runningCampaigns = new Set<string>();
+
 /** Executa o disparo em massa da campanha em segundo plano */
 export async function processCampaign(campaignId: string, orgId: string) {
+  if (runningCampaigns.has(campaignId)) {
+    console.log(`[CAMPAIGN WORKER] Campanha ${campaignId} já está a ser processada.`);
+    return;
+  }
+  runningCampaigns.add(campaignId);
+  pausedCampaigns.delete(campaignId);
+
   try {
     const { data: campaign } = await supabaseAdmin
       .from('campaigns')
@@ -272,25 +283,56 @@ export async function processCampaign(campaignId: string, orgId: string) {
       return;
     }
 
+    // Buscar logs de envios já efetuados (caso a campanha esteja a ser retomada após pausa)
+    const { data: existingLogs } = await supabaseAdmin
+      .from('campaign_logs')
+      .select('customer_phone')
+      .eq('campaign_id', campaignId);
+
+    const processedPhoneSet = new Set((existingLogs || []).map(l => l.customer_phone).filter(Boolean));
+
+    let sentCount = campaign.sent_count || 0;
+    let failedCount = campaign.failed_count || 0;
+
     await supabaseAdmin.from('campaigns').update({
-      total_contacts: targetContacts.length
+      total_contacts: targetContacts.length,
+      status: 'SENDING'
     }).eq('id', campaignId);
 
     const delaySec = campaign.filters?.delay_seconds || 5;
-    let sentCount = 0;
-    let failedCount = 0;
+    let isPaused = false;
+    let isCancelled = false;
 
     for (let i = 0; i < targetContacts.length; i++) {
       const contact = targetContacts[i];
       if (!contact.phone) continue;
+      const normalizedTargetPhone = contact.phone.replace(/\D/g, '');
 
-      // Verificar se a campanha foi pausada ou cancelada
+      // 1. Verificação de interrupção (em memória e no banco)
+      if (pausedCampaigns.has(campaignId)) {
+        isPaused = true;
+        break;
+      }
+
       const { data: currentCamp } = await supabaseAdmin
         .from('campaigns')
         .select('status')
         .eq('id', campaignId)
         .single();
-      if (currentCamp?.status === 'PAUSED' || currentCamp?.status === 'CANCELLED') break;
+
+      if (currentCamp?.status === 'PAUSED') {
+        isPaused = true;
+        break;
+      }
+      if (currentCamp?.status === 'CANCELLED') {
+        isCancelled = true;
+        break;
+      }
+
+      // Se já foi processado nesta campanha (em execução anterior à pausa), pula
+      if (processedPhoneSet.has(normalizedTargetPhone) || processedPhoneSet.has(contact.phone)) {
+        continue;
+      }
 
       // Resolução inteligente e precisa das variáveis para este contato específico
       const { variablesForMeta, renderedText } = WhatsAppService.resolveVariables(
@@ -331,8 +373,6 @@ export async function processCampaign(campaignId: string, orgId: string) {
           renderedText
         );
       }
-
-      const normalizedTargetPhone = contact.phone.replace(/\D/g, '');
 
       if (sentId) {
         sentCount++;
@@ -382,6 +422,8 @@ export async function processCampaign(campaignId: string, orgId: string) {
         failedCount++;
       }
 
+      processedPhoneSet.add(normalizedTargetPhone);
+
       // Gravar log individual por número de telefone para o relatório
       try {
         await supabaseAdmin.from('campaign_logs').insert({
@@ -396,26 +438,62 @@ export async function processCampaign(campaignId: string, orgId: string) {
         console.warn('[CAMPAIGN LOGS] Erro ao gravar log individual:', logErr.message);
       }
 
-      const progress = Math.round(((i + 1) / targetContacts.length) * 100);
+      const totalProcessed = sentCount + failedCount;
+      const progress = Math.min(100, Math.round((totalProcessed / targetContacts.length) * 100));
       await supabaseAdmin.from('campaigns').update({
         progress,
         sent_count: sentCount,
         failed_count: failedCount
       }).eq('id', campaignId);
 
+      // Intervalo entre envios (responsivo a cancelamento/pausa a cada 250ms)
       if (i < targetContacts.length - 1) {
-        await sleep(delaySec * 1000);
+        const totalSleepMs = delaySec * 1000;
+        const stepMs = 250;
+        let waited = 0;
+        while (waited < totalSleepMs) {
+          if (pausedCampaigns.has(campaignId)) {
+            isPaused = true;
+            break;
+          }
+          await sleep(Math.min(stepMs, totalSleepMs - waited));
+          waited += stepMs;
+        }
+        if (isPaused) break;
       }
     }
 
+    if (isPaused) {
+      console.log(`[CAMPAIGN WORKER] ⏸️ Campanha ${campaignId} pausada com sucesso.`);
+      await supabaseAdmin.from('campaigns').update({
+        status: 'PAUSED',
+        updated_at: new Date().toISOString()
+      }).eq('id', campaignId);
+      return;
+    }
+
+    if (isCancelled) {
+      console.log(`[CAMPAIGN WORKER] 🛑 Campanha ${campaignId} cancelada com sucesso.`);
+      await supabaseAdmin.from('campaigns').update({
+        status: 'CANCELLED',
+        updated_at: new Date().toISOString()
+      }).eq('id', campaignId);
+      return;
+    }
+
+    // Apenas se concluiu o envio de todos os contatos
     await supabaseAdmin.from('campaigns').update({
       status: 'COMPLETED',
-      progress: 100
+      progress: 100,
+      updated_at: new Date().toISOString()
     }).eq('id', campaignId);
 
   } catch (err: any) {
     console.error(`[CAMPAIGN WORKER] Erro ao processar campanha ${campaignId}:`, err.message);
     await supabaseAdmin.from('campaigns').update({ status: 'FAILED' }).eq('id', campaignId);
+  } finally {
+    runningCampaigns.delete(campaignId);
+    pausedCampaigns.delete(campaignId);
   }
 }
 
@@ -692,6 +770,12 @@ router.patch('/:id/status', requireAuth, async (req: any, res) => {
       return res.status(400).json({ error: 'Status inválido.' });
     }
 
+    if (status === 'PAUSED' || status === 'CANCELLED') {
+      pausedCampaigns.add(id);
+    } else if (status === 'SENDING') {
+      pausedCampaigns.delete(id);
+    }
+
     const { error } = await supabaseAdmin
       .from('campaigns')
       .update({ 
@@ -703,11 +787,13 @@ router.patch('/:id/status', requireAuth, async (req: any, res) => {
 
     if (error) throw error;
 
-    // Se o usuário optou por disparar imediatamente uma campanha agendada ou pausada
+    // Se o usuário optou por disparar imediatamente uma campanha agendada ou retomar pausada
     if (status === 'SENDING') {
-      processCampaign(id, orgId).catch(err => {
-        console.error(`[CAMPAIGN WORKER] Falha ao iniciar/retomar ${id}:`, err.message);
-      });
+      if (!runningCampaigns.has(id)) {
+        processCampaign(id, orgId).catch(err => {
+          console.error(`[CAMPAIGN WORKER] Falha ao iniciar/retomar ${id}:`, err.message);
+        });
+      }
     }
 
     res.json({ success: true, status });
@@ -722,6 +808,8 @@ router.post('/:id/trigger', requireAuth, async (req: any, res) => {
     const orgId = req.user!.orgId;
     const { id } = req.params;
 
+    pausedCampaigns.delete(id);
+
     const { error } = await supabaseAdmin
       .from('campaigns')
       .update({ 
@@ -733,9 +821,11 @@ router.post('/:id/trigger', requireAuth, async (req: any, res) => {
 
     if (error) throw error;
 
-    processCampaign(id, orgId).catch(err => {
-      console.error(`[CAMPAIGN WORKER] Falha ao disparar ${id}:`, err.message);
-    });
+    if (!runningCampaigns.has(id)) {
+      processCampaign(id, orgId).catch(err => {
+        console.error(`[CAMPAIGN WORKER] Falha ao disparar ${id}:`, err.message);
+      });
+    }
 
     res.json({ success: true, message: 'Disparo da campanha iniciado com sucesso!' });
   } catch (error: any) {
