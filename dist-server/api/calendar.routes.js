@@ -1,0 +1,366 @@
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const axios_1 = __importDefault(require("axios"));
+const auth_1 = require("../middleware/auth");
+const supabase_1 = require("../config/supabase");
+const router = (0, express_1.Router)();
+// Helper para descodificar o parâmetro state com suporte a JSON/base64 e fallback
+function parseOAuthState(stateRaw) {
+    let targetOrgId = '';
+    let clientRedirectUri = '';
+    if (stateRaw && typeof stateRaw === 'string') {
+        try {
+            const decoded = JSON.parse(Buffer.from(decodeURIComponent(stateRaw), 'base64').toString('utf8'));
+            if (decoded.id)
+                targetOrgId = decoded.id;
+            if (decoded.redirectUri)
+                clientRedirectUri = decoded.redirectUri;
+        }
+        catch (_) {
+            try {
+                const decodedPlain = JSON.parse(decodeURIComponent(stateRaw));
+                if (decodedPlain.id)
+                    targetOrgId = decodedPlain.id;
+                if (decodedPlain.redirectUri)
+                    clientRedirectUri = decodedPlain.redirectUri;
+            }
+            catch (__) {
+                targetOrgId = stateRaw;
+            }
+        }
+    }
+    return { targetOrgId, clientRedirectUri };
+}
+// ─── GET /api/settings/calendar/google/auth-url ──────────────────────────────
+// Gera o link seguro de autorização OAuth2 com as credenciais do sistema (.env)
+router.get('/google/auth-url', auth_1.requireAuth, async (req, res) => {
+    try {
+        const clientId = (process.env.GOOGLE_CLIENT_ID || '').trim();
+        if (!clientId) {
+            return res.status(400).json({
+                error: 'O administrador ainda não configurou o GOOGLE_CLIENT_ID no ficheiro .env do servidor.'
+            });
+        }
+        const orgId = req.user?.orgId || req.user?.id;
+        if (!orgId) {
+            return res.status(400).json({ error: 'ID de utilizador/organização não identificado.' });
+        }
+        const rawProto = req.headers['x-forwarded-proto']?.split(',')[0].trim();
+        const protocol = rawProto || req.protocol || 'https';
+        const host = req.headers['x-forwarded-host']?.split(',')[0].trim() || req.get('host');
+        const redirectUri = `${protocol}://${host}/api/settings/calendar/google/callback`;
+        const stateObj = { id: orgId, redirectUri };
+        const state = encodeURIComponent(Buffer.from(JSON.stringify(stateObj)).toString('base64'));
+        const params = new URLSearchParams({
+            client_id: clientId,
+            redirect_uri: redirectUri,
+            response_type: 'code',
+            scope: 'https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/calendar.events',
+            access_type: 'offline',
+            prompt: 'consent',
+            include_granted_scopes: 'true',
+            state: state
+        });
+        const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
+        res.json({ success: true, authUrl, redirectUri });
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+// ─── GET /api/settings/calendar/google/callback ──────────────────────────────
+// Recebe o authorization code da Google após o utilizador autorizar
+router.get('/google/callback', async (req, res) => {
+    const { code, error, state, ping } = req.query;
+    if (ping === 'true' || req.headers['accept']?.includes('application/json')) {
+        return res.json({ status: 'ok', service: 'Google Calendar OAuth Callback', ready: true });
+    }
+    if (error) {
+        console.error('[GOOGLE CALENDAR] Erro OAuth:', error);
+        return res.redirect('/dashboard/settings?tab=calendar&error=google_denied');
+    }
+    if (!code) {
+        return res.redirect('/dashboard/settings?tab=calendar&error=no_code');
+    }
+    let { targetOrgId, clientRedirectUri } = parseOAuthState(state);
+    try {
+        const clientId = (process.env.GOOGLE_CLIENT_ID || '').trim();
+        const clientSecret = (process.env.GOOGLE_CLIENT_SECRET || '').trim();
+        if (!clientId || !clientSecret) {
+            console.error('[GOOGLE CALENDAR] GOOGLE_CLIENT_ID ou GOOGLE_CLIENT_SECRET não configurados no .env');
+            return res.redirect('/dashboard/settings?tab=calendar&error=credentials_missing');
+        }
+        const rawProto = req.headers['x-forwarded-proto']?.split(',')[0].trim();
+        const protocol = rawProto || req.protocol || 'https';
+        const host = req.headers['x-forwarded-host']?.split(',')[0].trim() || req.get('host');
+        const computedRedirectUri = `${protocol}://${host}/api/settings/calendar/google/callback`;
+        const redirectUri = clientRedirectUri || computedRedirectUri;
+        // Trocar code por tokens com o Google
+        const tokenRes = await axios_1.default.post('https://oauth2.googleapis.com/token', new URLSearchParams({
+            code: code,
+            client_id: clientId,
+            client_secret: clientSecret,
+            redirect_uri: redirectUri,
+            grant_type: 'authorization_code'
+        }).toString(), {
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded'
+            }
+        });
+        const { refresh_token, access_token } = tokenRes.data;
+        if (!refresh_token) {
+            console.warn('[GOOGLE CALENDAR] Nenhum refresh_token retornado (já autorizado anteriormente). Mantendo tokens existentes.');
+        }
+        // Gravar tokens na base de dados para o utilizador/organização específico
+        const updateData = {
+            calendar_provider: 'google'
+        };
+        if (refresh_token) {
+            updateData.google_refresh_token = refresh_token;
+            updateData.google_user_refresh_token = refresh_token;
+        }
+        if (targetOrgId) {
+            const { error: updateErr } = await supabase_1.supabaseAdmin
+                .from('organizations')
+                .update(updateData)
+                .eq('id', targetOrgId);
+            if (updateErr) {
+                console.error('[GOOGLE CALENDAR] Erro ao gravar token no Supabase:', updateErr.message);
+                return res.redirect(`/dashboard/settings?tab=calendar&error=database_error&details=${encodeURIComponent(updateErr.message)}`);
+            }
+        }
+        return res.redirect('/dashboard/settings?tab=calendar&success=google_connected');
+    }
+    catch (err) {
+        const googleErr = err.response?.data?.error || '';
+        const googleErrDesc = err.response?.data?.error_description || err.message || '';
+        console.error('[GOOGLE CALENDAR] Erro ao trocar token:', err.response?.data || err.message);
+        let errorParam = 'token_exchange_failed';
+        if (googleErr === 'invalid_client') {
+            errorParam = 'invalid_client_secret';
+        }
+        else if (googleErr === 'redirect_uri_mismatch') {
+            errorParam = 'redirect_uri_mismatch';
+        }
+        else if (googleErr === 'invalid_grant') {
+            errorParam = 'invalid_grant';
+        }
+        else if (googleErr === 'invalid_request' || googleErrDesc.toLowerCase().includes('bad request')) {
+            errorParam = 'invalid_request';
+        }
+        else if (googleErr === 'unauthorized_client') {
+            errorParam = 'unauthorized_client';
+        }
+        const encodedDetails = encodeURIComponent(googleErrDesc || googleErr || 'Erro desconhecido');
+        return res.redirect(`/dashboard/settings?tab=calendar&error=${errorParam}&details=${encodedDetails}`);
+    }
+});
+// ─── GET /api/settings/calendar/microsoft/callback ───────────────────────────
+// Recebe o authorization code da Microsoft após o utilizador autorizar
+router.get('/microsoft/callback', async (req, res) => {
+    const { code, error, state } = req.query;
+    if (error) {
+        console.error('[MICROSOFT CALENDAR] Erro OAuth:', error);
+        return res.redirect('/dashboard/settings?tab=calendar&error=microsoft_denied');
+    }
+    if (!code) {
+        return res.redirect('/dashboard/settings?tab=calendar&error=no_code');
+    }
+    let { targetOrgId, clientRedirectUri } = parseOAuthState(state);
+    try {
+        // 1. Obter credenciais do cliente especificamente para esta organização
+        let org = null;
+        if (targetOrgId) {
+            const { data } = await supabase_1.supabaseAdmin
+                .from('organizations')
+                .select('id, microsoft_client_id, microsoft_client_secret')
+                .eq('id', targetOrgId)
+                .maybeSingle();
+            org = data;
+        }
+        let clientId = (org?.microsoft_client_id || '').trim();
+        let clientSecret = (org?.microsoft_client_secret || '').trim();
+        if (!clientId || !clientSecret) {
+            clientId = (process.env.MICROSOFT_CLIENT_ID || '').trim();
+            clientSecret = (process.env.MICROSOFT_CLIENT_SECRET || '').trim();
+        }
+        if (!clientId || !clientSecret) {
+            console.error('[MICROSOFT CALENDAR] Credenciais Microsoft não encontradas para a organização:', targetOrgId);
+            return res.redirect('/dashboard/settings?tab=calendar&error=credentials_missing');
+        }
+        const rawProto = req.headers['x-forwarded-proto']?.split(',')[0].trim();
+        const protocol = rawProto || req.protocol || 'https';
+        const host = req.headers['x-forwarded-host']?.split(',')[0].trim() || req.get('host');
+        const computedRedirectUri = `${protocol}://${host}/api/settings/calendar/microsoft/callback`;
+        const redirectUri = clientRedirectUri || computedRedirectUri;
+        // 2. Trocar code por tokens
+        const tokenRes = await axios_1.default.post('https://login.microsoftonline.com/common/oauth2/v2.0/token', new URLSearchParams({
+            code: code,
+            client_id: clientId,
+            client_secret: clientSecret,
+            redirect_uri: redirectUri,
+            grant_type: 'authorization_code',
+            scope: 'Calendars.ReadWrite'
+        }).toString(), {
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded'
+            }
+        });
+        const { refresh_token } = tokenRes.data;
+        // 3. Gravar na base de dados
+        const updateData = {};
+        if (refresh_token) {
+            updateData.microsoft_refresh_token = refresh_token;
+        }
+        updateData.calendar_provider = 'microsoft';
+        const { error: updateErr } = await supabase_1.supabaseAdmin
+            .from('organizations')
+            .update(updateData)
+            .eq('id', targetOrgId || org?.id);
+        if (updateErr)
+            throw updateErr;
+        return res.redirect('/dashboard/settings?tab=calendar&success=microsoft_connected');
+    }
+    catch (err) {
+        const msErr = err.response?.data?.error || '';
+        const msErrDesc = err.response?.data?.error_description || err.message || '';
+        console.error('[MICROSOFT CALENDAR] Erro ao trocar token:', err.response?.data || err.message);
+        let errorParam = 'token_exchange_failed';
+        if (msErr === 'invalid_client') {
+            errorParam = 'invalid_client_secret';
+        }
+        else if (msErr === 'redirect_uri_mismatch') {
+            errorParam = 'redirect_uri_mismatch';
+        }
+        else if (msErr === 'invalid_grant') {
+            errorParam = 'invalid_grant';
+        }
+        const encodedDetails = encodeURIComponent(msErrDesc);
+        return res.redirect(`/dashboard/settings?tab=calendar&error=${errorParam}&details=${encodedDetails}`);
+    }
+});
+const calendar_service_1 = require("../services/calendar.service");
+// ─── POST /api/settings/calendar/google/test ─────────────────────────────────
+// Testa a conexão ativa com o Google Calendar
+router.post('/google/test', auth_1.requireAuth, async (req, res) => {
+    try {
+        const orgId = req.user?.orgId || req.user?.id;
+        if (!orgId) {
+            return res.status(400).json({ error: 'ID da organização não identificado.' });
+        }
+        const { google_client_id, google_client_secret, google_user_refresh_token } = req.body || {};
+        const customCreds = (google_client_id || google_client_secret || google_user_refresh_token) ? {
+            clientId: google_client_id,
+            clientSecret: google_client_secret,
+            refreshToken: google_user_refresh_token,
+        } : undefined;
+        const result = await (0, calendar_service_1.testGoogleCalendarConnection)(orgId, customCreds);
+        if (!result.success) {
+            return res.status(400).json({ error: result.error || 'Falha no teste de conexão com o Google Calendar.' });
+        }
+        res.json({
+            success: true,
+            message: 'Conexão com o Google Calendar validada com sucesso!',
+            calendar: result.calendar,
+        });
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+// ─── POST /api/settings/calendar/google/disconnect ───────────────────────────
+// Desconecta o Google Calendar da organização
+router.post('/google/disconnect', auth_1.requireAuth, async (req, res) => {
+    try {
+        const orgId = req.user?.orgId || req.user?.id;
+        if (!orgId) {
+            return res.status(400).json({ error: 'ID da organização não identificado.' });
+        }
+        const { error } = await supabase_1.supabaseAdmin
+            .from('organizations')
+            .update({
+            google_refresh_token: null,
+            google_user_refresh_token: null,
+            calendar_provider: 'none',
+        })
+            .eq('id', orgId);
+        if (error)
+            throw error;
+        res.json({ success: true, message: 'Google Calendar desconectado com sucesso.' });
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+// ─── GET /api/settings/calendar/status ───────────────────────────────────────
+// Verifica o estado da ligação do calendário para a organização actual
+router.get('/status', auth_1.requireAuth, async (req, res) => {
+    try {
+        const orgId = req.user?.orgId || req.user?.id;
+        const { data, error } = await supabase_1.supabaseAdmin
+            .from('organizations')
+            .select('calendar_provider, google_refresh_token, google_user_refresh_token, google_direct_url, microsoft_refresh_token, google_client_id, google_client_secret, microsoft_client_id, microsoft_client_secret')
+            .eq('id', orgId)
+            .maybeSingle();
+        const hasGoogleSystem = !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
+        const hasMicrosoftSystem = !!(process.env.MICROSOFT_CLIENT_ID && process.env.MICROSOFT_CLIENT_SECRET);
+        if (error) {
+            console.warn('[CALENDAR STATUS] Aviso ao consultar colunas de calendário:', error.message);
+            return res.json({
+                provider: 'none',
+                google_connected: false,
+                microsoft_connected: false,
+                google_direct_url: '',
+                google_user_refresh_token: '',
+                has_google_credentials: hasGoogleSystem,
+                has_microsoft_credentials: hasMicrosoftSystem,
+                system_google_client_id: process.env.GOOGLE_CLIENT_ID || '',
+                system_microsoft_client_id: process.env.MICROSOFT_CLIENT_ID || '',
+                has_saved_google_secret: !!process.env.GOOGLE_CLIENT_SECRET,
+                has_saved_microsoft_secret: !!process.env.MICROSOFT_CLIENT_SECRET,
+            });
+        }
+        const hasGoogleOrg = !!(data?.google_client_id && data?.google_client_secret);
+        const hasMicrosoftOrg = !!(data?.microsoft_client_id && data?.microsoft_client_secret);
+        const hasGoogleToken = !!(data?.google_refresh_token || data?.google_user_refresh_token);
+        let googleValid = false;
+        let googleTokenError = null;
+        if (hasGoogleToken && orgId) {
+            try {
+                const tokenCheck = await (0, calendar_service_1.getGoogleAccessToken)(orgId);
+                if (tokenCheck.accessToken) {
+                    googleValid = true;
+                }
+                else {
+                    googleTokenError = tokenCheck.error || 'Token expirado ou inválido';
+                }
+            }
+            catch (checkErr) {
+                googleTokenError = checkErr.message;
+            }
+        }
+        res.json({
+            provider: data?.calendar_provider || 'none',
+            google_connected: hasGoogleToken,
+            google_valid: googleValid,
+            google_token_error: googleTokenError,
+            microsoft_connected: !!(data?.microsoft_refresh_token),
+            google_direct_url: data?.google_direct_url || '',
+            google_user_refresh_token: data?.google_user_refresh_token || data?.google_refresh_token || '',
+            has_google_credentials: hasGoogleOrg || hasGoogleSystem,
+            has_microsoft_credentials: hasMicrosoftOrg || hasMicrosoftSystem,
+            system_google_client_id: process.env.GOOGLE_CLIENT_ID || '',
+            system_microsoft_client_id: process.env.MICROSOFT_CLIENT_ID || '',
+            has_saved_google_secret: !!data?.google_client_secret || !!process.env.GOOGLE_CLIENT_SECRET,
+            has_saved_microsoft_secret: !!data?.microsoft_client_secret || !!process.env.MICROSOFT_CLIENT_SECRET,
+        });
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+exports.default = router;

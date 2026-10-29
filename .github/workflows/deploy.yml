@@ -31,6 +31,7 @@ jobs:
           touch tmp/restart.txt
 
       - name: Deploy via FTP
+        if: ${{ secrets.FTP_SERVER != '' }}
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
           server: ${{ secrets.FTP_SERVER }}
@@ -38,7 +39,6 @@ jobs:
           password: ${{ secrets.FTP_PASSWORD }}
           local-dir: ./
           server-dir: /public_html/
-          git-ignore: false
           security: loose
           exclude: |
             **/.git*

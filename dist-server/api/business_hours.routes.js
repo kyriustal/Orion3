@@ -1,0 +1,109 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.DEFAULT_BUSINESS_HOURS = void 0;
+// src/backend/api/business_hours.routes.ts
+const express_1 = require("express");
+const auth_1 = require("../middleware/auth");
+const supabase_1 = require("../config/supabase");
+const router = (0, express_1.Router)();
+exports.DEFAULT_BUSINESS_HOURS = [
+    { day_of_week: 0, is_open: false, open_time: '08:00', close_time: '12:00' }, // Domingo
+    { day_of_week: 1, is_open: true, open_time: '08:00', close_time: '18:00' }, // Segunda
+    { day_of_week: 2, is_open: true, open_time: '08:00', close_time: '18:00' }, // Terça
+    { day_of_week: 3, is_open: true, open_time: '08:00', close_time: '18:00' }, // Quarta
+    { day_of_week: 4, is_open: true, open_time: '08:00', close_time: '18:00' }, // Quinta
+    { day_of_week: 5, is_open: true, open_time: '08:00', close_time: '18:00' }, // Sexta
+    { day_of_week: 6, is_open: true, open_time: '08:00', close_time: '13:00' }, // Sábado
+];
+/**
+ * GET /api/settings/business-hours
+ * Devolve os horários configurados da organização (7 dias da semana).
+ */
+router.get('/settings/business-hours', auth_1.requireAuth, async (req, res) => {
+    try {
+        const orgId = req.user?.orgId || req.user?.id;
+        if (!orgId)
+            return res.status(401).json({ error: 'Organização não identificada.' });
+        const { data, error } = await supabase_1.supabaseAdmin
+            .from('business_hours')
+            .select('day_of_week, is_open, open_time, close_time')
+            .eq('org_id', orgId)
+            .order('day_of_week', { ascending: true });
+        if (error && error.code !== 'PGRST116') {
+            console.warn('[BusinessHours] Aviso ao ler business_hours:', error.message);
+        }
+        // Se já existirem dados no banco, mesclar com o padrão para garantir os 7 dias completos
+        const map = new Map();
+        exports.DEFAULT_BUSINESS_HOURS.forEach(d => map.set(d.day_of_week, { ...d }));
+        if (data && data.length > 0) {
+            data.forEach(item => {
+                map.set(item.day_of_week, {
+                    day_of_week: item.day_of_week,
+                    is_open: !!item.is_open,
+                    open_time: item.open_time ? item.open_time.substring(0, 5) : '08:00',
+                    close_time: item.close_time ? item.close_time.substring(0, 5) : '18:00',
+                });
+            });
+        }
+        const { data: org } = await supabase_1.supabaseAdmin
+            .from('organizations')
+            .select('opens_on_holidays')
+            .eq('id', orgId)
+            .maybeSingle();
+        const result = Array.from(map.values()).sort((a, b) => a.day_of_week - b.day_of_week);
+        res.json({
+            days: result,
+            opens_on_holidays: Boolean(org?.opens_on_holidays),
+        });
+    }
+    catch (err) {
+        console.error('[BusinessHours GET] Erro:', err.message);
+        res.status(500).json({ error: 'Erro ao carregar horários de funcionamento', details: err.message });
+    }
+});
+/**
+ * PUT /api/settings/business-hours
+ * Guarda ou actualiza os horários de funcionamento para todos os dias e a preferência de feriados.
+ */
+router.put('/settings/business-hours', auth_1.requireAuth, async (req, res) => {
+    try {
+        const orgId = req.user?.orgId || req.user?.id;
+        if (!orgId)
+            return res.status(401).json({ error: 'Organização não identificada.' });
+        // Actualizar opens_on_holidays se fornecido
+        if (req.body.opens_on_holidays !== undefined) {
+            const { error: orgErr } = await supabase_1.supabaseAdmin
+                .from('organizations')
+                .update({ opens_on_holidays: Boolean(req.body.opens_on_holidays) })
+                .eq('id', orgId);
+            if (orgErr) {
+                console.warn('[BusinessHours PUT] Aviso ao atualizar opens_on_holidays:', orgErr.message);
+            }
+        }
+        const days = req.body.days || (Array.isArray(req.body) ? req.body : null);
+        if (days && Array.isArray(days) && days.length > 0) {
+            const rows = days.map(d => ({
+                org_id: orgId,
+                day_of_week: d.day_of_week,
+                is_open: Boolean(d.is_open),
+                open_time: d.open_time ? (d.open_time.length === 5 ? `${d.open_time}:00` : d.open_time) : '08:00:00',
+                close_time: d.close_time ? (d.close_time.length === 5 ? `${d.close_time}:00` : d.close_time) : '18:00:00',
+                updated_at: new Date().toISOString(),
+            }));
+            const { error } = await supabase_1.supabaseAdmin
+                .from('business_hours')
+                .upsert(rows, { onConflict: 'org_id,day_of_week' });
+            if (error) {
+                console.error('[BusinessHours PUT] Erro no upsert:', error.message);
+                throw error;
+            }
+        }
+        console.log(`[BusinessHours] ✅ Horários de funcionamento e feriados atualizados para a org ${orgId}`);
+        res.json({ success: true, message: 'Horários atualizados com sucesso.' });
+    }
+    catch (err) {
+        console.error('[BusinessHours PUT] Erro:', err.message);
+        res.status(500).json({ error: 'Erro ao guardar horários de funcionamento', details: err.message });
+    }
+});
+exports.default = router;

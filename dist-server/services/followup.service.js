@@ -1,0 +1,1084 @@
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.FollowupService = exports.OBJECTION_PROTOCOLS = exports.FOLLOWUP_MESSAGES = void 0;
+exports.parseDelay = parseDelay;
+exports.cleanGreetingName = cleanGreetingName;
+exports.formatGreeting = formatGreeting;
+exports.fillPlaceholders = fillPlaceholders;
+exports.formatFollowupWithButtons = formatFollowupWithButtons;
+exports.detectObjectionText = detectObjectionText;
+exports.detectObjection = detectObjection;
+exports.getObjectionScheduledDate = getObjectionScheduledDate;
+exports.isFarewellText = isFarewellText;
+exports.hasConversationEndedWithBooking = hasConversationEndedWithBooking;
+exports.isConversationEndedInFarewell = isConversationEndedInFarewell;
+exports.detectFarewell = detectFarewell;
+exports.detectScenario = detectScenario;
+exports.inferServiceAndBenefit = inferServiceAndBenefit;
+exports.randomScheduledTime = randomScheduledTime;
+// src/backend/services/followup.service.ts
+const supabase_1 = require("../config/supabase");
+// ─── Helper: converte "2h" / "3d" / "1w" / "2m" numa data futura ─────────────
+function parseDelay(delay) {
+    const value = parseInt(delay.slice(0, -1), 10);
+    const unit = delay.slice(-1).toLowerCase();
+    if (isNaN(value) || value <= 0)
+        throw new Error(`Delay inválido: "${delay}"`);
+    const date = new Date();
+    switch (unit) {
+        case 'h':
+            date.setHours(date.getHours() + value);
+            break;
+        case 'd':
+            date.setDate(date.getDate() + value);
+            break;
+        case 'w':
+            date.setDate(date.getDate() + value * 7);
+            break;
+        case 'm':
+            date.setMonth(date.getMonth() + value);
+            break;
+        default: throw new Error(`Unidade desconhecida: "${unit}" (use h, d, w, m)`);
+    }
+    return date;
+}
+/** Limpa o nome de bandeiras/emojis e extrai apenas o primeiro nome com caracteres alfabéticos válidos */
+function cleanGreetingName(name) {
+    if (!name)
+        return '';
+    // Remover bandeiras de países (unicode regional indicator symbols)
+    let cleaned = name.replace(/[\uD83C][\uDDE6-\uDDFF]/g, '');
+    // Remover a maioria dos emojis e símbolos unicode
+    cleaned = cleaned.replace(/[\u{1F300}-\u{1F9FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]/gu, '');
+    // Manter apenas letras unicode, espaços e hífens
+    cleaned = cleaned.replace(/[^\p{L}\s-]/gu, '').trim();
+    if (!cleaned)
+        return '';
+    const parts = cleaned.split(/\s+/).filter(p => /\p{L}/u.test(p));
+    if (parts.length === 0)
+        return '';
+    if (parts.length > 1 && /^(dr|dra|sr|sra|mr|mrs|ms)\.?$/i.test(parts[0])) {
+        return parts[1];
+    }
+    return parts[0];
+}
+/** Formata a saudação limpando caracteres inválidos (como emojis/bandeiras isolados) */
+function formatGreeting(name) {
+    const clean = cleanGreetingName(name);
+    return clean ? `Olá, ${clean}!` : 'Olá!';
+}
+// ─── Mensagens do protocolo padrão de follow-up (condicionados ao contexto) ───
+// Fluxo padrão: Step 1 (12h) → Step 2 (24h, encerramento cordial) → fim silencioso
+exports.FOLLOWUP_MESSAGES = {
+    /** Step 1 — após 12h sem resposta (retoma leve, contextualizada por cenário) */
+    step1: (name, scenario = 4, ctx) => {
+        const n = formatGreeting(name);
+        const s = ctx?.service || 'atendimento';
+        switch (scenario) {
+            case 1: // 📄 Cenário 1: Aguardava documentos / fotos / dados
+                return `${n} Sei que a rotina é corrida, por isso passo só para saber se conseguiu ver a minha última mensagem sobre os documentos para o seu ${s} ou se prefere que conversemos noutro momento. Abraço!`;
+            case 2: // 💰 Cenário 2: Enviou orçamento / valores
+                return `${n} Sei que a rotina é corrida, por isso passo só para saber se conseguiu analisar a proposta e os valores do seu ${s} ou se prefere que conversemos noutro momento. Abraço!`;
+            case 3: // 📅 Cenário 3: Faltava agendar consultoria
+                return `${n} Sei que a rotina é corrida, por isso passo só para saber se conseguiu ver as opções de horário para agendarmos o seu atendimento ou se prefere conversar noutro momento. Abraço!`;
+            default: // 🌍 Cenário 4: Abordagem geral
+                return `${n} Sei que a rotina é corrida, por isso passo só para saber se conseguiu ver a minha última mensagem sobre o seu ${s} ou se prefere que conversemos noutro momento. Abraço!`;
+        }
+    },
+    /** Step 2 — Desativado a pedido do utilizador (não enviar mensagem de encerramento) */
+    step2: (_name, _scenario = 4, _ctx) => {
+        return '';
+    },
+};
+exports.OBJECTION_PROTOCOLS = {
+    b2c: {
+        // 1. Objeção: "Vou falar com a esposa/marido" (3 dias depois)
+        spouse: {
+            textTemplate: "Olá, [Nome]! Aqui é o/a [Nome_do_Chatbot]. Passando para saber se conseguiu conversar com o seu par sobre o [Produto/Serviço]. Ficou alguma dúvida em que eu possa ajudar?",
+            buttons: [
+                { id: 'btn_resumo', fullTitle: '📝 Ver resumo da proposta', buttonTitle: '📝 Ver resumo' },
+                { id: 'btn_atendimento', fullTitle: '🗣️ Falar com atendimento', buttonTitle: '🗣️ Falar c/ atendente' },
+                { id: 'btn_decidir', fullTitle: '⏳ Ainda a decidir', buttonTitle: '⏳ Ainda a decidir' },
+            ],
+        },
+        // 2. Objeção: "Vou me preparar melhor" (7 dias depois, 30 dias depois, 3 meses depois)
+        budget_prepare: {
+            textTemplate: "Oi, [Nome]! Tudo bem? Passando para lembrar que o seu plano para [Benefício] continua guardado aqui. Quer uma ajuda para se organizar e dar o próximo passo?",
+            buttons: [
+                { id: 'btn_comecar', fullTitle: '🚀 Quero começar hoje', buttonTitle: '🚀 Começar hoje' },
+                { id: 'btn_como_funciona', fullTitle: '📚 Ver como funciona', buttonTitle: '📚 Como funciona' },
+                { id: 'btn_lembrar', fullTitle: '⏰ Lembrar mais tarde', buttonTitle: '⏰ Lembrar depois' },
+            ],
+        },
+        // 3. Objeção: "Amanhã eu volto" (No final do dia seguinte)
+        tomorrow: {
+            textTemplate: "Olá, [Nome]! Conforme o combinado ontem, passei para saber se quer continuar o seu atendimento.",
+            buttons: [
+                { id: 'btn_continuar', fullTitle: '▶️ Continuar o atendimento', buttonTitle: '▶️ Continuar' },
+                { id: 'btn_agora_nao', fullTitle: '❌ Agora não posso', buttonTitle: '❌ Agora não posso' },
+            ],
+        },
+        partner_director: null,
+    },
+    b2b: {
+        // 1. Objeção: "Vou falar com o sócio/diretoria" (24h depois)
+        partner_director: {
+            textTemplate: "Olá, [Nome]. Tudo bem? Passando para saber se a vossa diretoria conseguiu analisar a proposta do [Serviço]. Como preferem proceder?",
+            buttons: [
+                { id: 'btn_reuniao', fullTitle: '📅 Agendar reunião rápida', buttonTitle: '📅 Agendar reunião' },
+                { id: 'btn_reenviar', fullTitle: '📥 Reenviar proposta em PDF', buttonTitle: '📥 Reenviar proposta' },
+                { id: 'btn_analise', fullTitle: '🕒 Ainda em análise interna', buttonTitle: '🕒 Em análise interna' },
+            ],
+        },
+        // 2. Objeção: "Vou me preparar melhor / Orçamento" (7 dias depois)
+        budget_prepare: {
+            textTemplate: "Olá, [Nome]. Compreendo que o timing financeiro precisa de ser perfeito. Para ajudar no vosso planeamento, quando gostaria de receber um novo contacto?",
+            buttons: [
+                { id: 'btn_15_dias', fullTitle: '🗓️ Daqui a 15 dias', buttonTitle: '🗓️ Daqui a 15 dias' },
+                { id: 'btn_opcoes', fullTitle: '📊 Ver opções flexíveis', buttonTitle: '📊 Opções flexíveis' },
+                { id: 'btn_encerrar', fullTitle: '📨 Encerrar por agora', buttonTitle: '📨 Encerrar agora' },
+            ],
+        },
+        // 3. Objeção: "Amanhã eu volto" (Manhã do dia seguinte)
+        tomorrow: {
+            textTemplate: "Bom dia, [Nome]. Passando para darmos seguimento à contratação do [Serviço/Produto] para a sua empresa. Avançamos?",
+            buttons: [
+                { id: 'btn_avancar', fullTitle: '✅ Sim, vamos avançar', buttonTitle: '✅ Sim, avançar' },
+                { id: 'btn_detalhes', fullTitle: '🛠️ Ajustar detalhes', buttonTitle: '🛠️ Ajustar detalhes' },
+                { id: 'btn_mais_tarde', fullTitle: '⏳ Falar mais tarde', buttonTitle: '⏳ Falar mais tarde' },
+            ],
+        },
+        spouse: null,
+    },
+};
+// ─── Preenchimento Neutro de Variáveis e Placeholders ─────────────────────────
+// Placeholders suportados nos templates de campanhas e objeções:
+//   [Nome]              → Primeiro nome do cliente (limpo de emojis/bandeiras)
+//   [Nome_do_Chatbot]   → Nome do chatbot / assistente da organização
+//   [Produto/Serviço]   → Nome do produto ou serviço principal
+//   [Serviço/Produto]   → Alias de [Produto/Serviço] (ordem invertida)
+//   [Serviço]           → Nome do serviço (pode diferir do produto)
+//   [Produto]           → Nome do produto isolado
+//   [Benefício]         → Benefício principal para o cliente
+//   [Empresa]           → Nome da organização
+function fillPlaceholders(template, data) {
+    let result = template;
+    // ── [Nome] ────────────────────────────────────────────────────────────────
+    const firstName = cleanGreetingName(data.clientName);
+    if (firstName) {
+        result = result.replace(/\[Nome\]/g, firstName);
+    }
+    else {
+        // Remover saudação "Olá, [Nome]!" / "Oi, [Nome]!" / "Bom dia, [Nome]."
+        // de forma elegante quando o nome não está disponível
+        result = result.replace(/(?:Olá|Oi|Bom dia),\s*\[Nome\]([!\.])/g, (_match, punc) => {
+            if (_match.startsWith('Bom dia'))
+                return `Bom dia${punc}`;
+            if (_match.startsWith('Oi'))
+                return `Oi${punc}`;
+            return `Olá${punc}`;
+        });
+        result = result.replace(/\[Nome\]/g, '');
+    }
+    // ── [Nome_do_Chatbot] ────────────────────────────────────────────────────
+    const botName = data.botName?.trim() || 'Assistente';
+    result = result.replace(/\[Nome_do_Chatbot\]/g, botName);
+    // ── [Produto/Serviço] e [Serviço/Produto] ────────────────────────────────
+    const productOrService = data.productOrService?.trim() || data.service?.trim() || data.product?.trim() || 'nosso serviço';
+    result = result.replace(/\[Produto\/Serviço\]/g, productOrService);
+    result = result.replace(/\[Serviço\/Produto\]/g, productOrService);
+    // ── [Serviço] ────────────────────────────────────────────────────────────
+    const service = data.service?.trim() || productOrService;
+    result = result.replace(/\[Serviço\]/g, service);
+    // ── [Produto] ────────────────────────────────────────────────────────────
+    const product = data.product?.trim() || productOrService;
+    result = result.replace(/\[Produto\]/g, product);
+    // ── [Benefício] ──────────────────────────────────────────────────────────
+    const benefit = data.benefit?.trim() || 'o seu atendimento';
+    result = result.replace(/\[Benefício\]/g, benefit);
+    // ── [Empresa] ────────────────────────────────────────────────────────────
+    const orgName = data.orgName?.trim() || 'nossa equipe';
+    result = result.replace(/\[Empresa\]/g, orgName);
+    // Colapsar espaços duplos resultantes de placeholders vazios
+    return result.replace(/\s{2,}/g, ' ').trim();
+}
+// ─── Formatação do Texto com Lista de Botões ──────────────────────────────────
+function formatFollowupWithButtons(bodyText, buttons) {
+    const buttonLines = buttons.map((b, idx) => `[Botão ${idx + 1}] ${b.fullTitle}`).join('\n');
+    return `${bodyText}\n\n${buttonLines}`;
+}
+function detectObjectionText(text) {
+    if (!text)
+        return null;
+    const clean = text.trim();
+    // 1. Objeção: "Vou falar com a esposa/marido" (B2C)
+    const spousePatterns = [
+        /\b(?:vou|preciso|tenho\s*que|quero|vou\s*ter\s*que|iria)\s*(?:ir\s*)?(?:falar|conversar|alinhar|discutir|ver|combinar|consultar)\s*com\s*(?:a|o|minha|meu|o\s*meu|a\s*minha)?\s*(?:esposa|marido|esposo|patroa|mulher|c[oô]njuge|namorada|namorado|par|parceir[ao])\b/i,
+        /\b(?:falar|conversar|ver|combinar|alinhar|consultar)\s*com\s*(?:a\s*esposa|o\s*marido|o\s*esposo|a\s*mulher|o\s*par|a\s*patroa|o\s*c[oô]njuge|minha\s*esposa|meu\s*marido)\b/i,
+        /\b(?:ver|conversar)\s*com\s*(?:o\s*meu\s*par|o\s*par|a\s*esposa|o\s*marido)\b/i,
+    ];
+    for (const p of spousePatterns) {
+        if (p.test(clean))
+            return { type: 'spouse', matchedText: clean };
+    }
+    // 2. Objeção: "Vou falar com o sócio/diretoria" (B2B)
+    const directorPatterns = [
+        /\b(?:vou|preciso|tenho\s*que|quero|iria)\s*(?:ir\s*)?(?:falar|conversar|alinhar|discutir|ver|apresentar|passar|reunir|consultar)\s*com\s*(?:o|a|os|as|meu|minha|nossos|nossas|o\s*nosso|a\s*nossa)?\s*(?:s[oó]cio|s[oó]cios|diretoria|dire[cç][aã]o|ger[eê]ncia|conselho|administra[cç][aã]o|equipa|equipe|empresa|board)\b/i,
+        /\b(?:passar|apresentar|submeter|enviar)\s*(?:a|à|para\s*a)\s*(?:diretoria|dire[cç][aã]o|ger[eê]ncia|administra[cç][aã]o|reuni[aã]o\s*de\s*s[oó]cios)\b/i,
+        /\b(?:a\s*diretoria|o\s*s[oó]cio|os\s*s[oó]cios|a\s*dire[cç][aã]o)\s*(?:precisa|vai|v[aã]o|tem\s*que)\s*(?:analisar|avaliar|aprovar|decidir)\b/i,
+    ];
+    for (const p of directorPatterns) {
+        if (p.test(clean))
+            return { type: 'partner_director', matchedText: clean };
+    }
+    // 3. Objeção: "Amanhã eu volto" (B2C & B2B)
+    const tomorrowPatterns = [
+        /\b(?:amanh[aã]\s*(?:eu\s*)?volto|volto\s*amanh[aã])\b/i,
+        /\b(?:amanh[aã]\s*(?:a\s*gente\s*)?(?:fala|conversa|continua|retoma|combina|vemos))\b/i,
+        /\b(?:amanh[aã]\s*(?:eu\s*)?(?:chamo|mando\s*(?:mensagem)?|dou\s*um\s*retorno|entro\s*em\s*contato|entro\s*em\s*contacto|escrevo|retorno|ligo))\b/i,
+        /\b(?:deixa\s*para\s*amanh[aã]|vemos\s*isso\s*amanh[aã]|falamos\s*amanh[aã])\b/i,
+        /\b(?:amanh[aã]\s*(?:eu\s*)?termino|amanh[aã]\s*eu\s*concluo|amanh[aã]\s*vejo\s*isso)\b/i,
+    ];
+    for (const p of tomorrowPatterns) {
+        if (p.test(clean))
+            return { type: 'tomorrow', matchedText: clean };
+    }
+    // 4. Objeção: "Vou me preparar melhor / Orçamento" (B2C & B2B)
+    const budgetPreparePatterns = [
+        /\b(?:vou|preciso|quero|vamos)\s*(?:me\s*|nos\s*)?(?:preparar|organizar|estruturar|planejar|planear)\s*melhor\b/i,
+        /\b(?:ainda\s*n[aã]o\s*estou|n[aã]o\s*estamos|n[aã]o\s*estou)\s*preparad[ao]s?\b/i,
+        /\b(?:organizar|estruturar|preparar)\s*(?:financeiramente|o\s*or[cç]amento|as\s*finan[cç]as|o\s*dinheiro)\b/i,
+        /\b(?:juntar|guardar|conseguir|arranjar)\s*(?:o\s*)?(?:dinheiro|valor|capital|verba)\b/i,
+        /\b(?:sem\s*or[cç]amento|sem\s*budget|sem\s*verba|fora\s*do\s*(?:nosso\s*)?(?:or[cç]amento|budget))\b/i,
+        /\b(?:or[cç]amento\s*(?:apertado|fechado|estourado)|timing\s*financeiro)\b/i,
+        /\b(?:quando\s*(?:eu\s*)?tiver\s*(?:o\s*)?dinheiro|quando\s*melhorar\s*a\s*situa[cç][aã]o\s*financeira)\b/i,
+        /\b(?:por\s*enquanto\s*n[aã]o\s*tenho\s*condi[cç][oõ]es|n[aã]o\s*tenho\s*condi[cç][oõ]es\s*agora)\b/i,
+        /\b(?:est[aá]\s*muito\s*apertado\s*agora|momento\s*financeiro\s*dif[ií]cil)\b/i,
+    ];
+    for (const p of budgetPreparePatterns) {
+        if (p.test(clean))
+            return { type: 'budget_prepare', matchedText: clean };
+    }
+    return null;
+}
+function detectObjection(history, orgSettings) {
+    if (!history || history.length === 0)
+        return null;
+    const userMsgs = history.filter(h => h.sender === 'user' &&
+        !h.text.startsWith('[ERRO INTERNO') &&
+        !h.text.startsWith('[ATENDIMENTO CONFIRMADO'));
+    if (userMsgs.length === 0)
+        return null;
+    const lastUserMsg = userMsgs[userMsgs.length - 1];
+    const detected = detectObjectionText(lastUserMsg.text);
+    if (!detected)
+        return null;
+    let audience = 'b2c';
+    if (detected.type === 'spouse') {
+        audience = 'b2c';
+    }
+    else if (detected.type === 'partner_director') {
+        audience = 'b2b';
+    }
+    else {
+        // Para 'budget_prepare' e 'tomorrow', checar indicadores B2B na conversa ou organização
+        const allText = history.map(h => h.text).join(' ').toLowerCase();
+        const b2bIndicators = /\b(empresa|s[oó]cio|s[oó]cios|diretoria|dire[cç][aã]o|ger[eê]ncia|nossa\s*empresa|minha\s*empresa|para\s*a\s*empresa|pj|cnpj|nif\s*coletivo|budget|corporativ[ao]|b2b|fatura[cç][aã]o|contrata[cç][aã]o\s*para\s*a\s*empresa|colaboradores)\b/i;
+        if (b2bIndicators.test(allText) || orgSettings?.ai_tone === 'ultra_formal') {
+            audience = 'b2b';
+        }
+        else {
+            audience = 'b2c';
+        }
+    }
+    return {
+        type: detected.type,
+        audience,
+        matchedText: detected.matchedText,
+    };
+}
+// ─── Data Agendada para Cada Objeção ─────────────────────────────────────────
+function getObjectionScheduledDate(audience, objectionType, step = 1) {
+    const now = new Date();
+    if (audience === 'b2c') {
+        if (objectionType === 'spouse') {
+            // 3 dias depois (72h) às 14:00
+            const d = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000);
+            d.setHours(14, Math.floor(Math.random() * 30), 0, 0);
+            return d;
+        }
+        if (objectionType === 'budget_prepare') {
+            // Step 1: 7 dias depois; Step 2: 30 dias; Step 3: 90 dias (3 meses)
+            const days = step === 1 ? 7 : step === 2 ? 30 : 90;
+            const d = new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
+            d.setHours(14, Math.floor(Math.random() * 30), 0, 0);
+            return d;
+        }
+        if (objectionType === 'tomorrow') {
+            // No final do dia seguinte (~18:00)
+            const d = new Date(now);
+            d.setDate(d.getDate() + 1);
+            d.setHours(18, 0, 0, 0);
+            return d;
+        }
+    }
+    else {
+        // B2B
+        if (objectionType === 'partner_director') {
+            // 24h depois (durante expediente comercial)
+            const d = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+            const h = d.getHours();
+            if (h < 9 || h > 17)
+                d.setHours(11, 0, 0, 0);
+            return d;
+        }
+        if (objectionType === 'budget_prepare') {
+            // 7 dias depois
+            const d = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+            d.setHours(10, 30, 0, 0);
+            return d;
+        }
+        if (objectionType === 'tomorrow') {
+            // Amanhã de manhã ("Bom dia, [Nome]..." ~ 09:30)
+            const d = new Date(now);
+            d.setDate(d.getDate() + 1);
+            d.setHours(9, 30, 0, 0);
+            return d;
+        }
+    }
+    // Fallback seguro: 24h
+    return new Date(now.getTime() + 24 * 60 * 60 * 1000);
+}
+// ─── Deteção de Despedida e Encerramento ──────────────────────────────────────
+function isFarewellText(text) {
+    if (!text)
+        return false;
+    const clean = text.trim().toLowerCase();
+    // Mensagens longas (> 160 chars) raramente são apenas despedidas
+    if (clean.length > 160)
+        return false;
+    // Se o cliente fez uma pergunta inquisitiva de novo assunto/preço, NÃO é despedida
+    if (clean.includes('?') && !/(onde|qual o local|onde fica|localiza[cç][aã]o|posso ir|amanh[aã]|levar|documentos)/i.test(clean)) {
+        if (/\b(quanto|quando|como|qual|quais|porque|por que|preço|preco|custo|valor)\b/i.test(clean)) {
+            return false;
+        }
+    }
+    // Se for uma objeção conhecida (esposa, sócio, preparar melhor, amanhã volto), NÃO é despedida simples
+    if (detectObjectionText(clean)) {
+        return false;
+    }
+    // Apenas emojis de encerramento / joinha / agradecimento
+    if (/^[👍👋🙏🤝✨👌👏🌹❤️😊🙏🏾👍🏾👏🏾🎉]+$/u.test(clean)) {
+        return true;
+    }
+    const farewellPatterns = [
+        /\b(tchau|tchauzinho|xau|xauzinho|chau|chauzinho|adeus)\b/i,
+        /\b(at[eé]\s*(logo|mais|breve|[aà]\s*pr[oó]xima|j[aá]|l[aá]|amanh[aã]|segunda|ter[cç]a|quarta|quinta|sexta|s[aá]bado|domingo))\b/i,
+        /\b(obrigad[ao]|obrigad[aã]o|obg|obgd|obgda|muito\s*obrigad[ao]|agradecid[ao]|agrade[cç]o|grato|grata|muito\s*grato|gratid[aã]o)\b/i,
+        /\b(bom\s*descanso|bom\s*fim\s*de\s*semana|bom\s*final\s*de\s*semana|boa\s*semana|bom\s*trabalho|continua[cç][aã]o\s*de\s*bom|resto\s*de\s*(um\s*)?bom)\b/i,
+        /\b(continua[cç][aã]o\s*de\s*(um\s*)?(bom|boa)|boa\s*continua[cç][aã]o|resto\s*de\s*boa)\b/i,
+        /\b(um\s*abra[cç]o|abra[cç]os?|forte\s*abra[cç]o|beijo|beijos?|beijinhos?|bjs)\b/i,
+        /\b(valeu|vlw|falou|flw)\b/i,
+        /\b(foi\s*um\s*prazer|igualmente|foi\s*[oó]timo|foi\s*bom\s*falar|prazer\s*em\s*falar)\b/i,
+        /\b(fique\s*com\s*deus|deus\s*aben[cç]oe|com\s*deus|am[eé]m)\b/i,
+        /\b(n[aã]o\s*(preciso|quero|tenho\s*interesse)|deixa\s*(pra|para)\s*l[aá]|pode\s*(cancelar|fechar)|encerrar?|dispensad[ao]|n[aã]o\s*quero\s*mais)\b/i,
+        /\b(passo\s*a[ií]\s*amanh[aã]|apare[cç]o\s*(a[ií]|l[aá])\s*amanh[aã]|vemo-nos\s*amanh[aã]|vemo-nos\s*l[aá]|nos\s*vemos\s*amanh[aã]|estarei\s*a[ií])\b/i,
+        /\b(era\s*s[oó]\s*isso|por\s*hoje\s*[eé]\s*tudo|por\s*agora\s*[eé]\s*s[oó]|tudo\s*esclarecido|tudo\s*claro|j[aá]\s*entendi|esclarecido|compreendido|n[aã]o\s*preciso\s*de\s*mais\s*nada)\b/i,
+        /^(perfeito|combinado|combinad[ií]ssimo|entendido|tudo\s*certo|est[aá]\s*bem|t[aá]\s*bom|ok|certo|est[aá]\s*tudo\s*bem|sim\s*obrigad[ao])\s*(,?|\.|\!|\s)*(obrigad[ao]|obg|agradecid[ao]|valeu|abra[cç]o|at[eé]\s*(logo|amanh[aã]|mais)|at[eé]\s*l[aá]|amigo)?$/i,
+    ];
+    for (const pattern of farewellPatterns) {
+        if (pattern.test(clean))
+            return true;
+    }
+    if (/\b(boa\s*noite)\b/i.test(clean) && !/\b(tudo\s*bem|ol[aá]|oi|como\s*vai)\b/i.test(clean)) {
+        return true;
+    }
+    if (/\b(boa\s*tarde)\b/i.test(clean) && /\b(obrigad[ao]|obg|at[eé]|abra[cç]o|valeu)\b/i.test(clean)) {
+        return true;
+    }
+    if (/\b(bom\s*dia)\b/i.test(clean) && /\b(obrigad[ao]|obg|at[eé]|abra[cç]o|valeu)\b/i.test(clean)) {
+        return true;
+    }
+    return false;
+}
+/**
+ * Detecta se a conversa terminou com um agendamento / marcação confirmada.
+ * Regra: se o bot confirmou agendamento recentemente na conversa (token [BOOKING_CONFIRMED]
+ * ou frase inequívoca de confirmação de agendamento) e o cliente não iniciou uma nova
+ * dúvida não respondida depois disso (apenas agradeceu, confirmou presença ou a conversa parou aí).
+ */
+function hasConversationEndedWithBooking(history) {
+    if (!history || history.length === 0)
+        return false;
+    // Procurar por confirmações de agendamento na conversa recente (últimas 15 mensagens)
+    const recentMsgs = history.slice(-15);
+    let lastBookingIndex = -1;
+    for (let i = recentMsgs.length - 1; i >= 0; i--) {
+        const msg = recentMsgs[i];
+        const text = (msg.text || '').toLowerCase();
+        const isBookingConfirmation = text.includes('[booking_confirmed:') ||
+            text.includes('[atendimento confirmado') ||
+            text.includes('[agendamento confirmado') ||
+            (msg.sender === 'bot' && ((text.includes('marcação') || text.includes('agendamento') || text.includes('consulta')) &&
+                (text.includes('confirmada com sucesso') ||
+                    text.includes('confirmado com sucesso') ||
+                    text.includes('está confirmada') ||
+                    text.includes('está confirmado') ||
+                    text.includes('foi confirmada') ||
+                    text.includes('foi confirmado') ||
+                    text.includes('marcada para') ||
+                    text.includes('marcado para') ||
+                    text.includes('agendada para') ||
+                    text.includes('agendado para') ||
+                    text.includes('lembretes de confirmação') ||
+                    text.includes('lembretes e alertas'))));
+        if (isBookingConfirmation) {
+            lastBookingIndex = i;
+            break;
+        }
+    }
+    if (lastBookingIndex === -1) {
+        return false;
+    }
+    // Verificar as mensagens posteriores à confirmação do agendamento
+    const msgsAfterBooking = recentMsgs.slice(lastBookingIndex + 1);
+    if (msgsAfterBooking.length === 0) {
+        // Terminou exatamente na mensagem de confirmação do agendamento
+        return true;
+    }
+    // Se houver mensagens posteriores, verificar se são apenas agradecimentos, despedidas ou perguntas de localização
+    for (const m of msgsAfterBooking) {
+        if (m.sender === 'user') {
+            const clean = (m.text || '').trim().toLowerCase();
+            // Se o cliente fez pergunta inquisitiva sobre um assunto diferente do agendamento
+            if (clean.includes('?') && !/(onde|qual o local|onde fica|localiza[cç][aã]o|posso ir|amanh[aã]|levar|documento)/i.test(clean)) {
+                if (/(quanto custa|qual o valor|outro serviço|outra pessoa|orçamento|proposta)/i.test(clean)) {
+                    return false;
+                }
+            }
+        }
+    }
+    return true;
+}
+/**
+ * Detecta se a conversa terminou em despedida,
+ * MESMO QUE a última mensagem na base de dados seja da IA (resposta cordial à despedida do cliente).
+ */
+function isConversationEndedInFarewell(history, currentBotReply) {
+    if (!history || history.length === 0) {
+        if (currentBotReply && isFarewellText(currentBotReply))
+            return true;
+        return false;
+    }
+    const validMsgs = history.filter(h => !h.text.startsWith('[ERRO INTERNO') &&
+        !h.text.startsWith('[ATENDIMENTO CONFIRMADO'));
+    if (validMsgs.length === 0)
+        return false;
+    const userMsgs = validMsgs.filter(m => m.sender === 'user');
+    if (userMsgs.length === 0)
+        return false;
+    const lastUserMsg = userMsgs[userMsgs.length - 1];
+    const lastUserText = (lastUserMsg.text || '').trim();
+    // 1. Se a última mensagem do cliente foi uma despedida
+    if (isFarewellText(lastUserText)) {
+        return true;
+    }
+    // 2. Se a penúltima mensagem do cliente também foi uma despedida (e a última for emoji ou "ok" ou "obrigado")
+    if (userMsgs.length >= 2) {
+        const prevUserText = (userMsgs[userMsgs.length - 2].text || '').trim();
+        if (isFarewellText(prevUserText) && (lastUserText.length <= 25 || /^[👍👋🙏🤝✨👌👏🌹❤️😊🙏🏾👍🏾👏🏾🎉]+$/u.test(lastUserText))) {
+            return true;
+        }
+    }
+    // 3. Verificar se o bot encerrou formalmente os lembretes ou o atendimento
+    const lastMsg = validMsgs[validMsgs.length - 1];
+    if (lastMsg.sender === 'bot') {
+        const lastBotText = (lastMsg.text || '').toLowerCase();
+        if (lastBotText.includes('vou encerrar os nossos lembretes') ||
+            lastBotText.includes('atendimento encerrado') ||
+            lastBotText.includes('estaremos sempre à sua disposição') ||
+            lastBotText.includes('tenha um excelente dia') ||
+            lastBotText.includes('tenham um excelente dia') ||
+            lastBotText.includes('ficamos à sua espera') ||
+            lastBotText.includes('até amanhã') ||
+            lastBotText.includes('até logo')) {
+            if (isFarewellText(lastUserText) || /^(ok|perfeito|combinado|entendido|obrigad[ao]|obg|certo|tá bom|está bem)/i.test(lastUserText)) {
+                return true;
+            }
+        }
+    }
+    // 4. Se a resposta recém-gerada pelo bot for um encerramento cordial/despedida em resposta a um agradecimento
+    if (currentBotReply) {
+        const cleanBot = currentBotReply.toLowerCase();
+        if ((cleanBot.includes('de nada') || cleanBot.includes('disponha') || cleanBot.includes('à disposição') || cleanBot.includes('a sua disposição')) &&
+            (cleanBot.includes('tenha um') || cleanBot.includes('ótimo dia') || cleanBot.includes('bom dia') || cleanBot.includes('boa tarde') || cleanBot.includes('boa noite') || cleanBot.includes('até amanhã') || cleanBot.includes('até logo'))) {
+            if (isFarewellText(lastUserText)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+// Mantido para compatibilidade retroativa
+function detectFarewell(history) {
+    return isConversationEndedInFarewell(history);
+}
+// ─── Detetar cenário da conversa ─────────────────────────────────────────────
+function detectScenario(history) {
+    const allText = history.map(h => h.text).join(' ').toLowerCase();
+    if (/(foto|imagem|documento|passaporte|curriculo|currículo|registo criminal|registro criminal|dados|informações|informacoes|detalhes|perfil)/i.test(allText)) {
+        return 1;
+    }
+    if (/(orçamento|orcamento|valor|preço|preco|custo|proposta|kz|kwanza|eur|usd|pós-paga|pos-paga|pagamento|investimento)/i.test(allText)) {
+        return 2;
+    }
+    if (/(agendar|marcar|marcação|marcacao|consultoria|agendamento|horário|horario|disponibilidade|escritório|escritorio)/i.test(allText)) {
+        return 3;
+    }
+    return 4;
+}
+// ─── Inferir Produto, Serviço e Benefício do Histórico e Organização ─────────
+function inferServiceAndBenefit(history, org) {
+    const allText = history.map(h => h.text).join(' ').toLowerCase();
+    let service = 'atendimento';
+    let product = 'nosso serviço';
+    let benefit = 'o seu atendimento';
+    if (/(visto|passaporte|nacionalidade|cidadania|consulado|embaixada|turismo|estudo)/i.test(allText)) {
+        service = 'pedido de visto';
+        product = 'assessoria de visto';
+        benefit = 'o seu visto';
+    }
+    else if (/(consultoria|assessoria|consulta)/i.test(allText)) {
+        service = 'assessoria especializada';
+        product = 'serviço de assessoria';
+        benefit = 'a sua assessoria';
+    }
+    else if (/(curso|forma[cç][aã]o|treinamento|capacita[cç][aã]o)/i.test(allText)) {
+        service = 'formação';
+        product = 'curso';
+        benefit = 'a sua qualificação';
+    }
+    else if (/(im[oó]vel|apartamento|casa|terreno)/i.test(allText)) {
+        service = 'imóvel';
+        product = 'imóvel';
+        benefit = 'a sua conquista';
+    }
+    else if (org?.social_object || org?.product_description) {
+        const desc = (org.social_object || org.product_description || '').toLowerCase();
+        if (desc.includes('visto')) {
+            service = 'pedido de visto';
+            product = 'assessoria de visto';
+            benefit = 'o seu visto';
+        }
+        else if (desc.includes('consult')) {
+            service = 'consultoria';
+            product = 'serviço de consultoria';
+            benefit = 'a sua consultoria';
+        }
+        else {
+            service = org.social_object || 'atendimento';
+            product = org.product_description?.substring(0, 30) || 'nosso serviço';
+        }
+    }
+    return { service, product, benefit };
+}
+// ─── Calcular hora aleatória de envio (09:00–20:00, mínimo N horas no futuro) ─
+function randomScheduledTime(minHoursFromNow) {
+    const base = new Date(Date.now() + minHoursFromNow * 60 * 60 * 1000);
+    const randomHour = 9 + Math.floor(Math.random() * 11); // 09 a 19
+    const randomMinute = Math.floor(Math.random() * 60);
+    base.setHours(randomHour, randomMinute, 0, 0);
+    if (base.getTime() < Date.now() + 30 * 60 * 1000) {
+        base.setDate(base.getDate() + 1);
+        base.setHours(randomHour, randomMinute, 0, 0);
+    }
+    return base;
+}
+// ─── Serviço principal ────────────────────────────────────────────────────────
+class FollowupService {
+    /** Agenda um novo follow-up (uso geral pela API) */
+    static async schedule(params) {
+        const scheduledAt = parseDelay(params.delay);
+        const payload = {
+            org_id: params.orgId,
+            customer_phone: params.phone,
+            platform: params.platform,
+            scheduled_at: scheduledAt.toISOString(),
+            status: 'pending',
+            followup_step: params.followupStep ?? 1,
+        };
+        if (params.customPrompt)
+            payload.custom_prompt = params.customPrompt;
+        if (params.lastMessageId)
+            payload.last_message_id = params.lastMessageId;
+        if (params.contextSnapshot)
+            payload.context_snapshot = params.contextSnapshot;
+        if (params.customerName)
+            payload.customer_name = params.customerName;
+        const { error } = await supabase_1.supabaseAdmin
+            .from('followup_schedules')
+            .insert(payload);
+        if (error)
+            throw error;
+        console.log(`[FOLLOWUP] Agendado step ${params.followupStep ?? 1} para ${params.phone} em ${scheduledAt.toISOString()} (${params.delay})`);
+    }
+    /**
+     * Ativa o protocolo de follow-up (inteligente ou de objeções).
+     * Regras estritas:
+     * 1. NÃO envia/agenda se o cliente tiver algum agendamento marcado (confirmado ou ativo).
+     * 2. NÃO envia/agenda se a conversa tiver terminado com agendamento marcado no chat.
+     * 3. NÃO envia/agenda se a conversa tiver terminado em despedida, mesmo que a última mensagem seja da IA.
+     * 4. Se a conversa terminou com objeção, agenda o protocolo específico de objeção (B2C/B2B com botões).
+     */
+    static async scheduleSmartFollowup(params) {
+        try {
+            // 1. Cancelar eventuais follow-ups anteriores pendentes (usando variantes de telefone)
+            await this.cancelPendingForPhone(params.orgId, params.phone);
+            // 2. REGRA 1: Verificar se o cliente tem agendamento marcado ativo, recente ou confirmado na base de dados
+            const hasBooking = await this.hasActiveBooking(params.orgId, params.phone);
+            if (hasBooking) {
+                console.log(`[FOLLOWUP] 🚫 Cliente ${params.phone} já possui agendamento confirmado/ativo. Follow-up não será agendado.`);
+                await this.concludeConversation({
+                    orgId: params.orgId,
+                    phone: params.phone,
+                    platform: params.platform,
+                    customerName: params.customerName,
+                    reason: 'has_active_booking',
+                });
+                return;
+            }
+            // 3. Buscar histórico para snapshot de contexto e verificação
+            const history = await this.fetchContext(params.orgId, params.phone);
+            // Resolver nome do cliente se não tiver sido fornecido
+            let clientName = (params.customerName || '').trim();
+            if (!clientName) {
+                const { data: contact } = await supabase_1.supabaseAdmin
+                    .from('contacts')
+                    .select('name')
+                    .eq('org_id', params.orgId)
+                    .eq('phone', params.phone)
+                    .maybeSingle();
+                if (contact?.name)
+                    clientName = contact.name.trim().split(/\s+/)[0];
+            }
+            // 4. REGRA 1b: Verificar se a conversa terminou com agendamento
+            if (hasConversationEndedWithBooking(history)) {
+                console.log(`[FOLLOWUP] 🚫 Conversa com ${params.phone} terminou com agendamento confirmado no chat. Follow-up cancelado/ignorado.`);
+                await this.concludeConversation({
+                    orgId: params.orgId,
+                    phone: params.phone,
+                    platform: params.platform,
+                    customerName: clientName,
+                    reason: 'booking_completed_in_chat',
+                });
+                return;
+            }
+            // 5. REGRA 2: Não enviar se a conversa terminou em despedida ou agradecimento de encerramento
+            if (isConversationEndedInFarewell(history, params.botReply)) {
+                console.log(`[FOLLOWUP] 🚫 Conversa com ${params.phone} terminada em despedida. Follow-up não agendado.`);
+                await this.concludeConversation({
+                    orgId: params.orgId,
+                    phone: params.phone,
+                    platform: params.platform,
+                    customerName: clientName,
+                    reason: 'farewell_detected',
+                });
+                return;
+            }
+            // 5. Buscar dados da organização para nomes e tom de voz
+            const { data: org } = await supabase_1.supabaseAdmin
+                .from('organizations')
+                .select('name, chatbot_name, product_description, social_object, ai_tone')
+                .eq('id', params.orgId)
+                .maybeSingle();
+            // 6. PROTOCOLO DE OBJEÇÕES: Verificar se o cliente terminou a conversa com uma objeção
+            const objection = detectObjection(history, org);
+            if (objection) {
+                console.log(`[FOLLOWUP] 🎯 Objeção detectada para ${params.phone}: ${objection.type} (${objection.audience.toUpperCase()})`);
+                const scheduledAt = getObjectionScheduledDate(objection.audience, objection.type, 1);
+                const { service, product, benefit } = inferServiceAndBenefit(history, org);
+                const contextSnapshot = JSON.stringify({
+                    flow: 'objection',
+                    audience: objection.audience,
+                    objectionType: objection.type,
+                    step: 1,
+                    botName: org?.chatbot_name || 'Assistente',
+                    customerName: clientName || '',
+                    service,
+                    product,
+                    benefit,
+                    lastBotReply: params.botReply.substring(0, 500),
+                });
+                const payload = {
+                    org_id: params.orgId,
+                    customer_phone: params.phone,
+                    platform: params.platform,
+                    scheduled_at: scheduledAt.toISOString(),
+                    status: 'pending',
+                    followup_step: 1,
+                    context_snapshot: contextSnapshot,
+                };
+                if (clientName)
+                    payload.customer_name = clientName;
+                if (params.lastMessageId)
+                    payload.last_message_id = params.lastMessageId;
+                const { error } = await supabase_1.supabaseAdmin
+                    .from('followup_schedules')
+                    .insert(payload);
+                if (error)
+                    throw error;
+                console.log(`[FOLLOWUP] ✅ Follow-up de objeção (${objection.audience}/${objection.type}) agendado para ${params.phone} em ${scheduledAt.toISOString()}`);
+                return;
+            }
+            // 7. Fluxo Normal de Vendas: se não houve objeção nem despedida, agenda Step 1 padrão (~12h)
+            const scenario = detectScenario(history);
+            const scheduledAt = randomScheduledTime(12);
+            const contextSnapshot = JSON.stringify({
+                flow: 'standard',
+                scenario,
+                lastBotReply: params.botReply.substring(0, 500),
+            });
+            const payload = {
+                org_id: params.orgId,
+                customer_phone: params.phone,
+                platform: params.platform,
+                scheduled_at: scheduledAt.toISOString(),
+                status: 'pending',
+                followup_step: 1,
+                context_snapshot: contextSnapshot,
+            };
+            if (clientName)
+                payload.customer_name = clientName;
+            if (params.lastMessageId)
+                payload.last_message_id = params.lastMessageId;
+            const { error } = await supabase_1.supabaseAdmin
+                .from('followup_schedules')
+                .insert(payload);
+            if (error)
+                throw error;
+            console.log(`[FOLLOWUP] ✅ Follow-up inteligente padrão (step 1) agendado para ${params.phone} em ${scheduledAt.toISOString()} (cenário ${scenario})`);
+        }
+        catch (err) {
+            console.warn(`[FOLLOWUP] Aviso ao agendar smart follow-up para ${params.phone}:`, err.message);
+        }
+    }
+    /** Cancela todos os follow-ups pendentes de um número (cliente respondeu, agendou ou despediu-se) */
+    static async cancelPendingForPhone(orgId, phone) {
+        if (!phone)
+            return;
+        try {
+            const rawDigits = phone.replace(/\D/g, '');
+            const phoneVariants = Array.from(new Set([
+                phone,
+                rawDigits,
+                `+${rawDigits}`,
+                rawDigits.startsWith('244') ? rawDigits.slice(3) : `244${rawDigits}`,
+                rawDigits.slice(-9),
+                rawDigits.slice(-8),
+            ].filter(p => p && p.length >= 8)));
+            const { error } = await supabase_1.supabaseAdmin
+                .from('followup_schedules')
+                .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
+                .eq('org_id', orgId)
+                .in('customer_phone', phoneVariants)
+                .eq('status', 'pending');
+            if (error) {
+                console.warn(`[FOLLOWUP] Aviso ao cancelar follow-ups de ${phone}:`, error.message);
+            }
+            else {
+                console.log(`[FOLLOWUP] ✅ Follow-ups pendentes cancelados para ${phone} (variantes: ${phoneVariants.join(', ')})`);
+            }
+        }
+        catch (err) {
+            console.warn(`[FOLLOWUP] Erro ao cancelar follow-ups de ${phone}:`, err.message);
+        }
+    }
+    /** Devolve todos os agendamentos pendentes cujo horário já passou */
+    static async getDue() {
+        const { data, error } = await supabase_1.supabaseAdmin
+            .from('followup_schedules')
+            .select('*')
+            .eq('status', 'pending')
+            .lte('scheduled_at', new Date().toISOString());
+        if (error)
+            throw error;
+        return data ?? [];
+    }
+    /** Lista todos os agendamentos de uma organização (para a UI) */
+    static async listByOrg(orgId, status) {
+        let query = supabase_1.supabaseAdmin
+            .from('followup_schedules')
+            .select('*')
+            .eq('org_id', orgId)
+            .order('scheduled_at', { ascending: true });
+        if (status)
+            query = query.eq('status', status);
+        const { data, error } = await query;
+        if (error)
+            throw error;
+        return data ?? [];
+    }
+    /** Muda o status de um registo */
+    static async setStatus(id, status) {
+        const { error } = await supabase_1.supabaseAdmin
+            .from('followup_schedules')
+            .update({
+            status,
+            ...(status === 'cancelled' ? { cancelled_at: new Date().toISOString() } : {})
+        })
+            .eq('id', id);
+        if (error)
+            throw error;
+    }
+    /** Devolve o histórico de conversa (últimas 40 msgs) para contexto */
+    static async fetchContext(orgId, phone) {
+        const rawDigits = (phone || '').replace(/\D/g, '');
+        const phoneVariants = Array.from(new Set([
+            phone,
+            rawDigits,
+            `+${rawDigits}`,
+        ].filter(Boolean)));
+        const { data, error } = await supabase_1.supabaseAdmin
+            .from('conversation_history')
+            .select('sender, text, metadata')
+            .eq('org_id', orgId)
+            .in('customer_phone', phoneVariants)
+            .order('created_at', { ascending: true })
+            .limit(40);
+        if (error)
+            throw error;
+        return (data ?? []).map(m => ({ sender: m.sender, text: m.text }));
+    }
+    /** Verifica com precisão se o cliente tem agendamento ativo ou confirmado no sistema */
+    static async hasActiveBooking(orgId, phone) {
+        try {
+            if (!phone)
+                return false;
+            const rawDigits = (phone || '').replace(/\D/g, '');
+            if (rawDigits.length < 8)
+                return false;
+            const last9 = rawDigits.slice(-9);
+            const last8 = rawDigits.slice(-8);
+            // Função de correspondência flexível entre números
+            const matchesPhone = (targetPhone) => {
+                if (!targetPhone)
+                    return false;
+                const targetDigits = targetPhone.replace(/\D/g, '');
+                if (!targetDigits)
+                    return false;
+                if (targetPhone === phone || targetDigits === rawDigits)
+                    return true;
+                if (last9.length >= 9 && targetDigits.endsWith(last9))
+                    return true;
+                if (targetDigits.length >= 9 && rawDigits.endsWith(targetDigits.slice(-9)))
+                    return true;
+                if (last8.length >= 8 && targetDigits.endsWith(last8))
+                    return true;
+                return false;
+            };
+            // 1. Tabela bookings (seleciona com segurança sem quebrar se a coluna status não existir)
+            const { data: bookings, error: bErr } = await supabase_1.supabaseAdmin
+                .from('bookings')
+                .select('*')
+                .eq('org_id', orgId);
+            if (!bErr && bookings && bookings.length > 0) {
+                const hasMatch = bookings.some(b => {
+                    if (b.status === 'cancelled')
+                        return false;
+                    return matchesPhone(b.phone);
+                });
+                if (hasMatch) {
+                    console.log(`[FOLLOWUP] 📅 Agendamento confirmado encontrado na tabela bookings para ${phone}`);
+                    return true;
+                }
+            }
+            // 2. Tabela appointment_reminders
+            const { data: reminders, error: rErr } = await supabase_1.supabaseAdmin
+                .from('appointment_reminders')
+                .select('id, customer_phone, status')
+                .eq('org_id', orgId);
+            if (!rErr && reminders && reminders.length > 0) {
+                const hasMatch = reminders.some(r => {
+                    if (r.status === 'cancelled')
+                        return false;
+                    return matchesPhone(r.customer_phone);
+                });
+                if (hasMatch) {
+                    console.log(`[FOLLOWUP] 📅 Lembrete de agendamento ativo encontrado para ${phone}`);
+                    return true;
+                }
+            }
+            // 3. Tabela contacts
+            const phoneVariants = [phone, rawDigits, `+${rawDigits}`].filter(Boolean);
+            const { data: contact } = await supabase_1.supabaseAdmin
+                .from('contacts')
+                .select('phone, is_booked, status')
+                .eq('org_id', orgId)
+                .in('phone', phoneVariants)
+                .maybeSingle();
+            if (contact && (contact.is_booked || contact.status === 'agendado' || contact.status === 'confirmado')) {
+                console.log(`[FOLLOWUP] 📅 Contacto com estatuto de agendado/confirmado encontrado para ${phone}`);
+                return true;
+            }
+            return false;
+        }
+        catch (err) {
+            console.warn('[FOLLOWUP] Erro ao verificar agendamentos ativos:', err.message);
+            return false;
+        }
+    }
+    /** Verifica se a conversa terminou com agendamento */
+    static hasConversationEndedWithBooking(history) {
+        return hasConversationEndedWithBooking(history);
+    }
+    /** Verifica se a conversa com o cliente terminou em despedida (mesmo que a última msg seja da IA) */
+    static async clientSaidFarewell(orgId, phone) {
+        const history = await this.fetchContext(orgId, phone);
+        return isConversationEndedInFarewell(history);
+    }
+    /** Verifica se o cliente respondeu após a data de agendamento */
+    static async clientRepliedAfter(orgId, phone, since) {
+        const { data } = await supabase_1.supabaseAdmin
+            .from('conversation_history')
+            .select('id')
+            .eq('org_id', orgId)
+            .eq('customer_phone', phone)
+            .eq('sender', 'user')
+            .gt('created_at', since)
+            .limit(1);
+        return (data?.length ?? 0) > 0;
+    }
+    /**
+     * Dá o atendimento e ciclo de follow-up por concluído.
+     *
+     * Por defeito opera em modo silencioso (silent = true):
+     *   - NÃO insere nota no conversation_history
+     *   - NÃO emite evento `new_message` no Socket.IO
+     *   - Cancela follow-ups pendentes, emite `chat_status_updated` e sincroniza Google Sheets
+     *
+     * Passar silent = false apenas se se quiser inserir uma nota interna visível no chat.
+     */
+    static async concludeConversation(params) {
+        try {
+            const { orgId, phone, platform = 'whatsapp', customerName = '', reason = 'followup_concluded', silent = true, } = params;
+            // 1. Cancelar todos os follow-ups pendentes deste cliente
+            await this.cancelPendingForPhone(orgId, phone);
+            const noteText = reason.includes('objection')
+                ? '[ATENDIMENTO CONCLUÍDO — CICLO DE OBJEÇÃO FINALIZADO]'
+                : reason.includes('farewell')
+                    ? '[ATENDIMENTO CONCLUÍDO — CONVERSA TERMINADA COM DESPEDIDA]'
+                    : reason.includes('review')
+                        ? '[ATENDIMENTO CONCLUÍDO — AVALIAÇÃO FINALIZADA]'
+                        : '[ATENDIMENTO CONCLUÍDO — CICLO DE FOLLOW-UP FINALIZADO]';
+            if (!silent) {
+                // 2. Inserir registo no histórico de conversa
+                await supabase_1.supabaseAdmin.from('conversation_history').insert({
+                    org_id: orgId,
+                    customer_phone: phone,
+                    sender: 'system',
+                    text: noteText,
+                    metadata: {
+                        attended: true,
+                        concluded: true,
+                        internal_note: true,
+                        reason,
+                        platform,
+                    },
+                });
+                // 3. Emitir evento Socket.IO em tempo real para Live Chat
+                try {
+                    const { getIo } = await Promise.resolve().then(() => __importStar(require('../socket')));
+                    getIo().to(`org:${orgId}`).emit('chat_status_updated', {
+                        phone,
+                        attended: true,
+                        concluded: true,
+                        needs_confirm: false,
+                        has_exclamation: false,
+                    });
+                    getIo().to(`org:${orgId}`).emit('new_message', {
+                        phone,
+                        sender: 'system',
+                        text: noteText,
+                        time: new Date().toLocaleTimeString('pt-PT', { timeZone: 'Africa/Luanda', hour: '2-digit', minute: '2-digit' }),
+                        timestamp: new Date().toISOString(),
+                        platform,
+                        metadata: {
+                            attended: true,
+                            concluded: true,
+                            internal_note: true,
+                            reason,
+                        },
+                    });
+                }
+                catch (_) {
+                    // Silencioso se o socket não estiver ativo
+                }
+            }
+            else {
+                // Modo silencioso: apenas emitir chat_status_updated (sem new_message no chat)
+                try {
+                    const { getIo } = await Promise.resolve().then(() => __importStar(require('../socket')));
+                    getIo().to(`org:${orgId}`).emit('chat_status_updated', {
+                        phone,
+                        attended: true,
+                        concluded: true,
+                        needs_confirm: false,
+                        has_exclamation: false,
+                    });
+                }
+                catch (_) { }
+            }
+            // 4. Sincronizar com Google Sheets (independente do modo silencioso)
+            try {
+                const { GoogleSheetsService } = await Promise.resolve().then(() => __importStar(require('./google_sheets.service')));
+                GoogleSheetsService.syncInteraction({
+                    orgId,
+                    channel: platform || 'whatsapp',
+                    phoneOrId: phone,
+                    name: customerName || 'Cliente',
+                    text: noteText,
+                    status: 'Concluído',
+                }).catch(err => console.warn('[FOLLOWUP] Aviso ao sincronizar conclusão com Google Sheets:', err.message));
+            }
+            catch (_) { }
+            console.log(`[FOLLOWUP] 🏁 Atendimento dado por CONCLUÍDO para ${phone} (motivo: ${reason}${silent ? ', silencioso' : ''})`);
+        }
+        catch (err) {
+            console.warn(`[FOLLOWUP] Erro ao concluir conversa para ${params.phone}:`, err.message);
+        }
+    }
+}
+exports.FollowupService = FollowupService;

@@ -1,0 +1,935 @@
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.runningCampaigns = exports.pausedCampaigns = void 0;
+exports.processCampaign = processCampaign;
+const express_1 = require("express");
+const supabase_1 = require("../config/supabase");
+const auth_1 = require("../middleware/auth");
+const whatsapp_service_1 = require("../services/whatsapp.service");
+const socket_1 = require("../socket");
+const multer_1 = __importDefault(require("multer"));
+const XLSX = __importStar(require("xlsx"));
+const router = (0, express_1.Router)();
+// Multer: armazenamento em memória para parsing imediato
+const upload = (0, multer_1.default)({
+    storage: multer_1.default.memoryStorage(),
+    limits: { fileSize: 20 * 1024 * 1024 }, // 20 MB
+    fileFilter: (_req, file, cb) => {
+        const allowed = [
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // xlsx
+            'application/vnd.ms-excel', // xls
+            'text/csv',
+            'application/csv',
+            'application/pdf',
+            'text/plain'
+        ];
+        if (allowed.includes(file.mimetype) || file.originalname.match(/\.(xlsx?|csv|pdf|txt)$/i)) {
+            cb(null, true);
+        }
+        else {
+            cb(new Error('Formato não suportado. Use Excel (.xlsx/.xls), CSV ou PDF.'));
+        }
+    }
+});
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+/** Agrupa e resolve todos os contatos únicos da empresa a partir de todas as fontes ativas e aplica filtros */
+async function resolveCampaignAudience(orgId, audience, filters) {
+    const contactMap = new Map();
+    const normalizePhone = (p) => {
+        if (!p)
+            return '';
+        return p.replace(/[^\d]/g, '');
+    };
+    const addContact = (rawPhone, rawName, extra) => {
+        const phone = normalizePhone(rawPhone);
+        if (!phone || phone.length < 8)
+            return;
+        const existing = contactMap.get(phone);
+        const validName = (rawName && rawName.trim() !== 'Sem nome') ? rawName.trim() : '';
+        const name = validName || (existing?.name && existing.name !== 'Cliente' ? existing.name : 'Cliente');
+        contactMap.set(phone, {
+            id: extra?.id || existing?.id,
+            phone,
+            name,
+            email: extra?.email || existing?.email,
+            source: extra?.source || existing?.source,
+            notes: extra?.notes || existing?.notes,
+            tags: extra?.tags || existing?.tags || []
+        });
+    };
+    // 1. Tabela `contacts` (com tratamento seguro para tags e notas)
+    try {
+        const { data: dbContacts, error: dbErr } = await supabase_1.supabaseAdmin
+            .from('contacts')
+            .select('*')
+            .eq('org_id', orgId);
+        if (!dbErr && dbContacts) {
+            dbContacts.forEach((c) => addContact(c.phone, c.name, {
+                id: c.id,
+                email: c.email,
+                source: c.source,
+                notes: c.notes,
+                tags: Array.isArray(c.tags) ? c.tags : (c.tags ? [c.tags] : [])
+            }));
+        }
+    }
+    catch (contactsErr) {
+        console.warn('[CAMPAIGNS] Aviso ao consultar contacts:', contactsErr.message);
+    }
+    // 2. Tabela `conversation_history`
+    const { data: histContacts } = await supabase_1.supabaseAdmin
+        .from('conversation_history')
+        .select('customer_phone')
+        .eq('org_id', orgId);
+    (histContacts || []).forEach(c => addContact(c.customer_phone, undefined, { source: 'whatsapp' }));
+    // 3. Tabela `followup_schedules`
+    const { data: followupContacts } = await supabase_1.supabaseAdmin
+        .from('followup_schedules')
+        .select('customer_phone, customer_name')
+        .eq('org_id', orgId);
+    (followupContacts || []).forEach(c => addContact(c.customer_phone, c.customer_name, { source: 'whatsapp' }));
+    // 4. Tabela `bookings`
+    const { data: bookingContacts } = await supabase_1.supabaseAdmin
+        .from('bookings')
+        .select('phone, first_name, last_name')
+        .eq('org_id', orgId);
+    (bookingContacts || []).forEach(c => {
+        const fullName = [c.first_name, c.last_name].filter(Boolean).join(' ');
+        addContact(c.phone, fullName, { source: 'booking' });
+    });
+    let allContacts = Array.from(contactMap.values());
+    // Sincronizar automaticamente para a tabela `contacts` para salvar os contatos recuperados
+    if (allContacts.length > 0) {
+        try {
+            const inserts = allContacts.map(c => ({
+                org_id: orgId,
+                phone: c.phone,
+                name: c.name,
+                source: c.source || 'whatsapp'
+            }));
+            await supabase_1.supabaseAdmin.from('contacts').upsert(inserts, { onConflict: 'org_id, phone' });
+        }
+        catch (upsertErr) {
+            console.warn('[CAMPAIGNS] Aviso ao sincronizar contatos:', upsertErr.message);
+        }
+    }
+    // ─── 1. FILTRAGEM POR AUDIÊNCIA OU CONTATOS SELECIONADOS ───
+    const contactIds = Array.isArray(filters?.contact_ids) ? filters.contact_ids.filter(Boolean) : [];
+    const targetPhones = Array.isArray(filters?.target_phones) ? filters.target_phones.filter(Boolean) : [];
+    if (audience === 'selected' || contactIds.length > 0 || targetPhones.length > 0) {
+        const selectedIdSet = new Set(contactIds);
+        const selectedPhoneSet = new Set(targetPhones.map(normalizePhone).filter(Boolean));
+        allContacts = allContacts.filter(c => {
+            if (c.id && selectedIdSet.has(c.id))
+                return true;
+            if (selectedPhoneSet.has(c.phone))
+                return true;
+            return false;
+        });
+    }
+    else if (audience === 'active_24h') {
+        const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+        const { data: activeHist } = await supabase_1.supabaseAdmin
+            .from('conversation_history')
+            .select('customer_phone')
+            .eq('org_id', orgId)
+            .gte('created_at', since);
+        const activeSet = new Set((activeHist || []).map(h => normalizePhone(h.customer_phone)).filter(Boolean));
+        allContacts = allContacts.filter(c => activeSet.has(c.phone));
+    }
+    else if (audience === 'customers') {
+        const { data: bList } = await supabase_1.supabaseAdmin
+            .from('bookings')
+            .select('phone')
+            .eq('org_id', orgId);
+        const customerSet = new Set((bList || []).map(b => normalizePhone(b.phone)).filter(Boolean));
+        allContacts = allContacts.filter(c => customerSet.has(c.phone));
+    }
+    else if (audience === 'leads') {
+        const { data: bList } = await supabase_1.supabaseAdmin
+            .from('bookings')
+            .select('phone')
+            .eq('org_id', orgId);
+        const customerSet = new Set((bList || []).map(b => normalizePhone(b.phone)).filter(Boolean));
+        allContacts = allContacts.filter(c => !customerSet.has(c.phone));
+    }
+    // ─── 2. FILTRAGEM POR TAGS / PALAVRAS-CHAVE ADICIONAIS (FILTROS) ───
+    const rawTags = filters?.tags;
+    const filterTags = Array.isArray(rawTags)
+        ? rawTags.map((t) => String(t).trim().toLowerCase()).filter(Boolean)
+        : (typeof rawTags === 'string'
+            ? rawTags.split(',').map((t) => t.trim().toLowerCase()).filter(Boolean)
+            : []);
+    if (filterTags.length > 0) {
+        allContacts = allContacts.filter(c => {
+            const contactTags = (c.tags || []).map((t) => t.toLowerCase());
+            const notesLower = (c.notes || '').toLowerCase();
+            const sourceLower = (c.source || '').toLowerCase();
+            const nameLower = (c.name || '').toLowerCase();
+            const phoneClean = c.phone;
+            return filterTags.some(tag => {
+                if (contactTags.some(t => t.includes(tag)))
+                    return true;
+                if (notesLower.includes(tag))
+                    return true;
+                if (sourceLower.includes(tag))
+                    return true;
+                if (nameLower.includes(tag))
+                    return true;
+                if (phoneClean.includes(tag))
+                    return true;
+                return false;
+            });
+        });
+    }
+    // ─── 3. EXCLUSÃO TEMPORÁRIA (POR ENVIO) ───
+    const excludePhones = Array.isArray(filters?.exclude_phones) ? filters.exclude_phones.map(normalizePhone).filter(Boolean) : [];
+    if (excludePhones.length > 0) {
+        const excludeSet = new Set(excludePhones);
+        allContacts = allContacts.filter(c => !excludeSet.has(c.phone));
+    }
+    return allContacts;
+}
+// Controle em memória de campanhas ativas e pausadas
+exports.pausedCampaigns = new Set();
+exports.runningCampaigns = new Set();
+/** Executa o disparo em massa da campanha em segundo plano */
+async function processCampaign(campaignId, orgId) {
+    if (exports.runningCampaigns.has(campaignId)) {
+        console.log(`[CAMPAIGN WORKER] Campanha ${campaignId} já está a ser processada.`);
+        return;
+    }
+    exports.runningCampaigns.add(campaignId);
+    exports.pausedCampaigns.delete(campaignId);
+    try {
+        const { data: campaign } = await supabase_1.supabaseAdmin
+            .from('campaigns')
+            .select('*')
+            .eq('id', campaignId)
+            .single();
+        if (!campaign)
+            return;
+        // Se estiver cancelada ou pausada, aborta
+        if (campaign.status === 'CANCELLED' || campaign.status === 'PAUSED')
+            return;
+        // Se estava agendada, atualiza para SENDING
+        if (campaign.status === 'SCHEDULED') {
+            await supabase_1.supabaseAdmin
+                .from('campaigns')
+                .update({ status: 'SENDING', updated_at: new Date().toISOString() })
+                .eq('id', campaignId);
+        }
+        // Buscar template associado para pegar conteúdo e botões
+        const { data: tmpl } = await supabase_1.supabaseAdmin
+            .from('templates')
+            .select('*')
+            .eq('org_id', orgId)
+            .eq('name', campaign.template)
+            .maybeSingle();
+        const templateContent = tmpl?.content || '';
+        const templateLanguage = tmpl?.language || 'pt_BR';
+        const templateButtons = campaign.buttons && campaign.buttons.length > 0
+            ? campaign.buttons
+            : (tmpl?.buttons || []);
+        // Buscar credenciais WhatsApp (com fallback robusto)
+        const { data: waConfig } = await supabase_1.supabaseAdmin
+            .from('whatsapp_config')
+            .select('phone_number_id, access_token')
+            .eq('org_id', orgId)
+            .maybeSingle();
+        const phoneNumberId = waConfig?.phone_number_id || process.env.META_PHONE_NUMBER_ID || process.env.DEFAULT_PHONE_NUMBER_ID || '';
+        const accessToken = waConfig?.access_token || process.env.META_ACCESS_TOKEN || '';
+        // Buscar dados da organização (nome da empresa) para preenchimento de variáveis
+        const { data: orgData } = await supabase_1.supabaseAdmin
+            .from('organizations')
+            .select('name, first_name')
+            .eq('id', orgId)
+            .maybeSingle();
+        const companyName = (orgData?.name && orgData.name.trim() !== '')
+            ? orgData.name.trim()
+            : (orgData?.first_name ? `${orgData.first_name.trim()} Empresa` : 'Nossa Empresa');
+        // Resolver contatos da audiência selecionada
+        const targetContacts = await resolveCampaignAudience(orgId, campaign.audience || 'all', campaign.filters);
+        if (targetContacts.length === 0) {
+            await supabase_1.supabaseAdmin.from('campaigns').update({
+                status: 'COMPLETED',
+                progress: 100,
+                total_contacts: 0
+            }).eq('id', campaignId);
+            return;
+        }
+        // Buscar logs de envios já efetuados (caso a campanha esteja a ser retomada após pausa)
+        const { data: existingLogs } = await supabase_1.supabaseAdmin
+            .from('campaign_logs')
+            .select('customer_phone')
+            .eq('campaign_id', campaignId);
+        const processedPhoneSet = new Set((existingLogs || []).map(l => l.customer_phone).filter(Boolean));
+        let sentCount = campaign.sent_count || 0;
+        let failedCount = campaign.failed_count || 0;
+        await supabase_1.supabaseAdmin.from('campaigns').update({
+            total_contacts: targetContacts.length,
+            status: 'SENDING'
+        }).eq('id', campaignId);
+        const delaySec = campaign.filters?.delay_seconds || 5;
+        let isPaused = false;
+        let isCancelled = false;
+        for (let i = 0; i < targetContacts.length; i++) {
+            const contact = targetContacts[i];
+            if (!contact.phone)
+                continue;
+            const normalizedTargetPhone = contact.phone.replace(/\D/g, '');
+            // 1. Verificação de interrupção (em memória e no banco)
+            if (exports.pausedCampaigns.has(campaignId)) {
+                isPaused = true;
+                break;
+            }
+            const { data: currentCamp } = await supabase_1.supabaseAdmin
+                .from('campaigns')
+                .select('status')
+                .eq('id', campaignId)
+                .single();
+            if (currentCamp?.status === 'PAUSED') {
+                isPaused = true;
+                break;
+            }
+            if (currentCamp?.status === 'CANCELLED') {
+                isCancelled = true;
+                break;
+            }
+            // Se já foi processado nesta campanha (em execução anterior à pausa), pula
+            if (processedPhoneSet.has(normalizedTargetPhone) || processedPhoneSet.has(contact.phone)) {
+                continue;
+            }
+            // Resolução inteligente e precisa das variáveis para este contato específico
+            const { variablesForMeta, renderedText } = whatsapp_service_1.WhatsAppService.resolveVariables(templateContent, campaign.template_variables || {}, contact, companyName);
+            let sentId = null;
+            if (phoneNumberId && accessToken) {
+                sentId = await whatsapp_service_1.WhatsAppService.sendTemplateMessage(phoneNumberId, contact.phone, campaign.template, templateLanguage, variablesForMeta, templateButtons, accessToken, renderedText);
+            }
+            else if (templateButtons && templateButtons.length > 0) {
+                const formattedBtns = templateButtons.map((b, idx) => ({
+                    id: b.id || `btn_${idx + 1}`,
+                    title: b.text || b.title || `Opção ${idx + 1}`
+                }));
+                sentId = await whatsapp_service_1.WhatsAppService.sendInteractiveButtons(process.env.DEFAULT_PHONE_NUMBER_ID || '', contact.phone, renderedText, formattedBtns);
+            }
+            else if (renderedText) {
+                sentId = await whatsapp_service_1.WhatsAppService.sendTextMessage(process.env.DEFAULT_PHONE_NUMBER_ID || '', contact.phone, renderedText);
+            }
+            if (sentId) {
+                sentCount++;
+                // 1. Gravar mensagem enviada no histórico de conversa com metadata da campanha
+                try {
+                    await supabase_1.supabaseAdmin.from('conversation_history').insert({
+                        org_id: orgId,
+                        customer_phone: normalizedTargetPhone,
+                        sender: 'bot',
+                        text: renderedText,
+                        metadata: {
+                            is_campaign: true,
+                            campaign_id: campaignId,
+                            campaign_name: campaign.name,
+                            template_name: campaign.template,
+                            buttons: templateButtons,
+                            variables: variablesForMeta,
+                            message_id: sentId,
+                            platform: 'whatsapp',
+                            raw_phone: contact.phone
+                        }
+                    });
+                    // 2. Notificar o Live Chat em tempo real via Socket.io
+                    try {
+                        (0, socket_1.getIo)().to(`org:${orgId}`).emit('new_message', {
+                            phone: normalizedTargetPhone,
+                            sender: 'bot',
+                            text: renderedText,
+                            time: new Date().toLocaleTimeString('pt-PT', { timeZone: 'Africa/Luanda', hour: '2-digit', minute: '2-digit' }),
+                            timestamp: new Date().toISOString(),
+                            platform: 'whatsapp',
+                            metadata: {
+                                is_campaign: true,
+                                campaign_id: campaignId,
+                                campaign_name: campaign.name,
+                                buttons: templateButtons,
+                                message_id: sentId
+                            }
+                        });
+                    }
+                    catch (_) { }
+                }
+                catch (histErr) {
+                    console.warn('[CAMPAIGN] Erro ao gravar mensagem no conversation_history:', histErr.message);
+                }
+            }
+            else {
+                failedCount++;
+            }
+            processedPhoneSet.add(normalizedTargetPhone);
+            // Gravar log individual por número de telefone para o relatório
+            try {
+                await supabase_1.supabaseAdmin.from('campaign_logs').insert({
+                    campaign_id: campaignId,
+                    org_id: orgId,
+                    customer_phone: normalizedTargetPhone,
+                    customer_name: contact.name || null,
+                    status: sentId ? 'sent' : 'failed',
+                    message_id: sentId || null
+                });
+            }
+            catch (logErr) {
+                console.warn('[CAMPAIGN LOGS] Erro ao gravar log individual:', logErr.message);
+            }
+            const totalProcessed = sentCount + failedCount;
+            const progress = Math.min(100, Math.round((totalProcessed / targetContacts.length) * 100));
+            await supabase_1.supabaseAdmin.from('campaigns').update({
+                progress,
+                sent_count: sentCount,
+                failed_count: failedCount
+            }).eq('id', campaignId);
+            // Intervalo entre envios (responsivo a cancelamento/pausa a cada 250ms)
+            if (i < targetContacts.length - 1) {
+                const totalSleepMs = delaySec * 1000;
+                const stepMs = 250;
+                let waited = 0;
+                while (waited < totalSleepMs) {
+                    if (exports.pausedCampaigns.has(campaignId)) {
+                        isPaused = true;
+                        break;
+                    }
+                    await sleep(Math.min(stepMs, totalSleepMs - waited));
+                    waited += stepMs;
+                }
+                if (isPaused)
+                    break;
+            }
+        }
+        if (isPaused) {
+            console.log(`[CAMPAIGN WORKER] ⏸️ Campanha ${campaignId} pausada com sucesso.`);
+            await supabase_1.supabaseAdmin.from('campaigns').update({
+                status: 'PAUSED',
+                updated_at: new Date().toISOString()
+            }).eq('id', campaignId);
+            return;
+        }
+        if (isCancelled) {
+            console.log(`[CAMPAIGN WORKER] 🛑 Campanha ${campaignId} cancelada com sucesso.`);
+            await supabase_1.supabaseAdmin.from('campaigns').update({
+                status: 'CANCELLED',
+                updated_at: new Date().toISOString()
+            }).eq('id', campaignId);
+            return;
+        }
+        // Apenas se concluiu o envio de todos os contatos
+        await supabase_1.supabaseAdmin.from('campaigns').update({
+            status: 'COMPLETED',
+            progress: 100,
+            updated_at: new Date().toISOString()
+        }).eq('id', campaignId);
+    }
+    catch (err) {
+        console.error(`[CAMPAIGN WORKER] Erro ao processar campanha ${campaignId}:`, err.message);
+        await supabase_1.supabaseAdmin.from('campaigns').update({ status: 'FAILED' }).eq('id', campaignId);
+    }
+    finally {
+        exports.runningCampaigns.delete(campaignId);
+        exports.pausedCampaigns.delete(campaignId);
+    }
+}
+// Iniciar disparo de campanha
+router.post('/send', auth_1.requireAuth, async (req, res) => {
+    try {
+        const orgId = req.user.orgId;
+        const { name, template, template_variables, buttons, audience, filters, delay_seconds, contact_ids, target_phones, exclude_phones, scheduled_at } = req.body;
+        if (!name || !template) {
+            return res.status(400).json({ error: 'Nome e template são obrigatórios.' });
+        }
+        // Verificar se foi solicitado agendamento para data/hora futura
+        let isScheduled = false;
+        let scheduledDateIso = null;
+        if (scheduled_at) {
+            const parsedDate = new Date(scheduled_at);
+            if (!isNaN(parsedDate.getTime()) && parsedDate.getTime() > Date.now()) {
+                isScheduled = true;
+                scheduledDateIso = parsedDate.toISOString();
+            }
+        }
+        const campaignStatus = isScheduled ? 'SCHEDULED' : 'SENDING';
+        const parsedTags = filters
+            ? (typeof filters === 'string' ? filters.split(',').map((t) => t.trim()).filter(Boolean) : filters)
+            : [];
+        const campaignFilters = {
+            tags: parsedTags,
+            delay_seconds: Number(delay_seconds) || 5,
+            contact_ids: Array.isArray(contact_ids) ? contact_ids.filter(Boolean) : [],
+            target_phones: Array.isArray(target_phones) ? target_phones.filter(Boolean) : [],
+            exclude_phones: Array.isArray(exclude_phones) ? exclude_phones.filter(Boolean) : [],
+            scheduled_at: scheduledDateIso
+        };
+        // 1. Resolver audiência com antecedência para validar alvos
+        const targetContacts = await resolveCampaignAudience(orgId, audience || 'all', campaignFilters);
+        if (targetContacts.length === 0) {
+            return res.status(400).json({
+                error: 'Nenhum contato encontrado para o público ou filtros selecionados. Verifique se os filtros estão corretos ou selecione ao menos um contato.'
+            });
+        }
+        // 2. Registra a campanha no histórico
+        const insertPayload = {
+            org_id: orgId,
+            name,
+            template,
+            template_variables: template_variables || {},
+            buttons: buttons || [],
+            audience: audience || 'all',
+            status: campaignStatus,
+            progress: 0,
+            total_contacts: targetContacts.length,
+            filters: campaignFilters
+        };
+        if (scheduledDateIso) {
+            insertPayload.scheduled_at = scheduledDateIso;
+        }
+        let insertResult = await supabase_1.supabaseAdmin
+            .from('campaigns')
+            .insert(insertPayload)
+            .select()
+            .single();
+        // Fallback: se a coluna scheduled_at ainda não existir no schema do Supabase, salvar sem a coluna (já está em filters.scheduled_at)
+        if (insertResult.error && insertResult.error.message.includes('scheduled_at')) {
+            delete insertPayload.scheduled_at;
+            insertResult = await supabase_1.supabaseAdmin
+                .from('campaigns')
+                .insert(insertPayload)
+                .select()
+                .single();
+        }
+        if (insertResult.error)
+            throw insertResult.error;
+        const data = insertResult.data;
+        // 3. Execução imediata vs Agendada
+        if (!isScheduled) {
+            processCampaign(data.id, orgId).catch(err => {
+                console.error(`[CAMPAIGN WORKER] Falha em background para ${data.id}:`, err.message);
+            });
+            res.status(200).json({
+                message: `Campanha iniciada com sucesso para ${targetContacts.length} contato(s)! O progresso será atualizado em tempo real.`,
+                campaignId: data.id,
+                totalContacts: targetContacts.length,
+                status: 'SENDING'
+            });
+        }
+        else {
+            const formattedDate = new Date(scheduledDateIso).toLocaleString('pt-BR');
+            res.status(200).json({
+                message: `Campanha calendarizada com sucesso para ${formattedDate}! O disparo ocorrerá automaticamente na data e hora definidas.`,
+                campaignId: data.id,
+                totalContacts: targetContacts.length,
+                scheduled_at: scheduledDateIso,
+                status: 'SCHEDULED'
+            });
+        }
+    }
+    catch (error) {
+        console.error('[CAMPAIGN] Erro ao criar campanha:', error.message);
+        res.status(500).json({ error: error.message });
+    }
+});
+// Pré-visualizar quantidade de contatos com filtros aplicados
+router.post('/preview-audience', auth_1.requireAuth, async (req, res) => {
+    try {
+        const orgId = req.user.orgId;
+        const { audience, filters, contact_ids, target_phones } = req.body;
+        const parsedTags = filters
+            ? (typeof filters === 'string' ? filters.split(',').map((t) => t.trim()).filter(Boolean) : filters)
+            : [];
+        const contacts = await resolveCampaignAudience(orgId, audience || 'all', {
+            tags: parsedTags,
+            contact_ids: Array.isArray(contact_ids) ? contact_ids.filter(Boolean) : [],
+            target_phones: Array.isArray(target_phones) ? target_phones.filter(Boolean) : []
+        });
+        res.json({
+            count: contacts.length,
+            sample: contacts.slice(0, 5).map(c => ({ phone: c.phone, name: c.name })),
+            contacts: contacts.map(c => ({ id: c.id || null, phone: c.phone, name: c.name, email: c.email || null, source: c.source || null }))
+        });
+    }
+    catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+// Obter relatório detalhado da campanha (inclui números que receberam o disparo)
+router.get('/:id/report', auth_1.requireAuth, async (req, res) => {
+    try {
+        const orgId = req.user.orgId;
+        const { id } = req.params;
+        const { data: campaign, error: campErr } = await supabase_1.supabaseAdmin
+            .from('campaigns')
+            .select('*')
+            .eq('id', id)
+            .eq('org_id', orgId)
+            .single();
+        if (campErr || !campaign) {
+            return res.status(404).json({ error: 'Campanha não encontrada.' });
+        }
+        const { data: logs } = await supabase_1.supabaseAdmin
+            .from('campaign_logs')
+            .select('*')
+            .eq('campaign_id', id)
+            .order('created_at', { ascending: false });
+        res.json({
+            campaign: {
+                id: campaign.id,
+                name: campaign.name,
+                template: campaign.template,
+                buttons: campaign.buttons || [],
+                status: campaign.status,
+                progress: campaign.progress || 0,
+                sentCount: campaign.sent_count || 0,
+                failedCount: campaign.failed_count || 0,
+                audience: campaign.audience || 'all',
+                scheduledAt: campaign.scheduled_at || campaign.filters?.scheduled_at || null,
+                scheduledAtFormatted: (campaign.scheduled_at || campaign.filters?.scheduled_at)
+                    ? new Date(campaign.scheduled_at || campaign.filters?.scheduled_at).toLocaleDateString('pt-BR', {
+                        day: '2-digit', month: '2-digit', year: 'numeric',
+                        hour: '2-digit', minute: '2-digit'
+                    })
+                    : null,
+                date: new Date(campaign.created_at).toLocaleDateString('pt-BR', {
+                    day: '2-digit', month: '2-digit', year: 'numeric',
+                    hour: '2-digit', minute: '2-digit'
+                })
+            },
+            logs: (logs || []).map((l) => ({
+                id: l.id,
+                phone: l.customer_phone,
+                name: l.customer_name || 'Sem nome',
+                status: l.status,
+                messageId: l.message_id,
+                sentAt: new Date(l.created_at).toLocaleDateString('pt-BR', {
+                    day: '2-digit', month: '2-digit', year: 'numeric',
+                    hour: '2-digit', minute: '2-digit'
+                })
+            }))
+        });
+    }
+    catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+// Listar histórico de campanhas
+router.get('/', auth_1.requireAuth, async (req, res) => {
+    try {
+        const orgId = req.user.orgId;
+        const { data, error } = await supabase_1.supabaseAdmin
+            .from('campaigns')
+            .select('*')
+            .eq('org_id', orgId)
+            .order('created_at', { ascending: false });
+        if (error && error.code !== 'PGRST116')
+            throw error;
+        const campaigns = (data || []).map((c) => {
+            const scheduledAtRaw = c.scheduled_at || c.filters?.scheduled_at || null;
+            let scheduledAtFormatted = null;
+            if (scheduledAtRaw) {
+                try {
+                    scheduledAtFormatted = new Date(scheduledAtRaw).toLocaleDateString('pt-BR', {
+                        day: '2-digit', month: '2-digit', year: 'numeric',
+                        hour: '2-digit', minute: '2-digit'
+                    });
+                }
+                catch (_) { }
+            }
+            return {
+                id: c.id,
+                name: c.name,
+                template: c.template,
+                buttons: c.buttons || [],
+                status: c.status,
+                progress: c.progress || 0,
+                sentCount: c.sent_count || 0,
+                failedCount: c.failed_count || 0,
+                totalContacts: c.total_contacts || 0,
+                scheduledAt: scheduledAtRaw,
+                scheduledAtFormatted,
+                date: new Date(c.created_at).toLocaleDateString('pt-BR', {
+                    day: '2-digit', month: '2-digit', year: 'numeric',
+                    hour: '2-digit', minute: '2-digit'
+                })
+            };
+        });
+        res.json({ campaigns });
+    }
+    catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+// ─── Pausar / Cancelar / Disparar campanha ────────────────────────────────────
+router.patch('/:id/status', auth_1.requireAuth, async (req, res) => {
+    try {
+        const orgId = req.user.orgId;
+        const { id } = req.params;
+        const { status } = req.body; // 'PAUSED' | 'CANCELLED' | 'SENDING' | 'SCHEDULED'
+        const allowed = ['PAUSED', 'CANCELLED', 'SENDING', 'SCHEDULED'];
+        if (!allowed.includes(status)) {
+            return res.status(400).json({ error: 'Status inválido.' });
+        }
+        if (status === 'PAUSED' || status === 'CANCELLED') {
+            exports.pausedCampaigns.add(id);
+        }
+        else if (status === 'SENDING') {
+            exports.pausedCampaigns.delete(id);
+        }
+        const { error } = await supabase_1.supabaseAdmin
+            .from('campaigns')
+            .update({
+            status,
+            updated_at: new Date().toISOString()
+        })
+            .eq('id', id)
+            .eq('org_id', orgId);
+        if (error)
+            throw error;
+        // Se o usuário optou por disparar imediatamente uma campanha agendada ou retomar pausada
+        if (status === 'SENDING') {
+            if (!exports.runningCampaigns.has(id)) {
+                processCampaign(id, orgId).catch(err => {
+                    console.error(`[CAMPAIGN WORKER] Falha ao iniciar/retomar ${id}:`, err.message);
+                });
+            }
+        }
+        res.json({ success: true, status });
+    }
+    catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+// ─── Disparar campanha agendada agora (atalho) ─────────────────────────────────
+router.post('/:id/trigger', auth_1.requireAuth, async (req, res) => {
+    try {
+        const orgId = req.user.orgId;
+        const { id } = req.params;
+        exports.pausedCampaigns.delete(id);
+        const { error } = await supabase_1.supabaseAdmin
+            .from('campaigns')
+            .update({
+            status: 'SENDING',
+            updated_at: new Date().toISOString()
+        })
+            .eq('id', id)
+            .eq('org_id', orgId);
+        if (error)
+            throw error;
+        if (!exports.runningCampaigns.has(id)) {
+            processCampaign(id, orgId).catch(err => {
+                console.error(`[CAMPAIGN WORKER] Falha ao disparar ${id}:`, err.message);
+            });
+        }
+        res.json({ success: true, message: 'Disparo da campanha iniciado com sucesso!' });
+    }
+    catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+// ─── Excluir log individual da campanha ───────────────────────────────────────
+router.delete('/:id/logs/:logId', auth_1.requireAuth, async (req, res) => {
+    try {
+        const orgId = req.user.orgId;
+        const { id, logId } = req.params;
+        const { error } = await supabase_1.supabaseAdmin
+            .from('campaign_logs')
+            .delete()
+            .eq('id', logId)
+            .eq('campaign_id', id)
+            .eq('org_id', orgId);
+        if (error)
+            throw error;
+        res.json({ success: true });
+    }
+    catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+// ─── Listar contatos da organização ──────────────────────────────────────────
+router.get('/contacts', auth_1.requireAuth, async (req, res) => {
+    try {
+        const orgId = req.user.orgId;
+        const { data, error } = await supabase_1.supabaseAdmin
+            .from('contacts')
+            .select('*')
+            .eq('org_id', orgId)
+            .order('created_at', { ascending: false });
+        if (error)
+            throw error;
+        res.json({ contacts: data || [] });
+    }
+    catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+// ─── Excluir contato ──────────────────────────────────────────────────────────
+router.delete('/contacts/:contactId', auth_1.requireAuth, async (req, res) => {
+    try {
+        const orgId = req.user.orgId;
+        const { contactId } = req.params;
+        const { error } = await supabase_1.supabaseAdmin
+            .from('contacts')
+            .delete()
+            .eq('id', contactId)
+            .eq('org_id', orgId);
+        if (error)
+            throw error;
+        res.json({ success: true });
+    }
+    catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+// ─── Upload de lista de contatos (Excel / CSV / TXT) ─────────────────────────
+router.post('/contacts/upload', auth_1.requireAuth, upload.single('file'), async (req, res) => {
+    try {
+        const orgId = req.user.orgId;
+        const file = req.file;
+        if (!file)
+            return res.status(400).json({ error: 'Nenhum ficheiro enviado.' });
+        const ext = (file.originalname || '').toLowerCase();
+        const contacts = [];
+        const normalizePhone = (raw) => raw?.toString().replace(/[^\d+]/g, '').trim();
+        if (ext.endsWith('.pdf')) {
+            // PDF: tentativa de extração de texto via pdf-parse
+            let pdfParse;
+            try {
+                pdfParse = require('pdf-parse');
+            }
+            catch { /* not installed */ }
+            if (!pdfParse) {
+                return res.status(422).json({ error: 'Suporte a PDF não disponível no servidor. Use Excel ou CSV.' });
+            }
+            const pdfData = await pdfParse(file.buffer);
+            const lines = pdfData.text.split(/[\r\n]+/).map((l) => l.trim()).filter(Boolean);
+            // Tenta extrair números de telefone de cada linha
+            const phoneRegex = /(?:\+?\d[\d\s\-().]{6,}\d)/g;
+            for (const line of lines) {
+                const matches = line.match(phoneRegex);
+                if (matches) {
+                    for (const m of matches) {
+                        const phone = normalizePhone(m);
+                        if (phone.length >= 8) {
+                            contacts.push({ phone, name: 'Contato' });
+                        }
+                    }
+                }
+            }
+        }
+        else {
+            // Excel / CSV / TXT → parsear com XLSX
+            const workbook = XLSX.read(file.buffer, { type: 'buffer' });
+            const sheetName = workbook.SheetNames[0];
+            const sheet = workbook.Sheets[sheetName];
+            const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+            for (const row of rows) {
+                // Detecta coluna de telefone (procura variações comuns de header)
+                const phoneKeys = ['phone', 'telefone', 'tel', 'celular', 'numero', 'número', 'mobile', 'whatsapp', 'fone', 'Phone', 'Telefone'];
+                const nameKeys = ['name', 'nome', 'Name', 'Nome', 'contato', 'Contato', 'cliente', 'Cliente'];
+                const emailKeys = ['email', 'e-mail', 'Email', 'E-mail'];
+                let rawPhone = '';
+                for (const k of phoneKeys) {
+                    if (row[k] !== undefined && row[k] !== '') {
+                        rawPhone = String(row[k]);
+                        break;
+                    }
+                }
+                // Fallback: primeira coluna numérica
+                if (!rawPhone) {
+                    for (const val of Object.values(row)) {
+                        const s = String(val).replace(/[^\d]/g, '');
+                        if (s.length >= 8) {
+                            rawPhone = String(val);
+                            break;
+                        }
+                    }
+                }
+                let rawName = '';
+                for (const k of nameKeys) {
+                    if (row[k] !== undefined && row[k] !== '') {
+                        rawName = String(row[k]);
+                        break;
+                    }
+                }
+                let rawEmail = '';
+                for (const k of emailKeys) {
+                    if (row[k] !== undefined && row[k] !== '') {
+                        rawEmail = String(row[k]);
+                        break;
+                    }
+                }
+                const phone = normalizePhone(rawPhone);
+                if (phone.length >= 8) {
+                    contacts.push({ phone, name: rawName || 'Contato', email: rawEmail || undefined });
+                }
+            }
+        }
+        if (contacts.length === 0) {
+            return res.status(422).json({ error: 'Nenhum número de telefone válido encontrado no ficheiro. Verifique se o ficheiro contém uma coluna "Telefone" ou "Phone".' });
+        }
+        // Upsert na tabela contacts
+        const inserts = contacts.map(c => ({
+            org_id: orgId,
+            phone: c.phone,
+            name: c.name,
+            email: c.email || null,
+            source: 'upload'
+        }));
+        const { error: upsertErr } = await supabase_1.supabaseAdmin
+            .from('contacts')
+            .upsert(inserts, { onConflict: 'org_id, phone' });
+        if (upsertErr)
+            throw upsertErr;
+        res.json({
+            success: true,
+            imported: contacts.length,
+            message: `${contacts.length} contato(s) importado(s) com sucesso.`
+        });
+    }
+    catch (error) {
+        console.error('[CONTACTS UPLOAD] Erro:', error.message);
+        res.status(500).json({ error: error.message });
+    }
+});
+exports.default = router;

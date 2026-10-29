@@ -1,0 +1,798 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.BookingService = void 0;
+const supabase_1 = require("../config/supabase");
+const calendar_service_1 = require("./calendar.service");
+const email_service_1 = require("./email.service");
+const telcosms_service_1 = require("./telcosms.service");
+const google_sheets_service_1 = require("./google_sheets.service");
+const followup_service_1 = require("./followup.service");
+class BookingService {
+    /**
+     * Valida estritamente se todos os 5 dados obrigatórios foram fornecidos:
+     * 1. Nome do cliente
+     * 2. Assunto / Serviço
+     * 3. Pelo menos um contacto válido (Telefone OU E-mail)
+     * 4. Dia / Data válida (YYYY-MM-DD)
+     * 5. Hora válida (HH:MM)
+     */
+    static validateBookingData(input) {
+        const missingFields = [];
+        const name = (input.name || '').trim();
+        if (!name || name.length < 2) {
+            missingFields.push('Nome do cliente');
+        }
+        const subject = (input.subject || '').trim();
+        if (!subject || subject.length < 2) {
+            missingFields.push('Assunto / Serviço');
+        }
+        const email = (input.email || '').trim().toLowerCase();
+        const hasValidEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+        const phoneRaw = (input.phone || '').trim();
+        const phoneClean = phoneRaw.replace(/[^\d+]/g, '');
+        const hasValidPhone = phoneClean.length >= 8;
+        if (!hasValidEmail && !hasValidPhone) {
+            missingFields.push('Contacto (Telefone ou E-mail válido)');
+        }
+        const date = (input.date || '').trim();
+        const isoDateMatch = date.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+        let hasValidDate = false;
+        if (isoDateMatch) {
+            const year = parseInt(isoDateMatch[1], 10);
+            const month = parseInt(isoDateMatch[2], 10);
+            const day = parseInt(isoDateMatch[3], 10);
+            if (year >= 2024 && month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+                hasValidDate = true;
+            }
+        }
+        if (!hasValidDate) {
+            missingFields.push('Data válida (formato YYYY-MM-DD)');
+        }
+        let time = (input.time || '').trim();
+        if (time.length === 5) {
+            time = `${time}:00`;
+        }
+        const timeMatch = time.match(/^([0-1]?[0-9]|2[0-3]):([0-5][0-9])(:[0-5][0-9])?$/);
+        if (!timeMatch) {
+            missingFields.push('Hora válida (formato HH:MM)');
+        }
+        else {
+            time = `${timeMatch[1].padStart(2, '0')}:${timeMatch[2]}`;
+        }
+        if (missingFields.length > 0) {
+            return {
+                isValid: false,
+                missingFields,
+                errorMessage: `Não é possível agendar. Campos obrigatórios em falta: ${missingFields.join(', ')}.`,
+            };
+        }
+        // ── Validação Temporal Estrita (Bloqueio do Passado no fuso de Angola WAT / UTC+1) ──
+        try {
+            const now = new Date();
+            const formatterOpts = { timeZone: 'Africa/Luanda' };
+            const yStr = new Intl.DateTimeFormat('pt-PT', { ...formatterOpts, year: 'numeric' }).format(now);
+            const mStr = new Intl.DateTimeFormat('pt-PT', { ...formatterOpts, month: '2-digit' }).format(now);
+            const dStr = new Intl.DateTimeFormat('pt-PT', { ...formatterOpts, day: '2-digit' }).format(now);
+            const hStr = new Intl.DateTimeFormat('pt-PT', { ...formatterOpts, hour: '2-digit', hour12: false }).format(now).padStart(2, '0');
+            const minStr = new Intl.DateTimeFormat('pt-PT', { ...formatterOpts, minute: '2-digit' }).format(now).padStart(2, '0');
+            const todayIso = `${yStr}-${mStr}-${dStr}`;
+            const currentTime = `${hStr}:${minStr}`;
+            if (date < todayIso) {
+                return {
+                    isValid: false,
+                    missingFields: [],
+                    errorMessage: `Não é possível agendar compromissos em datas que já passaram (${date}). A data de hoje é ${todayIso}.`,
+                };
+            }
+            if (date === todayIso && time < currentTime) {
+                return {
+                    isValid: false,
+                    missingFields: [],
+                    errorMessage: `Não é possível agendar compromissos em horários que já passaram (${time}). A hora atual é ${currentTime}.`,
+                };
+            }
+        }
+        catch (dateErr) {
+            console.warn('[BookingService] Aviso ao validar tempo atual:', dateErr.message);
+        }
+        return {
+            isValid: true,
+            missingFields: [],
+            cleanData: {
+                name,
+                subject,
+                email: hasValidEmail ? email : undefined,
+                phone: hasValidPhone ? phoneClean : undefined,
+                date,
+                time,
+            },
+        };
+    }
+    /**
+     * Valida se a data e hora do agendamento estão dentro do horário de atividade da empresa.
+     */
+    static async checkWithinBusinessHours(orgId, dateStr, timeStr) {
+        try {
+            const [year, month, day] = dateStr.split('-').map(Number);
+            const dateObj = new Date(year, month - 1, day);
+            const dayOfWeek = dateObj.getDay(); // 0 = Domingo, 1 = Segunda, etc.
+            // 1. Validar Feriados Nacionais de Angola se a empresa não abre aos feriados
+            const { data: org } = await supabase_1.supabaseAdmin
+                .from('organizations')
+                .select('opens_on_holidays')
+                .eq('id', orgId)
+                .maybeSingle();
+            const opensOnHolidays = Boolean(org?.opens_on_holidays);
+            if (!opensOnHolidays) {
+                const mmDd = `${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                const angolaHolidays = {
+                    '01-01': 'Dia de Ano Novo / Fraternidade Universal',
+                    '02-04': 'Dia do Início da Luta Armada de Libertação Nacional',
+                    '03-08': 'Dia Internacional da Mulher',
+                    '03-23': 'Dia da Libertação da África Austral',
+                    '04-04': 'Dia da Paz e da Reconciliação Nacional',
+                    '05-01': 'Dia Internacional do Trabalhador',
+                    '09-17': 'Dia do Herói Nacional e do Fundador da Nação',
+                    '11-02': 'Dia dos Finados',
+                    '11-11': 'Dia da Independência Nacional',
+                    '12-25': 'Dia de Natal e da Família',
+                };
+                if (angolaHolidays[mmDd]) {
+                    return {
+                        isValid: false,
+                        reason: `A empresa está encerrada aos feriados nacionais (${angolaHolidays[mmDd]} em ${dateStr}).`
+                    };
+                }
+            }
+            // Procurar horários configurados no banco
+            const { data: schedule, error } = await supabase_1.supabaseAdmin
+                .from('business_hours')
+                .select('is_open, open_time, close_time')
+                .eq('org_id', orgId)
+                .eq('day_of_week', dayOfWeek)
+                .maybeSingle();
+            if (error && error.code !== 'PGRST116') {
+                console.warn('[BookingService] Erro ao buscar business_hours:', error.message);
+            }
+            // Horários padrão se não estiverem configurados no banco de dados
+            const defaultSchedule = {
+                0: { is_open: false, open_time: '08:00', close_time: '12:00' }, // Domingo
+                1: { is_open: true, open_time: '08:00', close_time: '18:00' }, // Segunda
+                2: { is_open: true, open_time: '08:00', close_time: '18:00' }, // Terça
+                3: { is_open: true, open_time: '08:00', close_time: '18:00' }, // Quarta
+                4: { is_open: true, open_time: '08:00', close_time: '18:00' }, // Quinta
+                5: { is_open: true, open_time: '08:00', close_time: '18:00' }, // Sexta
+                6: { is_open: true, open_time: '08:00', close_time: '13:00' }, // Sábado
+            }[dayOfWeek];
+            const is_open = schedule ? schedule.is_open : defaultSchedule.is_open;
+            const open_time = schedule?.open_time || defaultSchedule.open_time;
+            const close_time = schedule?.close_time || defaultSchedule.close_time;
+            const dayNames = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
+            const dayName = dayNames[dayOfWeek];
+            if (!is_open) {
+                return { isValid: false, reason: `A empresa está fechada ao ${dayName}.` };
+            }
+            const cleanTime = timeStr.substring(0, 5);
+            const cleanOpen = open_time.substring(0, 5);
+            const cleanClose = close_time.substring(0, 5);
+            if (cleanTime < cleanOpen || cleanTime > cleanClose) {
+                return {
+                    isValid: false,
+                    reason: `Horário de agendamento (${cleanTime}) fora do expediente de ${dayName} (${cleanOpen} às ${cleanClose}).`
+                };
+            }
+            return { isValid: true };
+        }
+        catch (err) {
+            console.warn('[BookingService] Erro na validação de horário comercial (fallback para válido):', err.message);
+            return { isValid: true };
+        }
+    }
+    /**
+     * Gera uma hora aleatória no horário comercial (entre 08:00 e 17:00) para envio nos dias anteriores
+     */
+    static getRandomBusinessHour(targetDate) {
+        const scheduled = new Date(targetDate);
+        // Hora aleatória entre 8 e 16 (ex: 8h34, 14h15, 16h48)
+        const randomHour = 8 + Math.floor(Math.random() * 9); // 8 a 16
+        const randomMinute = Math.floor(Math.random() * 60);
+        const randomSecond = Math.floor(Math.random() * 60);
+        scheduled.setHours(randomHour, randomMinute, randomSecond, 0);
+        return scheduled;
+    }
+    /**
+     * Processa o agendamento completo:
+     * 1. Valida todos os dados obrigatórios
+     * 2. Salva na base de dados (tabela bookings) evitando duplicações
+     * 3. Sincroniza com o Google Calendar sem duplicar eventos
+     * 4. Envia alerta instantâneo (E-mail e/ou SMS)
+     * 5. Programa alertas de 7 dias antes (horário comercial aleatório 08h-17h), 72h antes (horário comercial 08h-17h) e no dia às 07:00
+     */
+    static async processBooking(orgId, input, options) {
+        const validation = this.validateBookingData(input);
+        if (!validation.isValid || !validation.cleanData) {
+            console.warn(`[BookingService] ⚠️ Tentativa de agendamento rejeitada por falta de dados: ${validation.errorMessage}`);
+            return {
+                success: false,
+                alertsScheduled: 0,
+                error: validation.errorMessage,
+            };
+        }
+        const { name, subject, phone, email, date, time } = validation.cleanData;
+        // Validar horário de expediente
+        const bhCheck = await this.checkWithinBusinessHours(orgId, date, time);
+        if (!bhCheck.isValid) {
+            console.warn(`[BookingService] ⚠️ Rejeitando agendamento fora do expediente: ${bhCheck.reason}`);
+            return {
+                success: false,
+                alertsScheduled: 0,
+                error: bhCheck.reason,
+            };
+        }
+        console.log(`[BookingService] 📅 Processando agendamento para ${name} | Data: ${date} ${time} | Assunto: ${subject} | Org: ${orgId}`);
+        // Obter dados da organização para o remetente, telefone e localização
+        let orgData = null;
+        try {
+            const { data } = await supabase_1.supabaseAdmin
+                .from('organizations')
+                .select('name, phone, whatsapp, address, maps_link, telcosms_api_key, telcosms_sender_id')
+                .eq('id', orgId)
+                .maybeSingle();
+            orgData = data;
+        }
+        catch (orgErr) {
+            console.warn('[BookingService] Aviso ao obter dados da organização:', orgErr.message);
+        }
+        const companyName = orgData?.name?.trim() || 'Nossa Empresa';
+        const companyPhone = orgData?.phone?.trim() || orgData?.whatsapp?.trim() || '';
+        const companyAddress = orgData?.address?.trim() || '';
+        const mapsLink = orgData?.maps_link?.trim() || '';
+        // ── 1. Salvar ou Recuperar Agendamento no Banco (Deduplicação) ─────────────
+        let bookingId = undefined;
+        try {
+            const { data: existingBooking } = await supabase_1.supabaseAdmin
+                .from('bookings')
+                .select('id')
+                .eq('org_id', orgId)
+                .eq('appointment_date', date)
+                .eq('appointment_time', time)
+                .maybeSingle();
+            if (existingBooking) {
+                bookingId = existingBooking.id;
+                console.log(`[BookingService] ℹ️ Agendamento já existente na base de dados com ID: ${bookingId}`);
+            }
+            else {
+                const { data: newBooking, error: insertError } = await supabase_1.supabaseAdmin
+                    .from('bookings')
+                    .insert({
+                    org_id: orgId,
+                    first_name: name.split(' ')[0] || name,
+                    last_name: name.split(' ').slice(1).join(' ') || undefined,
+                    email: email || undefined,
+                    phone: phone || 'N/A',
+                    service: subject,
+                    appointment_date: date,
+                    appointment_time: time,
+                })
+                    .select('id')
+                    .single();
+                if (!insertError && newBooking) {
+                    bookingId = newBooking.id;
+                    console.log(`[BookingService] ✅ Novo agendamento inserido na tabela bookings: ${bookingId}`);
+                }
+            }
+        }
+        catch (dbErr) {
+            console.warn('[BookingService] Aviso ao persistir na tabela bookings (não bloqueante):', dbErr.message);
+        }
+        // ── 1b. Sincronização em Tempo Real com a Folha Google Sheets ─────────────
+        google_sheets_service_1.GoogleSheetsService.syncBooking({
+            orgId,
+            name,
+            subject,
+            phone,
+            email,
+            date,
+            time,
+            channel: options?.channelOrigin || 'Chatbot',
+        }).catch(e => console.warn('[BookingService] Aviso ao sincronizar com Google Sheets:', e.message));
+        // ── 2. Sincronização Segura com a Agenda (Google Calendar ou Microsoft Outlook/365) ──
+        let calendarResult = null;
+        try {
+            const descLines = [
+                `Agendamento via Orion Platform (${options?.channelOrigin || 'Chatbot'})`,
+                `Empresa: ${companyName}`,
+                `Assunto: ${subject}`,
+                `Cliente: ${name}`,
+            ];
+            if (phone)
+                descLines.push(`Telefone: ${phone}`);
+            if (email)
+                descLines.push(`Email: ${email}`);
+            if (companyAddress)
+                descLines.push(`Endereço: ${companyAddress}`);
+            if (companyPhone)
+                descLines.push(`Telefone da Empresa: ${companyPhone}`);
+            if (mapsLink)
+                descLines.push(`Localização: [Localizar no Google Maps](${mapsLink})`);
+            calendarResult = await (0, calendar_service_1.syncCalendarEvent)(orgId, {
+                summary: `${subject} - ${name}`,
+                appointmentDate: date,
+                appointmentTime: time,
+                location: companyAddress || mapsLink || undefined,
+                customerName: name,
+                customerEmail: email,
+                customerPhone: phone,
+                description: descLines.join('\n'),
+            });
+            if (calendarResult.success) {
+                console.log(`[BookingService] 📆 Agenda (${calendarResult.provider?.toUpperCase() || 'CALENDAR'}) sincronizada com sucesso! Event ID: ${calendarResult.eventId} (Já existia: ${calendarResult.alreadyExisted})`);
+            }
+            else {
+                console.warn(`[BookingService] ⚠️ Aviso ao sincronizar com a agenda (${calendarResult.provider || 'default'}): ${calendarResult.error}`);
+            }
+        }
+        catch (calErr) {
+            console.error('[BookingService] ❌ Erro ao sincronizar agenda externa:', calErr.message);
+        }
+        // ── 3. Disparo Imediato dos Alertas Instantâneos ──────────────────────────
+        let instantEmailSent = false;
+        let instantSmsSent = false;
+        // Alerta Instantâneo por E-mail
+        if (email) {
+            try {
+                console.log(`[BookingService] ✉️ Disparando e-mail de confirmação instantâneo para ${email}...`);
+                instantEmailSent = await email_service_1.EmailService.sendBookingConfirmationToCustomer({
+                    customerEmail: email,
+                    customerName: name,
+                    date,
+                    time,
+                    subject,
+                    companyName,
+                    companyPhone,
+                    companyAddress,
+                    mapsLink,
+                });
+            }
+            catch (eErr) {
+                console.error('[BookingService] Erro no e-mail instantâneo:', eErr.message);
+            }
+        }
+        // Alerta Instantâneo por SMS
+        if (phone) {
+            try {
+                console.log(`[BookingService] 📱 Disparando SMS de confirmação instantâneo para ${phone}...`);
+                let smsMsg = `Olá ${name}, a sua marcação para ${subject} com ${companyName} no dia ${date} às ${time} foi confirmada com sucesso!`;
+                if (mapsLink) {
+                    smsMsg += ` Localizar no Google Maps: ${mapsLink}`;
+                }
+                smsMsg += ` Obrigado, ${companyName}.`;
+                const smsRes = await telcosms_service_1.TelcoSMSService.sendSMS({
+                    orgId,
+                    to: phone,
+                    message: smsMsg,
+                    apiKey: orgData?.telcosms_api_key,
+                    senderId: orgData?.telcosms_sender_id,
+                });
+                instantSmsSent = smsRes.success;
+            }
+            catch (sErr) {
+                console.error('[BookingService] Erro no SMS instantâneo:', sErr.message);
+            }
+        }
+        // Alerta Instantâneo por E-mail à Empresa Registrada
+        try {
+            console.log(`[BookingService] 🏢 Disparando e-mail de alerta de agendamento à empresa (${companyName})...`);
+            email_service_1.EmailService.sendBookingNotificationToCompany({
+                orgId,
+                customerName: name,
+                customerPhone: phone,
+                customerEmail: email,
+                date,
+                time,
+                subject,
+                companyName,
+                channelOrigin: options?.channelOrigin,
+                isReschedule: false,
+            }).catch(err => console.error('[BookingService] Erro ao enviar email de notificação à empresa:', err.message));
+        }
+        catch (teamMailErr) {
+            console.error('[BookingService] Erro ao disparar email de alerta à empresa:', teamMailErr.message);
+        }
+        // ── 4. Programação dos 3 Estágios de Lembretes Futuros ─────────────────────
+        let alertsScheduled = 0;
+        const channels = email && phone ? 'both' : email ? 'email' : 'sms';
+        // Parse da data e hora do agendamento
+        const [y, m, d] = date.split('-').map(Number);
+        const [h, min] = time.split(':').map(Number);
+        const appointmentDateObj = new Date(y, m - 1, d, h, min, 0);
+        const now = new Date();
+        const remindersToSchedule = [];
+        // Estágio 1: 7 Dias Antes (Em horário comercial aleatório 08:00 - 17:00)
+        const sevenDaysBeforeDate = new Date(appointmentDateObj);
+        sevenDaysBeforeDate.setDate(sevenDaysBeforeDate.getDate() - 7);
+        const scheduled7Days = this.getRandomBusinessHour(sevenDaysBeforeDate);
+        if (scheduled7Days.getTime() > now.getTime()) {
+            remindersToSchedule.push({
+                reminder_stage: '7_days_before',
+                scheduled_at: scheduled7Days.toISOString(),
+            });
+        }
+        // Estágio 2: 3 Dias Antes / 72 Horas Antes (Em horário comercial aleatório 08:00 - 17:00)
+        const threeDaysBeforeDate = new Date(appointmentDateObj);
+        threeDaysBeforeDate.setDate(threeDaysBeforeDate.getDate() - 3);
+        const scheduled3Days = this.getRandomBusinessHour(threeDaysBeforeDate);
+        if (scheduled3Days.getTime() > now.getTime()) {
+            remindersToSchedule.push({
+                reminder_stage: '3_days_before',
+                scheduled_at: scheduled3Days.toISOString(),
+            });
+        }
+        // Estágio 3: No Dia Marcado às 07:00 Horas
+        const dayOf7am = new Date(y, m - 1, d, 7, 0, 0, 0);
+        if (dayOf7am.getTime() > now.getTime()) {
+            remindersToSchedule.push({
+                reminder_stage: 'day_of_7am',
+                scheduled_at: dayOf7am.toISOString(),
+            });
+        }
+        // Estágio 4: Avaliação Pós-Atendimento (Após a data/hora marcada)
+        // Agendado para ~2 horas após o início da consultoria.
+        // Se ultrapassar as 19:00 ou for antes das 09:00, ajusta para as 09:30 da manhã seguinte.
+        const postReviewDate = new Date(appointmentDateObj);
+        postReviewDate.setHours(postReviewDate.getHours() + 2);
+        if (postReviewDate.getHours() >= 19 || postReviewDate.getHours() < 9) {
+            if (postReviewDate.getHours() >= 19) {
+                postReviewDate.setDate(postReviewDate.getDate() + 1);
+            }
+            postReviewDate.setHours(9, 30, 0, 0);
+        }
+        if (postReviewDate.getTime() > now.getTime()) {
+            remindersToSchedule.push({
+                reminder_stage: 'post_appointment_review',
+                scheduled_at: postReviewDate.toISOString(),
+            });
+            // Agendar também no canal de mensagens instantâneas (WhatsApp / Followup Schedules)
+            if (phone) {
+                try {
+                    // Cancelar follow-ups de vendas pendentes para o cliente (todas as variantes)
+                    await followup_service_1.FollowupService.cancelPendingForPhone(orgId, phone);
+                    // Agendar mensagem de avaliação pós-atendimento
+                    await supabase_1.supabaseAdmin
+                        .from('followup_schedules')
+                        .insert({
+                        org_id: orgId,
+                        customer_phone: phone,
+                        platform: 'whatsapp',
+                        scheduled_at: postReviewDate.toISOString(),
+                        status: 'pending',
+                        followup_step: 100, // 100 = código especial para avaliação pós-atendimento
+                        customer_name: name,
+                        context_snapshot: JSON.stringify({
+                            type: 'post_appointment_review',
+                            subject,
+                            appointmentDate: date,
+                            appointmentTime: time,
+                        }),
+                    });
+                    console.log(`[BookingService] ⭐ Avaliação pós-atendimento programada para ${phone} em ${postReviewDate.toISOString()}`);
+                }
+                catch (fErr) {
+                    console.warn('[BookingService] Aviso ao agendar avaliação no followup_schedules:', fErr.message);
+                }
+            }
+        }
+        // Inserir os lembretes na tabela appointment_reminders
+        for (const rem of remindersToSchedule) {
+            try {
+                // Verificar se já existe lembrete pendente idêntico
+                const { data: existingRem } = await supabase_1.supabaseAdmin
+                    .from('appointment_reminders')
+                    .select('id')
+                    .eq('org_id', orgId)
+                    .eq('appointment_date', date)
+                    .eq('appointment_time', time)
+                    .eq('reminder_stage', rem.reminder_stage)
+                    .eq('status', 'pending')
+                    .maybeSingle();
+                if (!existingRem) {
+                    const { error: insErr } = await supabase_1.supabaseAdmin
+                        .from('appointment_reminders')
+                        .insert({
+                        org_id: orgId,
+                        booking_id: bookingId || undefined,
+                        customer_name: name,
+                        customer_phone: phone || undefined,
+                        customer_email: email || undefined,
+                        subject,
+                        appointment_date: date,
+                        appointment_time: time,
+                        reminder_stage: rem.reminder_stage,
+                        scheduled_at: rem.scheduled_at,
+                        channels,
+                        status: 'pending',
+                    });
+                    if (!insErr) {
+                        alertsScheduled++;
+                        console.log(`[BookingService] ⏰ Lembrete programado (${rem.reminder_stage}) para ${rem.scheduled_at} (Cliente: ${name})`);
+                    }
+                }
+            }
+            catch (remErr) {
+                console.warn(`[BookingService] Aviso ao programar lembrete ${rem.reminder_stage}:`, remErr.message);
+            }
+        }
+        return {
+            success: true,
+            bookingId,
+            calendarEventId: calendarResult?.eventId,
+            calendarHtmlLink: calendarResult?.htmlLink,
+            alertsScheduled,
+            instantEmailSent,
+            instantSmsSent,
+        };
+    }
+    /**
+     * Remarcação de agendamento:
+     * 1. Valida nova data/hora e horário de funcionamento
+     * 2. Localiza agendamento anterior para este cliente (ou pelo previousBookingId)
+     * 3. Atualiza data/hora na tabela bookings (ou cria se não existir)
+     * 4. Cancela/remove lembretes pendentes da data anterior e agenda os novos
+     * 5. Sincroniza novo evento no Google Calendar / Microsoft Calendar
+     * 6. Envia confirmação de remarcação por email e SMS ao cliente
+     * 7. Envia alerta de remarcação à empresa
+     */
+    static async rescheduleBooking(orgId, input, options) {
+        const validation = this.validateBookingData(input);
+        if (!validation.isValid || !validation.cleanData) {
+            console.warn(`[BookingService] ⚠️ Tentativa de remarcação rejeitada: ${validation.errorMessage}`);
+            return {
+                success: false,
+                alertsScheduled: 0,
+                error: validation.errorMessage,
+            };
+        }
+        const { name, subject, phone, email, date, time } = validation.cleanData;
+        // Validar horário de expediente
+        const bhCheck = await this.checkWithinBusinessHours(orgId, date, time);
+        if (!bhCheck.isValid) {
+            console.warn(`[BookingService] ⚠️ Rejeitando remarcação fora do expediente: ${bhCheck.reason}`);
+            return {
+                success: false,
+                alertsScheduled: 0,
+                error: bhCheck.reason,
+            };
+        }
+        console.log(`[BookingService] 🔄 Processando remarcação para ${name} | Nova Data: ${date} ${time} | Org: ${orgId}`);
+        // Obter dados da organização
+        let orgData = null;
+        try {
+            const { data } = await supabase_1.supabaseAdmin
+                .from('organizations')
+                .select('name, phone, whatsapp, address, maps_link, telcosms_api_key, telcosms_sender_id')
+                .eq('id', orgId)
+                .maybeSingle();
+            orgData = data;
+        }
+        catch (orgErr) {
+            console.warn('[BookingService] Aviso ao obter dados da organização:', orgErr.message);
+        }
+        const companyName = orgData?.name?.trim() || 'Nossa Empresa';
+        const companyPhone = orgData?.phone?.trim() || orgData?.whatsapp?.trim() || '';
+        const companyAddress = orgData?.address?.trim() || '';
+        const mapsLink = orgData?.maps_link?.trim() || '';
+        // 1. Atualizar ou Criar Booking
+        let bookingId = options?.previousBookingId;
+        try {
+            if (!bookingId) {
+                const query = supabase_1.supabaseAdmin
+                    .from('bookings')
+                    .select('id')
+                    .eq('org_id', orgId)
+                    .order('created_at', { ascending: false })
+                    .limit(1);
+                if (phone) {
+                    query.eq('phone', phone);
+                }
+                else if (email) {
+                    query.eq('email', email);
+                }
+                const { data: latest } = await query.maybeSingle();
+                if (latest)
+                    bookingId = latest.id;
+            }
+            if (bookingId) {
+                await supabase_1.supabaseAdmin
+                    .from('bookings')
+                    .update({
+                    appointment_date: date,
+                    appointment_time: time,
+                    service: subject,
+                    email: email || undefined,
+                    phone: phone || undefined,
+                })
+                    .eq('id', bookingId);
+                console.log(`[BookingService] ✅ Agendamento ${bookingId} atualizado para ${date} às ${time}`);
+                // Cancelar lembretes antigos pendentes para este booking
+                await supabase_1.supabaseAdmin
+                    .from('appointment_reminders')
+                    .delete()
+                    .eq('booking_id', bookingId)
+                    .eq('status', 'pending');
+            }
+            else {
+                const { data: newB } = await supabase_1.supabaseAdmin
+                    .from('bookings')
+                    .insert({
+                    org_id: orgId,
+                    first_name: name.split(' ')[0] || name,
+                    last_name: name.split(' ').slice(1).join(' ') || undefined,
+                    email: email || undefined,
+                    phone: phone || 'N/A',
+                    service: subject,
+                    appointment_date: date,
+                    appointment_time: time,
+                })
+                    .select('id')
+                    .single();
+                if (newB)
+                    bookingId = newB.id;
+            }
+        }
+        catch (dbErr) {
+            console.warn('[BookingService] Erro ao persistir remarcação:', dbErr.message);
+        }
+        // Cancelar qualquer follow-up de vendas pendente para o cliente remarcado
+        if (phone) {
+            await followup_service_1.FollowupService.cancelPendingForPhone(orgId, phone);
+        }
+        // 2. Sincronizar novo evento na agenda
+        let calendarResult = null;
+        try {
+            const descLines = [
+                `Remarcação via Orion Platform (${options?.channelOrigin || 'Chatbot'})`,
+                `Empresa: ${companyName}`,
+                `Assunto: ${subject}`,
+                `Cliente: ${name}`,
+            ];
+            if (phone)
+                descLines.push(`Telefone: ${phone}`);
+            if (email)
+                descLines.push(`Email: ${email}`);
+            if (companyAddress)
+                descLines.push(`Endereço: ${companyAddress}`);
+            if (companyPhone)
+                descLines.push(`Telefone da Empresa: ${companyPhone}`);
+            if (mapsLink)
+                descLines.push(`Localização: [Localizar no Google Maps](${mapsLink})`);
+            calendarResult = await (0, calendar_service_1.syncCalendarEvent)(orgId, {
+                summary: `[REMARCADO] ${subject} - ${name}`,
+                appointmentDate: date,
+                appointmentTime: time,
+                location: companyAddress || mapsLink || undefined,
+                customerName: name,
+                customerEmail: email,
+                customerPhone: phone,
+                description: descLines.join('\n'),
+            });
+            console.log(`[BookingService] 📆 Calendário sincronizado para remarcação:`, calendarResult);
+        }
+        catch (calErr) {
+            console.error('[BookingService] Erro ao sincronizar agenda na remarcação:', calErr.message);
+        }
+        // 3. Alertas Instantâneos
+        let instantEmailSent = false;
+        let instantSmsSent = false;
+        if (email) {
+            try {
+                instantEmailSent = await email_service_1.EmailService.sendBookingConfirmationToCustomer({
+                    customerEmail: email,
+                    customerName: name,
+                    date,
+                    time,
+                    subject: `[REMARCAÇÃO] ${subject}`,
+                    companyName,
+                    companyPhone,
+                    companyAddress,
+                    mapsLink,
+                });
+            }
+            catch (eErr) {
+                console.error('[BookingService] Erro no email de remarcação ao cliente:', eErr.message);
+            }
+        }
+        if (phone) {
+            try {
+                let smsMsg = `Olá ${name}, a sua remarcação para ${subject} com ${companyName} foi confirmada para ${date} às ${time}.`;
+                if (mapsLink)
+                    smsMsg += ` Localizar no Maps: ${mapsLink}`;
+                smsMsg += ` Obrigado, ${companyName}.`;
+                const smsRes = await telcosms_service_1.TelcoSMSService.sendSMS({
+                    orgId,
+                    to: phone,
+                    message: smsMsg,
+                    apiKey: orgData?.telcosms_api_key,
+                    senderId: orgData?.telcosms_sender_id,
+                });
+                instantSmsSent = smsRes.success;
+            }
+            catch (sErr) {
+                console.error('[BookingService] Erro no SMS de remarcação:', sErr.message);
+            }
+        }
+        // Alerta à Empresa Registrada
+        try {
+            email_service_1.EmailService.sendBookingNotificationToCompany({
+                orgId,
+                customerName: name,
+                customerPhone: phone,
+                customerEmail: email,
+                date,
+                time,
+                subject,
+                companyName,
+                channelOrigin: options?.channelOrigin,
+                isReschedule: true,
+            }).catch(err => console.error('[BookingService] Erro ao alertar empresa da remarcação:', err.message));
+        }
+        catch (_) { }
+        // 4. Agendar novos lembretes
+        let alertsScheduled = 0;
+        const channels = email && phone ? 'both' : email ? 'email' : 'sms';
+        const [y, m, d] = date.split('-').map(Number);
+        const [h, min] = time.split(':').map(Number);
+        const appointmentDateObj = new Date(y, m - 1, d, h, min, 0);
+        const now = new Date();
+        const remindersToSchedule = [];
+        const sevenDaysBefore = new Date(appointmentDateObj);
+        sevenDaysBefore.setDate(sevenDaysBefore.getDate() - 7);
+        const s7 = this.getRandomBusinessHour(sevenDaysBefore);
+        if (s7.getTime() > now.getTime()) {
+            remindersToSchedule.push({ reminder_stage: '7_days_before', scheduled_at: s7.toISOString() });
+        }
+        const threeDaysBefore = new Date(appointmentDateObj);
+        threeDaysBefore.setDate(threeDaysBefore.getDate() - 3);
+        const s3 = this.getRandomBusinessHour(threeDaysBefore);
+        if (s3.getTime() > now.getTime()) {
+            remindersToSchedule.push({ reminder_stage: '3_days_before', scheduled_at: s3.toISOString() });
+        }
+        const sameDay = new Date(appointmentDateObj);
+        sameDay.setHours(7, 0, 0, 0);
+        if (sameDay.getTime() > now.getTime()) {
+            remindersToSchedule.push({ reminder_stage: 'same_day_morning', scheduled_at: sameDay.toISOString() });
+        }
+        for (const rem of remindersToSchedule) {
+            try {
+                const { error: insErr } = await supabase_1.supabaseAdmin
+                    .from('appointment_reminders')
+                    .insert({
+                    org_id: orgId,
+                    booking_id: bookingId || undefined,
+                    customer_name: name,
+                    customer_phone: phone || undefined,
+                    customer_email: email || undefined,
+                    subject,
+                    appointment_date: date,
+                    appointment_time: time,
+                    reminder_stage: rem.reminder_stage,
+                    scheduled_at: rem.scheduled_at,
+                    channels,
+                    status: 'pending',
+                });
+                if (!insErr)
+                    alertsScheduled++;
+            }
+            catch (_) { }
+        }
+        return {
+            success: true,
+            bookingId,
+            calendarEventId: calendarResult?.eventId,
+            calendarHtmlLink: calendarResult?.webLink || calendarResult?.link,
+            alertsScheduled,
+            instantEmailSent,
+            instantSmsSent,
+        };
+    }
+}
+exports.BookingService = BookingService;

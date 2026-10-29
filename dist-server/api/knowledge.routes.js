@@ -1,0 +1,399 @@
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const auth_1 = require("../middleware/auth");
+const supabase_1 = require("../config/supabase");
+const multer_1 = __importDefault(require("multer"));
+const axios_1 = __importDefault(require("axios"));
+const document_service_1 = require("../services/document.service");
+const router = (0, express_1.Router)();
+const upload = (0, multer_1.default)({ storage: multer_1.default.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } }); // 20MB max
+// ─── GET /api/knowledge — Listar documentos da base de conhecimento ──────────
+router.get('/', auth_1.requireAuth, async (req, res) => {
+    try {
+        const orgId = req.user?.orgId;
+        const { data, error } = await supabase_1.supabaseAdmin
+            .from('knowledge_docs')
+            .select('id, filename, file_size, created_at, content_preview')
+            .eq('org_id', orgId)
+            .order('created_at', { ascending: false });
+        if (error)
+            throw error;
+        res.json(data || []);
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+// ─── POST /api/knowledge — Upload de documento ───────────────────────────────
+router.post('/', auth_1.requireAuth, upload.single('file'), async (req, res) => {
+    try {
+        const orgId = req.user?.orgId;
+        const file = req.file;
+        if (!file) {
+            return res.status(400).json({ error: 'Nenhum ficheiro enviado.' });
+        }
+        const allowedTypes = [
+            'application/pdf',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'application/msword',
+            'text/plain',
+        ];
+        if (!allowedTypes.some(t => file.mimetype.startsWith(t) || file.mimetype.includes('pdf') || file.mimetype.includes('word'))) {
+            return res.status(400).json({ error: 'Tipo de ficheiro não suportado. Use PDF, DOCX ou TXT.' });
+        }
+        // Extrair texto do documento
+        const base64 = file.buffer.toString('base64');
+        const extractedText = await document_service_1.DocumentService.extractTextFromBase64(base64, file.mimetype);
+        if (!extractedText || extractedText.trim().length < 10) {
+            return res.status(400).json({ error: 'Não foi possível extrair texto do documento. Verifique se o ficheiro não está vazio ou protegido.' });
+        }
+        // Guardar no banco
+        const { data, error } = await supabase_1.supabaseAdmin
+            .from('knowledge_docs')
+            .insert({
+            org_id: orgId,
+            filename: file.originalname,
+            file_size: file.size,
+            mime_type: file.mimetype,
+            content: extractedText,
+            content_preview: extractedText.substring(0, 200) + (extractedText.length > 200 ? '...' : ''),
+        })
+            .select()
+            .single();
+        if (error)
+            throw error;
+        console.log(`[KNOWLEDGE] Documento "${file.originalname}" carregado para org ${orgId}. ${extractedText.length} caracteres extraídos.`);
+        res.json({
+            message: `Documento "${file.originalname}" carregado com sucesso!`,
+            doc: data,
+            chars_extracted: extractedText.length,
+        });
+    }
+    catch (err) {
+        console.error('[KNOWLEDGE] Erro no upload:', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+// ─── DELETE /api/knowledge/:id — Remover documento ──────────────────────────
+router.delete('/:id', auth_1.requireAuth, async (req, res) => {
+    try {
+        const orgId = req.user?.orgId;
+        const { id } = req.params;
+        const { error } = await supabase_1.supabaseAdmin
+            .from('knowledge_docs')
+            .delete()
+            .eq('id', id)
+            .eq('org_id', orgId); // Garantir que só remove os seus próprios docs
+        if (error)
+            throw error;
+        res.json({ message: 'Documento removido com sucesso.' });
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+// ─── GET /api/knowledge/context — Obter conteúdo completo para o prompt ──────
+// (uso interno pelo AI service via import directo, mas pode ser útil via HTTP)
+router.get('/context', auth_1.requireAuth, async (req, res) => {
+    try {
+        const orgId = req.user?.orgId;
+        const { data, error } = await supabase_1.supabaseAdmin
+            .from('knowledge_docs')
+            .select('filename, content')
+            .eq('org_id', orgId)
+            .order('created_at', { ascending: true });
+        if (error)
+            throw error;
+        const combined = (data || [])
+            .map(d => `=== ${d.filename} ===\n${d.content}`)
+            .join('\n\n');
+        res.json({ content: combined, doc_count: data?.length || 0 });
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+// ─── GET /api/knowledge/:id — Obter detalhe e conteúdo do documento ──────────
+router.get('/:id', auth_1.requireAuth, async (req, res) => {
+    try {
+        const orgId = req.user?.orgId;
+        const { id } = req.params;
+        const { data: doc, error } = await supabase_1.supabaseAdmin
+            .from('knowledge_docs')
+            .select('id, filename, file_size, mime_type, content, content_preview, created_at')
+            .eq('id', id)
+            .eq('org_id', orgId)
+            .single();
+        if (error || !doc) {
+            return res.status(404).json({ error: 'Documento não encontrado.' });
+        }
+        res.json(doc);
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+// ─── GET /api/knowledge/:id/download — Fazer download de documento ────────────
+router.get('/:id/download', auth_1.requireAuth, async (req, res) => {
+    try {
+        const orgId = req.user?.orgId;
+        const { id } = req.params;
+        const { data: doc, error } = await supabase_1.supabaseAdmin
+            .from('knowledge_docs')
+            .select('filename, mime_type, content')
+            .eq('id', id)
+            .eq('org_id', orgId)
+            .single();
+        if (error || !doc) {
+            return res.status(404).json({ error: 'Documento não encontrado.' });
+        }
+        let filename = doc.filename || 'documento.txt';
+        let mimeType = doc.mime_type || 'text/plain';
+        // Como o conteúdo armazenado é o texto plano extraído pelo RAG (e não o ficheiro binário original),
+        // forçamos o tipo text/plain e extensão .txt para garantir que abre perfeitamente em qualquer leitor.
+        const isBinaryMime = mimeType.includes('pdf') || mimeType.includes('word') || mimeType.includes('officedocument') || mimeType.includes('msword');
+        if (isBinaryMime) {
+            mimeType = 'text/plain; charset=utf-8';
+            if (!filename.toLowerCase().endsWith('.txt')) {
+                filename = filename.replace(/\.[^.]+$/, '') + '_texto.txt';
+            }
+        }
+        else {
+            mimeType = 'text/plain; charset=utf-8';
+        }
+        res.setHeader('Content-Type', mimeType);
+        // RFC 5987: suporte a nomes de ficheiro com caracteres especiais (acentos, espaços, etc.)
+        const safeAsciiFilename = filename.replace(/[^\x20-\x7E]/g, '_');
+        const encodedFilename = encodeURIComponent(filename).replace(/'/g, '%27');
+        res.setHeader('Content-Disposition', `attachment; filename="${safeAsciiFilename}"; filename*=UTF-8''${encodedFilename}`);
+        res.send(Buffer.from(doc.content || '', 'utf-8'));
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+// ─── POST /api/knowledge/site — Adicionar conteúdo de um site ───────────────
+router.post('/site', auth_1.requireAuth, async (req, res) => {
+    try {
+        const orgId = req.user?.orgId;
+        let { url } = req.body;
+        if (!url || typeof url !== 'string') {
+            return res.status(400).json({ error: 'URL é obrigatória.' });
+        }
+        url = url.trim();
+        if (!/^https?:\/\//i.test(url)) {
+            url = 'https://' + url;
+        }
+        // ── Cabeçalhos que imitam um navegador real ───────────────────────────────
+        const browserHeaders = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+            'Accept-Language': 'pt-PT,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Cache-Control': 'no-cache',
+            'Pragma': 'no-cache',
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+        };
+        // Agentes HTTP/HTTPS permissivos com maxHeaderSize aumentado (32 KB)
+        // para evitar "Parse Error: Header overflow" em sites com cookies/CDN volumosos
+        const MAX_HEADER = 32768; // 32 KB (Node.js padrão é 8 KB)
+        const https = await Promise.resolve().then(() => __importStar(require('https')));
+        const http = await Promise.resolve().then(() => __importStar(require('http')));
+        const httpsAgent = new https.Agent({ rejectUnauthorized: false, keepAlive: true, maxHeaderSize: MAX_HEADER });
+        const httpAgent = new http.Agent({ keepAlive: true, maxHeaderSize: MAX_HEADER });
+        // Atraso entre tentativas para não parecer scraping agressivo
+        const delay = (ms) => new Promise(r => setTimeout(r, ms));
+        // ── Extractor: limpa HTML em texto simples ────────────────────────────────
+        const extractText = (html) => html
+            .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gim, '')
+            .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gim, '')
+            .replace(/<noscript\b[^>]*>[\s\S]*?<\/noscript>/gim, '')
+            .replace(/<header\b[^>]*>[\s\S]*?<\/header>/gim, ' ')
+            .replace(/<footer\b[^>]*>[\s\S]*?<\/footer>/gim, ' ')
+            .replace(/<[^>]+>/gm, ' ')
+            .replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<')
+            .replace(/&gt;/gi, '>').replace(/&quot;/gi, '"').replace(/&#39;/gi, "'")
+            .replace(/\s+/g, ' ')
+            .trim();
+        let finalContent = null;
+        let usedStrategy = '';
+        // ════════════════════════════════════════════════════════════════
+        // ESTRATÉGIA 1 — Acesso directo HTTPS (com agente TLS permissivo)
+        // ════════════════════════════════════════════════════════════════
+        try {
+            const resp = await axios_1.default.get(url, {
+                headers: browserHeaders,
+                timeout: 20000,
+                maxRedirects: 8,
+                httpsAgent,
+                httpAgent,
+                decompress: true,
+            });
+            const raw = typeof resp.data === 'string' ? resp.data : JSON.stringify(resp.data);
+            const text = extractText(raw);
+            if (text.length >= 30) {
+                finalContent = text;
+                usedStrategy = 'directo HTTPS';
+            }
+        }
+        catch (e1) {
+            console.warn(`[KNOWLEDGE] Estratégia 1 (HTTPS directo) falhou: ${e1.code || e1.message}`);
+        }
+        // ════════════════════════════════════════════════════════════════
+        // ESTRATÉGIA 2 — Fallback HTTP simples (se HTTPS bloqueado/TLS falhou)
+        // ════════════════════════════════════════════════════════════════
+        if (!finalContent && url.startsWith('https://')) {
+            await delay(800);
+            const httpUrl = url.replace(/^https:\/\//i, 'http://');
+            try {
+                const resp = await axios_1.default.get(httpUrl, {
+                    headers: browserHeaders,
+                    timeout: 20000,
+                    maxRedirects: 8,
+                    httpAgent,
+                    httpsAgent,
+                    decompress: true,
+                });
+                const raw = typeof resp.data === 'string' ? resp.data : JSON.stringify(resp.data);
+                const text = extractText(raw);
+                if (text.length >= 30) {
+                    finalContent = text;
+                    usedStrategy = 'fallback HTTP';
+                }
+            }
+            catch (e2) {
+                console.warn(`[KNOWLEDGE] Estratégia 2 (HTTP fallback) falhou: ${e2.code || e2.message}`);
+            }
+        }
+        // ════════════════════════════════════════════════════════════════
+        // ESTRATÉGIA 3 — Proxy Jina.ai Reader (contorna WAF/Cloudflare)
+        //   https://r.jina.ai/<url> devolve Markdown limpo do conteúdo
+        // ════════════════════════════════════════════════════════════════
+        if (!finalContent) {
+            await delay(800);
+            const jinaUrl = `https://r.jina.ai/${url}`;
+            try {
+                const resp = await axios_1.default.get(jinaUrl, {
+                    headers: {
+                        'User-Agent': browserHeaders['User-Agent'],
+                        'Accept': 'text/plain, text/markdown, */*',
+                        'X-Return-Format': 'text',
+                    },
+                    timeout: 30000,
+                    maxRedirects: 5,
+                    httpsAgent,
+                    decompress: true,
+                });
+                const raw = typeof resp.data === 'string' ? resp.data : JSON.stringify(resp.data);
+                if (raw.trim().length >= 30) {
+                    finalContent = raw.trim();
+                    usedStrategy = 'proxy Jina.ai';
+                }
+            }
+            catch (e3) {
+                console.warn(`[KNOWLEDGE] Estratégia 3 (Jina.ai proxy) falhou: ${e3.code || e3.message}`);
+            }
+        }
+        // ════════════════════════════════════════════════════════════════
+        // Todas as estratégias falharam
+        // ════════════════════════════════════════════════════════════════
+        if (!finalContent || finalContent.length < 30) {
+            return res.status(400).json({
+                error: 'Não foi possível extrair conteúdo deste site após múltiplas tentativas. O site pode estar protegido contra acesso automático (Cloudflare, WAF), exigir JavaScript ou autenticação.',
+            });
+        }
+        console.log(`[KNOWLEDGE] Site importado via "${usedStrategy}": ${url} (${finalContent.length} chars)`);
+        // Limitar a 30 000 caracteres
+        const trimmedContent = finalContent.substring(0, 30_000);
+        // Guardar no banco
+        const { data, error } = await supabase_1.supabaseAdmin
+            .from('knowledge_docs')
+            .insert({
+            org_id: orgId,
+            filename: url.replace(/^https?:\/\//i, '').substring(0, 60),
+            file_size: trimmedContent.length,
+            mime_type: 'text/html',
+            content: trimmedContent,
+            content_preview: `Site: ${url}\n\n` + trimmedContent.substring(0, 180) + '...',
+        })
+            .select()
+            .single();
+        if (error)
+            throw error;
+        res.json({
+            message: 'Conteúdo do site importado com sucesso!',
+            doc: data,
+        });
+    }
+    catch (err) {
+        // Mensagens amigáveis para erros de rede comuns
+        let userMessage = err.message;
+        if (err.code === 'ECONNREFUSED') {
+            userMessage = 'O servidor recusou a ligação. Verifique se o endereço está correcto.';
+        }
+        else if (err.code === 'ENOTFOUND') {
+            userMessage = 'Domínio não encontrado. Verifique se o endereço do site está correcto.';
+        }
+        else if (err.code === 'ETIMEDOUT' || err.code === 'ECONNABORTED') {
+            userMessage = 'O site demorou demasiado a responder. Tente novamente mais tarde.';
+        }
+        else if (err.code === 'ECONNRESET' || err.message?.includes('socket hang up')) {
+            userMessage = 'A ligação ao site foi interrompida. O site pode estar a bloquear pedidos automáticos.';
+        }
+        else if (err.message?.toLowerCase().includes('header overflow') || err.message?.toLowerCase().includes('parse error')) {
+            userMessage = 'O site devolveu demasiados cabeçalhos HTTP (Header Overflow). Tente importar uma página específica em vez da página principal.';
+        }
+        else if (err.message?.toLowerCase().includes('tls') || err.message?.toLowerCase().includes('ssl')) {
+            userMessage = 'Erro de segurança TLS/SSL ao ligar ao site.';
+        }
+        else if (err.response?.status === 403) {
+            userMessage = 'Acesso negado (403). O site bloqueou o nosso pedido.';
+        }
+        else if (err.response?.status === 404) {
+            userMessage = 'Página não encontrada (404). Verifique o endereço.';
+        }
+        console.error('[KNOWLEDGE] Erro ao importar site:', err.code || err.message);
+        res.status(500).json({ error: userMessage });
+    }
+});
+exports.default = router;
