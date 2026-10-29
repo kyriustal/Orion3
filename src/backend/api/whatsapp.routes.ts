@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import { supabaseAdmin } from '../config/supabase';
-import { AIService, getUniqueApiKeys, CustomerProfile } from '../services/ai.service';
+import { AIService, getUniqueApiKeys, getUniqueDeepseekApiKeys, aiHttpsAgent, CustomerProfile } from '../services/ai.service';
 import { WhatsAppService } from '../services/whatsapp.service';
 import { AudioService } from '../services/audio.service';
 import { DocumentService } from '../services/document.service';
@@ -1225,45 +1225,114 @@ export async function recoverMissedMessages() {
   }
 }
 
-// ─── GET /api/whatsapp/test-keys — Diagnosticar online todas as chaves Gemini ─
+// ─── GET /api/whatsapp/test-keys — Diagnosticar online motores de IA (DeepSeek e Gemini) ─
 router.get('/test-keys', async (req, res) => {
   try {
-    const keys = getUniqueApiKeys();
-    const results: any[] = [];
+    const deepseekKeys = getUniqueDeepseekApiKeys();
+    const geminiKeys = getUniqueApiKeys();
+    const deepseekResults: any[] = [];
+    const geminiResults: any[] = [];
 
-    for (let i = 0; i < keys.length; i++) {
-      const key = keys[i];
+    // 1. Testar chaves DeepSeek
+    const dsModel = process.env.DEEPSEEK_MODEL || 'deepseek-chat';
+    const dsBaseUrl = (process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com/v1').replace(/\/+$/, '');
+
+    for (let i = 0; i < deepseekKeys.length; i++) {
+      const key = deepseekKeys[i];
       const masked = key.substring(0, 8) + '...' + key.substring(key.length - 4);
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`;
-      
       try {
-        const response = await axios.post(url, {
-          contents: [{ parts: [{ text: 'Ping' }] }]
-        }, { timeout: 15000 });
+        const response = await axios.post(`${dsBaseUrl}/chat/completions`, {
+          model: dsModel,
+          messages: [{ role: 'user', content: 'Ping' }],
+          max_tokens: 10,
+        }, {
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${key}`,
+          },
+          timeout: 15000,
+          httpsAgent: aiHttpsAgent,
+        });
 
-        const text = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
-        results.push({
+        const reply = response.data?.choices?.[0]?.message?.content?.trim();
+        deepseekResults.push({
           index: i + 1,
+          engine: 'DeepSeek (Principal)',
           key: masked,
           status: 'SUCESSO',
-          reply: text?.trim()
+          model: dsModel,
+          reply,
         });
       } catch (err: any) {
-        const errData = err.response?.data;
-        results.push({
+        const status = err.response?.status ?? 'N/A';
+        const errMsg = err.response?.data?.error?.message || err.message;
+        deepseekResults.push({
           index: i + 1,
+          engine: 'DeepSeek (Principal)',
           key: masked,
           status: 'FALHOU',
-          error: errData?.error?.message || err.message,
-          fullError: errData
+          httpStatus: status,
+          error: errMsg,
+          hint: status === 401 ? 'Chave inválida ou expirada. Atualize DEEPSEEK_API_KEY no .env.' : (status === 402 ? 'Saldo esgotado. Recarregue no portal DeepSeek.' : 'Verifique a conexão com a API DeepSeek.')
+        });
+      }
+    }
+
+    // 2. Testar chaves Gemini
+    const testModels = ['gemini-2.5-flash', 'gemini-flash-lite-latest'];
+    for (let i = 0; i < geminiKeys.length; i++) {
+      const key = geminiKeys[i];
+      const masked = key.substring(0, 8) + '...' + key.substring(key.length - 4);
+
+      let keySuccess = false;
+      let lastErr = '';
+      let successfulModel = '';
+
+      for (const m of testModels) {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${key}`;
+        try {
+          const response = await axios.post(url, {
+            contents: [{ parts: [{ text: 'Ping' }] }]
+          }, { timeout: 15000, httpsAgent: aiHttpsAgent });
+
+          const text = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
+          keySuccess = true;
+          successfulModel = m;
+          geminiResults.push({
+            index: i + 1,
+            engine: 'Gemini (Fallback)',
+            key: masked,
+            status: 'SUCESSO',
+            model: successfulModel,
+            reply: text?.trim()
+          });
+          break;
+        } catch (err: any) {
+          lastErr = err.response?.data?.error?.message || err.message;
+        }
+      }
+
+      if (!keySuccess) {
+        geminiResults.push({
+          index: i + 1,
+          engine: 'Gemini (Fallback)',
+          key: masked,
+          status: 'FALHOU',
+          error: lastErr,
         });
       }
     }
 
     res.json({
       timestamp: new Date().toISOString(),
-      total_keys: keys.length,
-      results
+      summary: {
+        deepseek_keys_configured: deepseekKeys.length,
+        deepseek_operational: deepseekResults.some(r => r.status === 'SUCESSO'),
+        gemini_keys_configured: geminiKeys.length,
+        gemini_operational: geminiResults.some(r => r.status === 'SUCESSO'),
+      },
+      deepseek: deepseekResults,
+      gemini: geminiResults,
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });

@@ -1,8 +1,16 @@
 import axios from 'axios';
+import https from 'https';
 import { supabaseAdmin } from '../config/supabase';
 import { DocumentService } from './document.service';
 import { AudioService } from './audio.service';
 import { cleanGreetingName } from './followup.service';
+
+// Agente HTTPS resiliente para evitar falhas de certificado TLS/SSL locais ou corporativos
+export const aiHttpsAgent = new https.Agent({
+  rejectUnauthorized: false,
+  keepAlive: true,
+  timeout: 30000,
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Tipos
@@ -67,9 +75,12 @@ export interface GenerateResult {
 const GEMINI_MODEL = 'gemini-2.5-flash';
 const GEMINI_BASE  = 'https://generativelanguage.googleapis.com/v1beta/models';
 
+// Chaves Gemini de contingência (devem ser configuradas via variáveis de ambiente no .env)
+const DEFAULT_GEMINI_KEYS: string[] = [];
+
 // Chaves de fallback resiliente garantidas para funcionamento contínuo mesmo se o .env do servidor estiver incompleto
-const DEFAULT_DEEPSEEK_KEYS = [
-  'sk-af8be088f2f64a908b0627e252038e3e'
+const DEFAULT_DEEPSEEK_KEYS: string[] = [
+  // Chaves de fallback adicionais podem ser incluídas aqui
 ];
 
 // Mapa de cooldown para chaves temporariamente em 429
@@ -82,6 +93,7 @@ export function getUniqueApiKeys(): string[] {
     process.env.GEMINI_API_KEY_2,
     process.env.GEMINI_API_KEY_3,
     process.env.GEMINI_API_KEY_4,
+    ...DEFAULT_GEMINI_KEYS,
   ].filter(Boolean) as string[];
 
   const allKeys: string[] = [];
@@ -138,7 +150,7 @@ export async function postGeminiWithRetry(
     throw new Error('[GeminiRetry] Nenhuma GEMINI_API_KEY configurada no .env.');
   }
 
-  const candidateModels = [GEMINI_MODEL, 'gemini-3.8-flash'];
+  const candidateModels = [GEMINI_MODEL, 'gemini-flash-lite-latest', 'gemini-3.8-flash'];
   const uniqueCandidateModels = Array.from(new Set(candidateModels));
 
   let lastError = '';
@@ -166,6 +178,7 @@ export async function postGeminiWithRetry(
         const response = await axios.post(url, payload, {
           headers: { 'Content-Type': 'application/json' },
           timeout,
+          httpsAgent: aiHttpsAgent,
         });
         return response.data;
       } catch (err: any) {
@@ -175,7 +188,7 @@ export async function postGeminiWithRetry(
 
         if (status === 429) {
           geminiKeyCooldowns.set(apiKey, Date.now() + 25_000);
-          break; // Tentar próxima chave
+          continue; // Tentar próximo modelo com quota separada
         } else if (status === 403) {
           geminiKeyCooldowns.set(apiKey, Date.now() + 3_600_000); // 1h cooldown para chaves bloqueadas
           break; // Tentar próxima chave
@@ -1443,7 +1456,8 @@ export class AIService {
     // mediaForAI é undefined após processamento multimodal (image/video/audio/doc foram convertidos para texto em enrichedMessage)
     // Passamos mediaForAI (não o media original) para evitar re-envio de dados binários brutos ao Gemini fallback
     const contents = buildContents(history, enrichedMessage, mediaForAI, extractedImages);
-    let lastError = '';
+    let deepseekLastError = '';
+    let geminiLastError = '';
 
     // Helper para garantir que links do Google Maps nunca apareçam crus e feios
     function sanitizeGoogleMapsLinks(text: string): string {
@@ -1460,7 +1474,7 @@ export class AIService {
     if (dsKeys.length > 0) {
       console.log(`[AIService] 🚀 DeepSeek [PRINCIPAL] — ${dsKeys.length} chave(s) configurada(s).`);
       const dsModel   = process.env.DEEPSEEK_MODEL   || 'deepseek-chat';
-      const dsBaseUrl = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com/v1';
+      const dsBaseUrl = (process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com/v1').replace(/\/+$/, '');
       const deepseekMessages = [
         { role: 'system', content: systemPrompt },
         ...history
@@ -1490,6 +1504,7 @@ export class AIService {
               'Authorization': `Bearer ${deepseekKey}`,
             },
             timeout: 20_000,
+            httpsAgent: aiHttpsAgent,
           });
 
           const rawText = response.data?.choices?.[0]?.message?.content?.trim();
@@ -1526,18 +1541,26 @@ export class AIService {
 
         } catch (dsErr: any) {
           const httpStatus = dsErr.response?.status ?? 'N/A';
-          lastError = dsErr.response?.data?.error?.message || dsErr.message || String(dsErr);
-          console.error(`[AIService] ❌ DeepSeek chave ${idx} HTTP ${httpStatus}: ${lastError}`);
-          if (httpStatus === 401 || httpStatus === 402) {
-            break; // Sem saldo ou chave inválida
+          const errMsg = dsErr.response?.data?.error?.message || dsErr.message || String(dsErr);
+          deepseekLastError = `Chave (${maskedKey}) HTTP ${httpStatus}: ${errMsg}`;
+          console.error(`[AIService] ❌ DeepSeek chave ${idx} falhou: ${deepseekLastError}`);
+          if (httpStatus === 401) {
+            console.error(`[AIService] 🚨 ATENÇÃO: Chave DeepSeek (${maskedKey}) inválida ou expirada. Atualize a DEEPSEEK_API_KEY no arquivo .env!`);
+            break; // Chave inválida
+          } else if (httpStatus === 402) {
+            console.error(`[AIService] 🚨 ATENÇÃO: Saldo insuficiente na conta DeepSeek. Recarregue os créditos no portal DeepSeek!`);
+            break; // Sem saldo
           }
         }
       }
-      console.warn(`[AIService] ⚠️ DeepSeek não concluiu a resposta. A tentar Gemini como fallback...`);
+      console.warn(`[AIService] ⚠️ DeepSeek não concluiu a resposta (${deepseekLastError}). A tentar Gemini como fallback...`);
+    } else {
+      deepseekLastError = 'Nenhuma chave DeepSeek configurada no .env';
+      console.warn(`[AIService] ⚠️ Nenhuma chave DeepSeek configurada no .env. A tentar Gemini...`);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // MOTOR 2 — Gemini 2.5 Flash (FALLBACK ROBUSTO COM ROTAÇÃO DE CHAVES)
+    // MOTOR 2 — Gemini (FALLBACK MULTI-MODELO COM ROTAÇÃO DE CHAVES)
     // ─────────────────────────────────────────────────────────────────────────
     const geminiKeys = getUniqueApiKeys();
     if (geminiKeys.length > 0) {
@@ -1548,73 +1571,93 @@ export class AIService {
         return (cdA > now ? 1 : 0) - (cdB > now ? 1 : 0);
       });
 
-      console.log(`[AIService] 🔁 Gemini 2.5 Flash [FALLBACK] — ${sortedGeminiKeys.length} chave(s)...`);
+      console.log(`[AIService] 🔁 Gemini [FALLBACK] — ${sortedGeminiKeys.length} chave(s)...`);
       const baseConfig = {
         systemInstruction: { parts: [{ text: systemPrompt }] },
         contents,
         generationConfig: { temperature: 0.4, maxOutputTokens: 1500 },
       };
 
+      const geminiCandidateModels = [GEMINI_MODEL, 'gemini-flash-lite-latest', 'gemini-3.8-flash'];
+
       for (let keyIdx = 0; keyIdx < sortedGeminiKeys.length; keyIdx++) {
         const apiKey = sortedGeminiKeys[keyIdx];
-        const url    = `${GEMINI_BASE}/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
         const masked = apiKey.substring(0, 8) + '...' + apiKey.substring(apiKey.length - 4);
 
-        try {
-          console.log(`[AIService] 🔄 Gemini — chave ${keyIdx} (${masked})...`);
-          const response = await axios.post(url, baseConfig, {
-            headers: { 'Content-Type': 'application/json' },
-            timeout: 20_000,
-          });
-          const parts: any[] = response.data?.candidates?.[0]?.content?.parts ?? [];
-          const cleanText = extractCleanText(parts);
-          if (!cleanText) continue;
+        for (const model of geminiCandidateModels) {
+          const url = `${GEMINI_BASE}/${model}:generateContent?key=${apiKey}`;
 
-          const confirm      = cleanText.includes('[CONFIRMAR_INFORMAÇÃO]');
-          const transfer     = cleanText.includes('[TRANSFERIR_HUMANO]');
-          const booking      = cleanText.includes('[AGENDAR]') || cleanText.includes('[BOOKING_CONFIRMED:');
-          const proposal     = cleanText.includes('[PROPOSTA]');
-          const attended     = cleanText.includes('[ATENDIMENTO:CONFIRMADO]') || 
-            /(?:já fui atendido|fui atendido|já estive no escritório|estive na consulta|já realizei o atendimento|atendimento foi realizado)/i.test(enrichedMessage);
-          const noShowReschedule = cleanText.includes('[REMARCACAO:FALTA]') || 
-            /(?:não pude comparecer|não consegui comparecer|faltei|não pude ir|não fui|remarcar por falta|remarcação por falta)/i.test(enrichedMessage);
+          try {
+            console.log(`[AIService] 🔄 Gemini (${model}) — chave ${keyIdx} (${masked})...`);
+            const response = await axios.post(url, baseConfig, {
+              headers: { 'Content-Type': 'application/json' },
+              timeout: 20_000,
+              httpsAgent: aiHttpsAgent,
+            });
+            const parts: any[] = response.data?.candidates?.[0]?.content?.parts ?? [];
+            const cleanText = extractCleanText(parts);
+            if (!cleanText) continue;
 
-          const contactMatch = cleanText.match(/\[CONTATO:(\{[^}]+\})\]/);
-          const contactData  = contactMatch
-            ? (() => { try { return JSON.parse(contactMatch[1]); } catch { return undefined; } })()
-            : undefined;
+            const confirm      = cleanText.includes('[CONFIRMAR_INFORMAÇÃO]');
+            const transfer     = cleanText.includes('[TRANSFERIR_HUMANO]');
+            const booking      = cleanText.includes('[AGENDAR]') || cleanText.includes('[BOOKING_CONFIRMED:');
+            const proposal     = cleanText.includes('[PROPOSTA]');
+            const attended     = cleanText.includes('[ATENDIMENTO:CONFIRMADO]') || 
+              /(?:já fui atendido|fui atendido|já estive no escritório|estive na consulta|já realizei o atendimento|atendimento foi realizado)/i.test(enrichedMessage);
+            const noShowReschedule = cleanText.includes('[REMARCACAO:FALTA]') || 
+              /(?:não pude comparecer|não consegui comparecer|faltei|não pude ir|não fui|remarcar por falta|remarcação por falta)/i.test(enrichedMessage);
 
-          // Parser robusto: extrai JSON ou recupera dados via fallback inteligente
-          const bookingData = parseBookingData(cleanText, history, enrichedMessage, customerProfile);
+            const contactMatch = cleanText.match(/\[CONTATO:(\{[^}]+\})\]/);
+            const contactData  = contactMatch
+              ? (() => { try { return JSON.parse(contactMatch[1]); } catch { return undefined; } })()
+              : undefined;
 
-          const cleanReply = cleanText
-            .replace(/\[TRANSFERIR_HUMANO\]|\[AGENDAR\]|\[PROPOSTA\]|\[CONFIRMAR_INFORMAÇÃO\]|\[ATENDIMENTO:CONFIRMADO\]|\[REMARCACAO:FALTA\]|\[CONTATO:\{[^}]+\}\]|\[BOOKING_CONFIRMED:\{[\s\S]*?\}\]/g, '')
-            .trim();
+            // Parser robusto: extrai JSON ou recupera dados via fallback inteligente
+            const bookingData = parseBookingData(cleanText, history, enrichedMessage, customerProfile);
 
-          const finalReply = sanitizeGoogleMapsLinks(cleanReply || cleanText);
-          console.log(`[AIService] ✅ Resposta via Gemini [FALLBACK] chave ${keyIdx}. BookingData:`, bookingData ? 'Detectado' : 'Não', `Attended: ${attended}`, `NoShowReschedule: ${noShowReschedule}`);
-          return { reply: finalReply, transfer, booking: booking || !!bookingData, bookingData, proposal, contactData, confirm, attended, noShowReschedule };
+            const cleanReply = cleanText
+              .replace(/\[TRANSFERIR_HUMANO\]|\[AGENDAR\]|\[PROPOSTA\]|\[CONFIRMAR_INFORMAÇÃO\]|\[ATENDIMENTO:CONFIRMADO\]|\[REMARCACAO:FALTA\]|\[CONTATO:\{[^}]+\}\]|\[BOOKING_CONFIRMED:\{[\s\S]*?\}\]/g, '')
+              .trim();
 
-        } catch (err: any) {
-          const status = err.response?.status ?? 'N/A';
-          lastError = err.response?.data?.error?.message || err.message || String(err);
-          if (status === 429) {
-            geminiKeyCooldowns.set(apiKey, Date.now() + 25_000);
-          } else if (status === 403) {
-            geminiKeyCooldowns.set(apiKey, Date.now() + 3_600_000);
+            const finalReply = sanitizeGoogleMapsLinks(cleanReply || cleanText);
+            console.log(`[AIService] ✅ Resposta via Gemini [FALLBACK] chave ${keyIdx} [${model}]. BookingData:`, bookingData ? 'Detectado' : 'Não', `Attended: ${attended}`, `NoShowReschedule: ${noShowReschedule}`);
+            return { reply: finalReply, transfer, booking: booking || !!bookingData, bookingData, proposal, contactData, confirm, attended, noShowReschedule };
+
+          } catch (err: any) {
+            const status = err.response?.status ?? 'N/A';
+            const errMsg = err.response?.data?.error?.message || err.message || String(err);
+            geminiLastError = `Chave (${masked}) Modelo (${model}) HTTP ${status}: ${errMsg}`;
+
+            if (status === 429) {
+              geminiKeyCooldowns.set(apiKey, Date.now() + 25_000);
+              // Quota neste modelo atingida, tenta o próximo modelo com quota separada
+              continue;
+            } else if (status === 403) {
+              geminiKeyCooldowns.set(apiKey, Date.now() + 3_600_000);
+              break; // Chave bloqueada, passa para a próxima chave
+            } else if (status === 404) {
+              continue; // Modelo não disponível, tenta o próximo modelo
+            }
+
+            console.warn(`[AIService] ⚠️ Gemini chave ${keyIdx} (${masked}) [${model}] HTTP ${status}: ${errMsg}`);
+            continue;
           }
-          console.warn(`[AIService] ⚠️ Gemini chave ${keyIdx} (${masked}) HTTP ${status}: ${lastError}`);
-          continue;
         }
       }
+    } else {
+      geminiLastError = 'Nenhuma chave Gemini configurada no .env';
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Se ambos os motores falharem: LANÇAR ERRO para o webhook sinalizar o painel
-    // e NUNCA enviar mensagens de desculpas automáticas ao cliente!
+    // Se ambos os motores falharem: LANÇAR ERRO com diagnóstico detalhado de ambos
     // ─────────────────────────────────────────────────────────────────────────
-    console.error(`[AIService] ❌ TODOS os motores de IA falharam (DeepSeek + Gemini). Último erro: ${lastError}`);
-    throw new Error(`Falha temporária ao comunicar com os motores de IA: ${lastError}`);
+    const combinedError = [
+      deepseekLastError ? `[DeepSeek (Principal)]: ${deepseekLastError}` : null,
+      geminiLastError ? `[Gemini (Fallback)]: ${geminiLastError}` : null,
+    ].filter(Boolean).join(' | ');
+
+    console.error(`[AIService] ❌ TODOS os motores de IA falharam. Detalhes: ${combinedError}`);
+    throw new Error(`Falha temporária ao comunicar com os motores de IA: ${combinedError || 'Motores indisponíveis'}`);
   }
 
   /**
@@ -1626,7 +1669,7 @@ export class AIService {
       if (dsKeys.length > 0) {
         const deepseekKey = dsKeys[0];
         const dsModel   = process.env.DEEPSEEK_MODEL   || 'deepseek-chat';
-        const dsBaseUrl = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com/v1';
+        const dsBaseUrl = (process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com/v1').replace(/\/+$/, '');
         const response = await axios.post(`${dsBaseUrl}/chat/completions`, {
           model: dsModel,
           messages: [{ role: 'user', content: `Traduza o seguinte texto para ${targetLanguage}. Retorne APENAS a tradução, sem comentários:\n\n${text}` }],
@@ -1635,6 +1678,7 @@ export class AIService {
         }, {
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${deepseekKey}` },
           timeout: 10_000,
+          httpsAgent: aiHttpsAgent,
         });
         const result = response.data?.choices?.[0]?.message?.content?.trim();
         if (result) return result;
@@ -1642,14 +1686,21 @@ export class AIService {
     } catch (_) {}
 
     try {
-      const apiKey = getApiKey(0);
-      const url = `${GEMINI_BASE}/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
-      const response = await axios.post(url, {
-        contents: [{ parts: [{ text: `Traduza o seguinte texto para ${targetLanguage}. Retorne APENAS a tradução:\n\n${text}` }] }],
-        generationConfig: { temperature: 0.2, maxOutputTokens: 500 },
-      }, { timeout: 10_000 });
-      const result = response.data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-      if (result) return result;
+      const keys = getUniqueApiKeys();
+      if (keys.length > 0) {
+        const apiKey = keys[0];
+        for (const model of [GEMINI_MODEL, 'gemini-flash-lite-latest']) {
+          try {
+            const url = `${GEMINI_BASE}/${model}:generateContent?key=${apiKey}`;
+            const response = await axios.post(url, {
+              contents: [{ parts: [{ text: `Traduza o seguinte texto para ${targetLanguage}. Retorne APENAS a tradução:\n\n${text}` }] }],
+              generationConfig: { temperature: 0.2, maxOutputTokens: 500 },
+            }, { timeout: 10_000, httpsAgent: aiHttpsAgent });
+            const result = response.data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+            if (result) return result;
+          } catch (_) {}
+        }
+      }
     } catch (_) {}
 
     return text;

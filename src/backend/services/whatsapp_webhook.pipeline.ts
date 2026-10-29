@@ -864,6 +864,7 @@ export async function processWhatsAppWebhook(body: any, recorder: WebhookEventRe
         const buttonTitle = incomingMsg.interactive?.button_reply?.title ||
                             incomingMsg.interactive?.list_reply?.title ||
                             incomingMsg.button?.text ||
+                            incomingMsg.button?.payload ||
                             '';
         const buttonId = incomingMsg.interactive?.button_reply?.id ||
                          incomingMsg.interactive?.list_reply?.id ||
@@ -1065,6 +1066,7 @@ export async function processWhatsAppWebhook(body: any, recorder: WebhookEventRe
         const buttonTitle = incomingMsg.interactive?.button_reply?.title ||
                             incomingMsg.interactive?.list_reply?.title ||
                             incomingMsg.button?.text ||
+                            incomingMsg.button?.payload ||
                             userText;
         const buttonId = incomingMsg.interactive?.button_reply?.id ||
                          incomingMsg.interactive?.list_reply?.id ||
