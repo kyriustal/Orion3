@@ -601,8 +601,14 @@ router.get('/:id/report', requireAuth, async (req: any, res) => {
         progress: campaign.progress || 0,
         sentCount: campaign.sent_count || 0,
         failedCount: campaign.failed_count || 0,
-        totalContacts: campaign.total_contacts || 0,
         audience: campaign.audience || 'all',
+        scheduledAt: campaign.scheduled_at || campaign.filters?.scheduled_at || null,
+        scheduledAtFormatted: (campaign.scheduled_at || campaign.filters?.scheduled_at)
+          ? new Date(campaign.scheduled_at || campaign.filters?.scheduled_at).toLocaleDateString('pt-BR', {
+              day: '2-digit', month: '2-digit', year: 'numeric',
+              hour: '2-digit', minute: '2-digit'
+            })
+          : null,
         date: new Date(campaign.created_at).toLocaleDateString('pt-BR', {
           day: '2-digit', month: '2-digit', year: 'numeric',
           hour: '2-digit', minute: '2-digit'

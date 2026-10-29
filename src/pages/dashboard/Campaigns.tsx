@@ -41,6 +41,16 @@ interface CampaignLog {
 
 type ActiveTab = "campaigns" | "contacts";
 
+function formatDateTimeLocal(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const year = date.getFullYear();
+  const month = pad(date.getMonth() + 1);
+  const day = pad(date.getDate());
+  const hours = pad(date.getHours());
+  const minutes = pad(date.getMinutes());
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
+
 export default function Campaigns() {
   const [activeTab, setActiveTab] = useState<ActiveTab>("campaigns");
 
@@ -290,6 +300,23 @@ export default function Campaigns() {
       fetchCampaigns();
     } catch (e: any) {
       toast.error(e.message);
+    }
+  };
+
+  const handleTriggerCampaign = async (campaignId: string) => {
+    try {
+      const res = await fetch(`/api/campaigns/${campaignId}/trigger`, {
+        method: "POST",
+        headers: authHeaders()
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Erro ao disparar campanha");
+      }
+      toast.success("Disparo da campanha agendada iniciado com sucesso!");
+      fetchCampaigns();
+    } catch (e: any) {
+      toast.error(e.message || "Erro ao disparar campanha");
     }
   };
 
@@ -662,8 +689,10 @@ export default function Campaigns() {
                 campaigns.map(camp => (
                   <div key={camp.id} className="flex items-center justify-between p-4 rounded-xl border border-zinc-200 bg-white hover:bg-zinc-50 transition-colors">
                     <div className="flex items-center gap-4 min-w-0">
-                      <div className="w-10 h-10 rounded-lg bg-zinc-100 flex items-center justify-center shrink-0">
-                        <Megaphone className="w-5 h-5 text-zinc-500" />
+                      <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${
+                        camp.status === "SCHEDULED" ? "bg-indigo-50 text-indigo-600" : "bg-zinc-100 text-zinc-500"
+                      }`}>
+                        {camp.status === "SCHEDULED" ? <CalendarClock className="w-5 h-5" /> : <Megaphone className="w-5 h-5" />}
                       </div>
                       <div className="min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
@@ -676,11 +705,17 @@ export default function Campaigns() {
                           {camp.totalContacts > 0 && (
                             <span className="text-xs text-zinc-500">{camp.sentCount}/{camp.totalContacts} enviados</span>
                           )}
+                          {camp.status === "SCHEDULED" && (camp.scheduledAtFormatted || camp.scheduledAt) && (
+                            <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-200">
+                              <CalendarClock className="w-3.5 h-3.5 text-indigo-600" />
+                              Disparo agendado: {camp.scheduledAtFormatted || new Date(camp.scheduledAt).toLocaleString("pt-BR")}
+                            </span>
+                          )}
                         </div>
                       </div>
                     </div>
                     <div className="flex items-center gap-3 shrink-0">
-                      {camp.totalContacts > 0 && (
+                      {camp.totalContacts > 0 && camp.status !== "SCHEDULED" && (
                         <div className="w-28 hidden sm:block">
                           <div className="flex justify-between text-xs mb-1">
                             <span className="font-medium text-zinc-700">{camp.progress}%</span>
@@ -693,7 +728,30 @@ export default function Campaigns() {
                           </div>
                         </div>
                       )}
-                      <div className="flex gap-1.5">
+                      <div className="flex gap-1.5 items-center">
+                        {camp.status === "SCHEDULED" && (
+                          <>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="gap-1 text-xs font-medium text-emerald-700 border-emerald-300 hover:bg-emerald-50 h-8"
+                              title="Disparar campanha agora"
+                              onClick={() => handleTriggerCampaign(camp.id)}
+                            >
+                              <Zap className="w-3.5 h-3.5 text-emerald-600" />
+                              <span className="hidden md:inline">Disparar Agora</span>
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="icon"
+                              title="Cancelar agendamento"
+                              className="h-8 w-8 text-red-500 hover:bg-red-50 hover:text-red-700"
+                              onClick={() => handleCampaignStatus(camp.id, "CANCELLED")}
+                            >
+                              <X className="w-4 h-4" />
+                            </Button>
+                          </>
+                        )}
                         {camp.status === "SENDING" && (
                           <Button variant="outline" size="icon" title="Pausar" onClick={() => handleCampaignStatus(camp.id, "PAUSED")}>
                             <PauseCircle className="w-4 h-4 text-amber-600" />
@@ -911,9 +969,27 @@ export default function Campaigns() {
         <div className="fixed inset-0 bg-zinc-950/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <Card className="w-full max-w-2xl shadow-2xl animate-in fade-in zoom-in-95 duration-200 overflow-y-auto max-h-[92vh]">
             <form onSubmit={handleStartCampaign}>
-              <CardHeader>
-                <CardTitle>Criar Nova Campanha</CardTitle>
-                <CardDescription>Configure o envio em massa. O sistema aplicará um atraso por mensagem para cumprir as políticas da Meta.</CardDescription>
+              <CardHeader className="flex flex-row items-start justify-between pb-4">
+                <div>
+                  <CardTitle>Criar Nova Campanha</CardTitle>
+                  <CardDescription>Configure o disparo em massa ou programe o agendamento para envio automático.</CardDescription>
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 text-zinc-400 hover:text-zinc-700"
+                  onClick={() => {
+                    setIsModalOpen(false);
+                    setScheduleMode("now");
+                    setScheduledDateTime("");
+                    setExcludedPhones(new Set());
+                    setShowContactPreview(false);
+                    setPreviewSearch("");
+                  }}
+                >
+                  <X className="w-4 h-4" />
+                </Button>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-2">
@@ -1164,6 +1240,160 @@ export default function Campaigns() {
                   <p className="text-[10px] text-zinc-500 italic">Recomendamos no mínimo 5 segundos para evitar bloqueios de spam da Meta.</p>
                 </div>
 
+                {/* ── PROGRAMAÇÃO / AGENDAMENTO DO DISPARO ── */}
+                <div className="space-y-3 border border-zinc-200 rounded-lg p-4 bg-zinc-50/80">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-sm font-semibold text-zinc-800 flex items-center gap-2">
+                      <CalendarClock className="w-4 h-4 text-indigo-600" />
+                      Programação do Envio
+                    </Label>
+                    <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full ${
+                      scheduleMode === "scheduled" ? "bg-indigo-100 text-indigo-700 font-semibold" : "bg-emerald-100 text-emerald-700"
+                    }`}>
+                      {scheduleMode === "scheduled" ? "Agendamento Ativo" : "Disparo Imediato"}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <button
+                      type="button"
+                      onClick={() => setScheduleMode("now")}
+                      className={`flex items-start gap-3 p-3 rounded-lg border text-left transition-all ${
+                        scheduleMode === "now"
+                          ? "border-emerald-600 bg-white ring-2 ring-emerald-600/20 shadow-sm"
+                          : "border-zinc-200 bg-white/60 hover:bg-white hover:border-zinc-300"
+                      }`}
+                    >
+                      <div className={`p-2 rounded-md shrink-0 ${scheduleMode === "now" ? "bg-emerald-600 text-white" : "bg-zinc-100 text-zinc-600"}`}>
+                        <Zap className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <p className={`text-xs font-semibold ${scheduleMode === "now" ? "text-emerald-900" : "text-zinc-800"}`}>
+                          Enviar Imediatamente
+                        </p>
+                        <p className="text-[11px] text-zinc-500 mt-0.5">
+                          Inicia o disparo para a lista logo após a confirmação.
+                        </p>
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setScheduleMode("scheduled");
+                        if (!scheduledDateTime) {
+                          const defaultDate = new Date(Date.now() + 30 * 60000);
+                          setScheduledDateTime(formatDateTimeLocal(defaultDate));
+                        }
+                      }}
+                      className={`flex items-start gap-3 p-3 rounded-lg border text-left transition-all ${
+                        scheduleMode === "scheduled"
+                          ? "border-indigo-600 bg-white ring-2 ring-indigo-600/20 shadow-sm"
+                          : "border-zinc-200 bg-white/60 hover:bg-white hover:border-zinc-300"
+                      }`}
+                    >
+                      <div className={`p-2 rounded-md shrink-0 ${scheduleMode === "scheduled" ? "bg-indigo-600 text-white" : "bg-zinc-100 text-zinc-600"}`}>
+                        <CalendarClock className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <p className={`text-xs font-semibold ${scheduleMode === "scheduled" ? "text-indigo-900" : "text-zinc-800"}`}>
+                          Agendar para Mais Tarde
+                        </p>
+                        <p className="text-[11px] text-zinc-500 mt-0.5">
+                          Define data e hora futuras para o disparo automático.
+                        </p>
+                      </div>
+                    </button>
+                  </div>
+
+                  {scheduleMode === "scheduled" && (
+                    <div className="mt-3 pt-3 border-t border-zinc-200 space-y-3 animate-in fade-in-50 duration-150">
+                      <div className="space-y-1.5">
+                        <Label htmlFor="scheduledDateTime" className="text-xs font-medium text-zinc-700 flex items-center justify-between">
+                          <span className="flex items-center gap-1.5">
+                            <Calendar className="w-3.5 h-3.5 text-indigo-600" />
+                            Data e Hora do Disparo Programado
+                          </span>
+                          <span className="text-[10px] text-zinc-400">Horário Local / Angola (WAT)</span>
+                        </Label>
+                        <Input
+                          id="scheduledDateTime"
+                          type="datetime-local"
+                          min={formatDateTimeLocal(new Date(Date.now() + 5 * 60000))}
+                          value={scheduledDateTime}
+                          onChange={e => setScheduledDateTime(e.target.value)}
+                          className="h-10 text-sm bg-white border-indigo-200 focus-visible:ring-indigo-500"
+                        />
+                        <p className="text-[11px] text-zinc-500">
+                          O servidor disparará as mensagens automaticamente quando a data e hora forem alcançadas.
+                        </p>
+                      </div>
+
+                      {/* Atalhos Rápidos */}
+                      <div className="space-y-1.5">
+                        <span className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Atalhos Rápidos:</span>
+                        <div className="flex flex-wrap gap-1.5">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-7 text-[11px] px-2.5 bg-white hover:bg-indigo-50 hover:text-indigo-700 hover:border-indigo-300"
+                            onClick={() => setScheduledDateTime(formatDateTimeLocal(new Date(Date.now() + 30 * 60000)))}
+                          >
+                            +30 min
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-7 text-[11px] px-2.5 bg-white hover:bg-indigo-50 hover:text-indigo-700 hover:border-indigo-300"
+                            onClick={() => setScheduledDateTime(formatDateTimeLocal(new Date(Date.now() + 60 * 60000)))}
+                          >
+                            +1 hora
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-7 text-[11px] px-2.5 bg-white hover:bg-indigo-50 hover:text-indigo-700 hover:border-indigo-300"
+                            onClick={() => setScheduledDateTime(formatDateTimeLocal(new Date(Date.now() + 3 * 3600000)))}
+                          >
+                            +3 horas
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-7 text-[11px] px-2.5 bg-white hover:bg-indigo-50 hover:text-indigo-700 hover:border-indigo-300"
+                            onClick={() => {
+                              const d = new Date();
+                              d.setDate(d.getDate() + 1);
+                              d.setHours(9, 0, 0, 0);
+                              setScheduledDateTime(formatDateTimeLocal(d));
+                            }}
+                          >
+                            Amanhã às 09:00
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-7 text-[11px] px-2.5 bg-white hover:bg-indigo-50 hover:text-indigo-700 hover:border-indigo-300"
+                            onClick={() => {
+                              const d = new Date();
+                              d.setDate(d.getDate() + 1);
+                              d.setHours(14, 0, 0, 0);
+                              setScheduledDateTime(formatDateTimeLocal(d));
+                            }}
+                          >
+                            Amanhã às 14:00
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 {/* ── PREVIEW DE CONTATOS PARA ENVIO ── */}
                 <div className="space-y-3 border border-zinc-200 rounded-lg p-4 bg-zinc-50">
                   <button
@@ -1368,10 +1598,43 @@ export default function Campaigns() {
                   )}
                 </div>
                 <div className="flex gap-2">
-                  <Button type="button" variant="outline" onClick={() => { setIsModalOpen(false); setExcludedPhones(new Set()); setShowContactPreview(false); setPreviewSearch(""); }} disabled={isSubmitting}>Cancelar</Button>
-                  <Button type="submit" disabled={isSubmitting || effectiveSendCount === 0} className="min-w-[140px]">
-                    {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <PlayCircle className="w-4 h-4 mr-2" />}
-                    {isSubmitting ? "Iniciando..." : `Iniciar Disparo (${effectiveSendCount})`}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      setIsModalOpen(false);
+                      setScheduleMode("now");
+                      setScheduledDateTime("");
+                      setExcludedPhones(new Set());
+                      setShowContactPreview(false);
+                      setPreviewSearch("");
+                    }}
+                    disabled={isSubmitting}
+                  >
+                    Cancelar
+                  </Button>
+                  <Button
+                    type="submit"
+                    disabled={isSubmitting || effectiveSendCount === 0}
+                    className={`min-w-[150px] transition-all ${
+                      scheduleMode === "scheduled"
+                        ? "bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm shadow-indigo-200"
+                        : "bg-emerald-600 hover:bg-emerald-700 text-white"
+                    }`}
+                  >
+                    {isSubmitting ? (
+                      <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                    ) : scheduleMode === "scheduled" ? (
+                      <CalendarClock className="w-4 h-4 mr-2" />
+                    ) : (
+                      <PlayCircle className="w-4 h-4 mr-2" />
+                    )}
+                    {isSubmitting
+                      ? (scheduleMode === "scheduled" ? "Agendando..." : "Iniciando...")
+                      : scheduleMode === "scheduled"
+                        ? `Agendar Campanha (${effectiveSendCount})`
+                        : `Iniciar Disparo (${effectiveSendCount})`
+                    }
                   </Button>
                 </div>
               </CardFooter>
@@ -1392,8 +1655,14 @@ export default function Campaigns() {
                     Relatório da Campanha
                   </CardTitle>
                   {selectedReport?.campaign && (
-                    <CardDescription className="mt-1">
-                      <strong>{selectedReport.campaign.name}</strong> • Template: <strong>{selectedReport.campaign.template}</strong> • {selectedReport.campaign.date}
+                    <CardDescription className="mt-1 flex items-center gap-2 flex-wrap">
+                      <span><strong>{selectedReport.campaign.name}</strong> • Template: <strong>{selectedReport.campaign.template}</strong> • Criada em: {selectedReport.campaign.date}</span>
+                      {selectedReport.campaign.status === "SCHEDULED" && selectedReport.campaign.scheduledAtFormatted && (
+                        <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-200">
+                          <CalendarClock className="w-3.5 h-3.5 text-indigo-600" />
+                          Disparo agendado para: {selectedReport.campaign.scheduledAtFormatted}
+                        </span>
+                      )}
                     </CardDescription>
                   )}
                 </div>
