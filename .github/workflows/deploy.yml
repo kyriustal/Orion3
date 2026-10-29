@@ -31,7 +31,9 @@ jobs:
           touch tmp/restart.txt
 
       - name: Deploy via FTP
-        if: ${{ secrets.FTP_SERVER != '' }}
+        env:
+          FTP_SERVER: ${{ secrets.FTP_SERVER }}
+        if: env.FTP_SERVER != ''
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
           server: ${{ secrets.FTP_SERVER }}
