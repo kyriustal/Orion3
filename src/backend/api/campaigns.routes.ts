@@ -257,6 +257,12 @@ export async function processCampaign(campaignId: string, orgId: string) {
       ? campaign.buttons
       : (tmpl?.buttons || []);
 
+    if (!tmpl) {
+      console.warn(`[CAMPAIGN WORKER] ⚠️ Template "${campaign.template}" não encontrado na BD local para org ${orgId}. O disparo usará o template da Meta diretamente sem variáveis locais.`);
+    } else {
+      console.log(`[CAMPAIGN WORKER] Template "${campaign.template}" carregado | language: ${templateLanguage} | buttons: ${templateButtons.length}`);
+    }
+
     // Buscar credenciais WhatsApp (com fallback robusto)
     const { data: waConfig } = await supabaseAdmin
       .from('whatsapp_config')
@@ -266,6 +272,8 @@ export async function processCampaign(campaignId: string, orgId: string) {
 
     const phoneNumberId = waConfig?.phone_number_id || process.env.META_PHONE_NUMBER_ID || process.env.DEFAULT_PHONE_NUMBER_ID || '';
     const accessToken = waConfig?.access_token || process.env.META_ACCESS_TOKEN || '';
+
+    console.log(`[CAMPAIGN WORKER] Credenciais WA — phoneNumberId: "${phoneNumberId ? phoneNumberId.substring(0, 6) + '...' : 'VAZIO'}" | accessToken: "${accessToken ? 'OK (len=' + accessToken.length + ')' : 'VAZIO'}" | waConfig found: ${!!waConfig}`);
 
     // Buscar dados da organização (nome da empresa) para preenchimento de variáveis
     const { data: orgData } = await supabaseAdmin
@@ -358,6 +366,8 @@ export async function processCampaign(campaignId: string, orgId: string) {
 
       let sentId: string | null = null;
       let mediaSentId: string | null = null;
+
+      console.log(`[CAMPAIGN WORKER] 📤 Enviando para ${contact.phone} (${contact.name}) | template: ${campaign.template} | media: ${!!campaignMedia}`);
 
       if (campaignMedia && campaignMedia.url) {
         const mType = (campaignMedia.type || 'image').toLowerCase();
@@ -456,6 +466,7 @@ export async function processCampaign(campaignId: string, orgId: string) {
 
       if (sentId || mediaSentId) {
         sentCount++;
+        console.log(`[CAMPAIGN WORKER] ✅ Enviado para ${contact.phone} | msgId: ${sentId || mediaSentId}`);
 
         // 1. Gravar mensagem enviada no histórico de conversa com metadata da campanha
         try {
@@ -507,6 +518,7 @@ export async function processCampaign(campaignId: string, orgId: string) {
         }
       } else {
         failedCount++;
+        console.error(`[CAMPAIGN WORKER] ❌ Falhou para ${contact.phone} | sentId: null | mediaSentId: null | template: ${campaign.template} | phoneNumberId: ${phoneNumberId ? phoneNumberId.substring(0,6)+'...' : 'VAZIO'}`);
       }
 
       processedPhoneSet.add(normalizedTargetPhone);
@@ -518,8 +530,8 @@ export async function processCampaign(campaignId: string, orgId: string) {
           org_id: orgId,
           customer_phone: normalizedTargetPhone,
           customer_name: contact.name || null,
-          status: sentId ? 'sent' : 'failed',
-          message_id: sentId || null
+          status: (sentId || mediaSentId) ? 'sent' : 'failed',
+          message_id: sentId || mediaSentId || null
         });
       } catch (logErr: any) {
         console.warn('[CAMPAIGN LOGS] Erro ao gravar log individual:', logErr.message);

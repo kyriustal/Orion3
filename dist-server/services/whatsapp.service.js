@@ -643,7 +643,10 @@ class WhatsAppService {
             return response.data?.messages?.[0]?.id || null;
         }
         catch (error) {
-            console.warn(`[WHATSAPP] Falha no disparo do template oficial (${templateName}):`, error.response?.data || error.message);
+            const metaErr = error.response?.data;
+            const metaErrCode = metaErr?.error?.code;
+            const metaErrMsg = metaErr?.error?.message || error.message;
+            console.error(`[WHATSAPP] ❌ Falha no template "${templateName}" para ${to} | Código Meta: ${metaErrCode} | Mensagem: ${metaErrMsg}`, metaErr || '');
             if (contentFallback) {
                 let filledText = contentFallback;
                 Object.keys(variables).forEach(k => {

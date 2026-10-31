@@ -274,6 +274,12 @@ async function processCampaign(campaignId, orgId) {
         const templateButtons = campaign.buttons && campaign.buttons.length > 0
             ? campaign.buttons
             : (tmpl?.buttons || []);
+        if (!tmpl) {
+            console.warn(`[CAMPAIGN WORKER] ⚠️ Template "${campaign.template}" não encontrado na BD local para org ${orgId}. O disparo usará o template da Meta diretamente sem variáveis locais.`);
+        }
+        else {
+            console.log(`[CAMPAIGN WORKER] Template "${campaign.template}" carregado | language: ${templateLanguage} | buttons: ${templateButtons.length}`);
+        }
         // Buscar credenciais WhatsApp (com fallback robusto)
         const { data: waConfig } = await supabase_1.supabaseAdmin
             .from('whatsapp_config')
@@ -282,6 +288,7 @@ async function processCampaign(campaignId, orgId) {
             .maybeSingle();
         const phoneNumberId = waConfig?.phone_number_id || process.env.META_PHONE_NUMBER_ID || process.env.DEFAULT_PHONE_NUMBER_ID || '';
         const accessToken = waConfig?.access_token || process.env.META_ACCESS_TOKEN || '';
+        console.log(`[CAMPAIGN WORKER] Credenciais WA — phoneNumberId: "${phoneNumberId ? phoneNumberId.substring(0, 6) + '...' : 'VAZIO'}" | accessToken: "${accessToken ? 'OK (len=' + accessToken.length + ')' : 'VAZIO'}" | waConfig found: ${!!waConfig}`);
         // Buscar dados da organização (nome da empresa) para preenchimento de variáveis
         const { data: orgData } = await supabase_1.supabaseAdmin
             .from('organizations')
@@ -354,6 +361,7 @@ async function processCampaign(campaignId, orgId) {
             } : null);
             let sentId = null;
             let mediaSentId = null;
+            console.log(`[CAMPAIGN WORKER] 📤 Enviando para ${contact.phone} (${contact.name}) | template: ${campaign.template} | media: ${!!campaignMedia}`);
             if (campaignMedia && campaignMedia.url) {
                 const mType = (campaignMedia.type || 'image').toLowerCase();
                 const mime = campaignMedia.mime_type || (mType === 'image' ? 'image/jpeg' :
@@ -403,6 +411,7 @@ async function processCampaign(campaignId, orgId) {
             }
             if (sentId || mediaSentId) {
                 sentCount++;
+                console.log(`[CAMPAIGN WORKER] ✅ Enviado para ${contact.phone} | msgId: ${sentId || mediaSentId}`);
                 // 1. Gravar mensagem enviada no histórico de conversa com metadata da campanha
                 try {
                     await supabase_1.supabaseAdmin.from('conversation_history').insert({
@@ -455,6 +464,7 @@ async function processCampaign(campaignId, orgId) {
             }
             else {
                 failedCount++;
+                console.error(`[CAMPAIGN WORKER] ❌ Falhou para ${contact.phone} | sentId: null | mediaSentId: null | template: ${campaign.template} | phoneNumberId: ${phoneNumberId ? phoneNumberId.substring(0, 6) + '...' : 'VAZIO'}`);
             }
             processedPhoneSet.add(normalizedTargetPhone);
             // Gravar log individual por número de telefone para o relatório
@@ -464,8 +474,8 @@ async function processCampaign(campaignId, orgId) {
                     org_id: orgId,
                     customer_phone: normalizedTargetPhone,
                     customer_name: contact.name || null,
-                    status: sentId ? 'sent' : 'failed',
-                    message_id: sentId || null
+                    status: (sentId || mediaSentId) ? 'sent' : 'failed',
+                    message_id: sentId || mediaSentId || null
                 });
             }
             catch (logErr) {
