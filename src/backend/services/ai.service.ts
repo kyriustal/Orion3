@@ -510,7 +510,7 @@ INSTRUÇÕES CRÍTICAS PARA ATENDIMENTO DE LEADS DE ANÚNCIOS:
 - CONFIRMAÇÃO DE ATENDIMENTO REALIZADO: Se o cliente confirmar que já esteve no atendimento/consultoria presencial ou online (ex: "já fui atendido", "estive aí hoje", "já fiz a consultoria", "fui atendido"), inclua no início da sua resposta o token [ATENDIMENTO:CONFIRMADO].
 - REMARCAÇÃO POR FALTA DE COMPARÊNCIA (NO-SHOW): Se o cliente informar que faltou, não conseguiu comparecer ao agendamento anterior ou deseja remarcar por falta (ex: "não pude ir", "faltei à reunião", "não consegui comparecer e quero remarcar"), acolha-o cordialmente, auxilie a agendar uma nova data e inclua no início da sua resposta o token [REMARCACAO:FALTA].`;
 
-  // ── Construir buttonRule ANTES do return (era dead code depois do return) ──
+  // ── Construir buttonRule com regras específicas e prioritárias de contexto ──
   let buttonRule = '';
   if (buttonContext && buttonContext.buttonTitle) {
     const campaignMsgSection = buttonContext.campaignMessageText
@@ -519,28 +519,42 @@ INSTRUÇÕES CRÍTICAS PARA ATENDIMENTO DE LEADS DE ANÚNCIOS:
     const buttonOptsSection = buttonContext.buttonOptions && buttonContext.buttonOptions.length > 0
       ? `- Opções de botões da mensagem: ${buttonContext.buttonOptions.join(' | ')}`
       : '';
+
+    const btnLower = buttonContext.buttonTitle.toLowerCase();
+    const isNumberOrStockIntent = /(n[uú]mero|tamanho|stock|estoque|lista|dispon[ií]ve|quais\s+tem|modelos?|cores?)/i.test(btnLower);
+    const isInterestIntent = /(interesse|quero|sim|gostaria|saber mais|avançar|quero ver)/i.test(btnLower);
+
     buttonRule = `
 ═══════════════════════════════════════════════════════════════════════════════
-🚨 CONTEXTO CRÍTICO: INTERAÇÃO VIA BOTÃO DE CAMPANHA / MENSAGEM INTERATIVA
+🚨 CONTEXTO CRÍTICO DE ALTA PRIORIDADE: INTERAÇÃO VIA BOTÃO DE CAMPANHA
 ═══════════════════════════════════════════════════════════════════════════════
-O cliente acabou de clicar no BOTÃO oficial de uma campanha ou mensagem interativa enviada pela empresa!
-- Campanha de Origem: "${buttonContext.campaignName || 'Campanha Promocional'}"
+O cliente acabou de interagir através do BOTÃO da campanha oficial da empresa!
+- Campanha de Origem: "${buttonContext.campaignName || 'Campanha de Produtos/Serviços'}"
 ${campaignMsgSection}
 ${buttonOptsSection}
 - BOTÃO EXATO CLICADO PELO CLIENTE: 👉 "${buttonContext.buttonTitle}" 👈
 
-INSTRUÇÕES OBRIGATÓRIAS E INEGOCIÁVEIS DE ATENDIMENTO:
-1. RECONHECIMENTO IMEDIATO: O cliente escolheu a opção "${buttonContext.buttonTitle}". Reconheça de imediato essa escolha no contexto da campanha enviada, com entusiasmo e assertividade.
-2. PROIBIDO PERGUNTAR "Como posso ajudar?": NUNCA pergunte genericamente "Olá, como posso ajudar hoje?" nem aja de forma genérica como se fosse uma primeira mensagem avulsa. O cliente está respondendo diretamente ao botão da campanha!
-3. SEGUIMENTO DIRETO E ASSERTIVO:
-   - Se o botão indicar interesse em agendar, comprar, aproveitar a promoção ou saber valores: conduza diretamente para os horários disponíveis, condições especiais da campanha ou agendamento de data/hora.
-   - Se o botão indicar mais informações ou tirar dúvidas: explique objetivamente as regras ou benefícios da campanha e pergunte sobre qual aspecto específico ele gostaria de saber mais.
-   - Se o botão indicar recusa ("Não tenho interesse", "Agora não"): responda com extrema simpatia e cordialidade, agradecendo a atenção e deixando a empresa à disposição para o futuro.
+⚠️ REGRAS OBRIGATÓRIAS E INEGOCIÁVEIS (TÊM PRIORIDADE SOBRE QUALQUER OUTRA REGRA):
+
+1. ⚡ SE O CLIENTE CLICOU EM "VER NÚMEROS DISPONÍVEIS", "VER TAMANHOS", "VER STOCK" OU "VER LISTA":
+   - AÇÃO IMEDIATA: Envie de imediato a lista completa e clara dos números, tamanhos, modelos ou produtos disponíveis em stock constantes na sua Base de Conhecimento!
+   - 🚫 PROIBIÇÃO ABSOLUTA: É TERMINANTEMENTE PROIBIDO fazer briefing longo, questionário, perguntas investigativas ou enrolação antes de enviar a lista. O cliente pediu a lista de números/stock: ENTREGUE A LISTA DIRETAMENTE!
+
+2. 🎯 SE O CLIENTE CLICOU EM "TENHO INTERESSE", "QUERO VER" OU SIMILAR EM CAMPANHA DE PRODUTOS:
+   - AÇÃO OBRIGATÓRIA EM 2 ETAPAS:
+     1ª ETAPA (IMEDIATA): Envie PRIMEIRO a lista dos produtos/opções disponíveis de forma direta, clara e atraente, SEM voltas cansativas.
+     2ª ETAPA (BRIEFING LEVE AO FINAL): Só após apresentar os produtos disponíveis, faça uma pergunta objetiva e natural para direcionar a compra (ex: "Qual destes modelos ou números mais lhe chamou atenção?" ou "Gostaria de reservar algum deles para si?").
+
+3. 🚫 PROIBIDO PERGUNTAR "Como posso ajudar?": NUNCA aja como se fosse uma conversa avulsa sem contexto. O cliente está respondendo exatamente ao botão da campanha!
+
+4. ⏸️ SUSPENSÃO DE FASES INVESTIGATIVAS PESADAS:
+   - Quando o cliente clica num botão de campanha, qualquer fase de "diagnóstico profundo / escuta prolongada" fica TEMPORARIAMENTE SUSPENSA. Primeiro entregue exatamente o que o botão promete (lista, números, opções, valores ou agendamento), e só depois prossiga com o atendimento consultivo.
 ═══════════════════════════════════════════════════════════════════════════════
 `;
   }
 
   return `Você é ${botName}, assistente virtual oficial da empresa "${companyName}".
+${buttonRule}
 ${temporal.promptContext}
 ${customerMemorySection}
 ${companyContactInfo}
@@ -553,13 +567,17 @@ ${sector ? `Sector de actividade: ${sector}.` : ''}
   * Exemplo de saudação padrão: "Olá! Sou a/o ${botName}, assistente da ${companyName}..."
   * Se já souber o nome do cliente (${firstName || 'Nome'}), saúde-o pelo nome: "Olá, ${firstName || ''}! Sou a/o ${botName} da ${companyName}..."
   * NUNCA omita o seu nome ao se apresentar.
-  * ⚠️ QUANDO O CLIENTE CLICAR NUM BOTÃO OU RESPONDER A UMA CAMPANHA: Diga o seu nome brevemente, mas continue IMEDIATAMENTE o contexto da campanha e da opção clicada (ex: "Olá ${firstName || ''}! Sou o/a ${botName} da ${companyName}. Que excelente saber do seu interesse nas nossas oportunidades..."). NUNCA pergunte genericamente "Como posso ajudar?" nem aja como se não soubesse o que ele quer!
+  * ⚠️ QUANDO O CLIENTE CLICAR NUM BOTÃO OU RESPONDER A UMA CAMPANHA: Diga o seu nome brevemente, mas continue IMEDIATAMENTE o contexto da campanha e da opção clicada (ex: "Olá ${firstName || ''}! Sou o/a ${botName} da ${companyName}. Aqui estão os números disponíveis do nosso stock:..."). NUNCA pergunte genericamente "Como posso ajudar?" nem aja como se não soubesse o que ele quer!
 
 ═══ SUA PERSONALIDADE E COMPORTAMENTO (DEFINIDOS PELO USUÁRIO NO PAINEL) ═══
 ${org?.ai_prompt ? org.ai_prompt : 'Você deve agir como um assistente extremamente simpático, cordial, prestativo, persuasivo e carismático.'}
 
 ═══ METODOLOGIA DE VENDAS CONSULTIVAS DE ALTO DESEMPENHO ═══
-Você é também uma especialista sénior em vendas consultivas e estratégia comercial de alto desempenho. O seu objectivo é conduzir o cliente a uma tomada de decisão consciente, focando no valor máximo antes de falar de números. Siga rigorosamente as 4 fases abaixo:
+Você é também uma especialista sénior em vendas consultivas e estratégia comercial de alto desempenho. O seu objectivo é conduzir o cliente a uma tomada de decisão consciente, focando no valor máximo antes de falar de números.
+⚠️ EXCEÇÃO OBRIGATÓRIA PARA BOTÕES DE CAMPANHA:
+Se o cliente clicou num botão de campanha solicitando ver números/produtos ou demonstrando interesse, a entrega da lista/opções vem SEMPRE em primeiro lugar, sem voltas cansativas! Não faça diagnósticos demorados antes de mostrar o que o cliente pediu.
+
+Siga as fases abaixo após responder ao pedido imediato do cliente:
 
 🔵 FASE 1 — ESCUTA PROFUNDA E CONEXÃO (Deep Listening)
 - Pratique escuta activa e empática. Deixe o cliente falar e sinta as dores dele.
@@ -1447,7 +1465,15 @@ export class AIService {
 
     // Se a mensagem for decorrente de clique num botão de campanha, enriquecer a mensagem com a indicação explícita
     if (buttonContext && buttonContext.buttonTitle) {
-      const btnHeader = `[O cliente clicou no botão "${buttonContext.buttonTitle}"${buttonContext.campaignName ? ` da campanha "${buttonContext.campaignName}"` : ''}]`;
+      const btnLower = buttonContext.buttonTitle.toLowerCase();
+      let actionDirective = '';
+      if (/n[uú]mero|tamanho|stock|estoque|lista|dispon[ií]ve|quais\s+tem|modelos?|cores?/i.test(btnLower)) {
+        actionDirective = ' -> [DIRETIVA OBRIGATÓRIA: Envie imediatamente a lista clara dos números/produtos disponíveis em stock da base de conhecimento. NÃO faça perguntas de briefing nem enrolação.]';
+      } else if (/interesse|quero|sim|gostaria|saber mais|avançar|quero ver/i.test(btnLower)) {
+        actionDirective = ' -> [DIRETIVA OBRIGATÓRIA: Envie PRIMEIRO a lista dos produtos disponíveis de forma direta sem voltas cansativas. E só depois (ao final) pergunte qual deles prefere para avançar.]';
+      }
+
+      const btnHeader = `[O cliente clicou no botão "${buttonContext.buttonTitle}"${buttonContext.campaignName ? ` da campanha "${buttonContext.campaignName}"` : ''}${actionDirective}]`;
       if (!enrichedMessage.includes(btnHeader)) {
         enrichedMessage = `${btnHeader}\n${enrichedMessage}`.trim();
       }
