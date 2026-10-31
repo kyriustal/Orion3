@@ -50,7 +50,7 @@ router.get('/', auth_1.requireAuth, async (req, res) => {
         const orgId = req.user?.orgId;
         const { data, error } = await supabase_1.supabaseAdmin
             .from('knowledge_docs')
-            .select('id, filename, file_size, created_at, content_preview')
+            .select('id, filename, file_size, created_at, content_preview, mime_type, storage_path, file_url')
             .eq('org_id', orgId)
             .order('created_at', { ascending: false });
         if (error)
@@ -84,7 +84,41 @@ router.post('/', auth_1.requireAuth, upload.single('file'), async (req, res) => 
         if (!extractedText || extractedText.trim().length < 10) {
             return res.status(400).json({ error: 'Não foi possível extrair texto do documento. Verifique se o ficheiro não está vazio ou protegido.' });
         }
-        // Guardar no banco
+        // ── Upload do ficheiro original para o Supabase Storage ───────────────────
+        // Sanitizar nome para o Storage (sem acentos/espaços)
+        const sanitizedName = file.originalname
+            .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+            .replace(/[^a-zA-Z0-9._-]/g, '_')
+            .replace(/_+/g, '_')
+            .replace(/^_|_$/g, '');
+        // Usar timestamp como prefixo para unicidade
+        const storageFilename = `${Date.now()}_${sanitizedName}`;
+        const storagePath = `knowledge/${orgId}/${storageFilename}`;
+        let storedFileUrl = null;
+        let storedStoragePath = null;
+        try {
+            const { error: uploadErr } = await supabase_1.supabaseAdmin.storage
+                .from('assets')
+                .upload(storagePath, file.buffer, {
+                contentType: file.mimetype,
+                upsert: true,
+            });
+            if (!uploadErr) {
+                const { data: publicData } = supabase_1.supabaseAdmin.storage
+                    .from('assets')
+                    .getPublicUrl(storagePath);
+                storedFileUrl = publicData.publicUrl;
+                storedStoragePath = storagePath;
+                console.log(`[KNOWLEDGE] Ficheiro original guardado no Storage: ${storagePath}`);
+            }
+            else {
+                console.warn(`[KNOWLEDGE] Falha ao guardar ficheiro original no Storage (fallback a texto): ${uploadErr.message}`);
+            }
+        }
+        catch (storageErr) {
+            console.warn(`[KNOWLEDGE] Erro no Storage (fallback a texto): ${storageErr.message}`);
+        }
+        // Guardar no banco — inclui storage_path e file_url se o upload teve sucesso
         const { data, error } = await supabase_1.supabaseAdmin
             .from('knowledge_docs')
             .insert({
@@ -94,6 +128,8 @@ router.post('/', auth_1.requireAuth, upload.single('file'), async (req, res) => 
             mime_type: file.mimetype,
             content: extractedText,
             content_preview: extractedText.substring(0, 200) + (extractedText.length > 200 ? '...' : ''),
+            storage_path: storedStoragePath,
+            file_url: storedFileUrl,
         })
             .select()
             .single();
@@ -116,6 +152,23 @@ router.delete('/:id', auth_1.requireAuth, async (req, res) => {
     try {
         const orgId = req.user?.orgId;
         const { id } = req.params;
+        // Buscar o doc primeiro para obter o storage_path
+        const { data: doc } = await supabase_1.supabaseAdmin
+            .from('knowledge_docs')
+            .select('storage_path')
+            .eq('id', id)
+            .eq('org_id', orgId)
+            .maybeSingle();
+        // Apagar ficheiro original do Storage se existir
+        if (doc?.storage_path) {
+            try {
+                await supabase_1.supabaseAdmin.storage.from('assets').remove([doc.storage_path]);
+                console.log(`[KNOWLEDGE] Ficheiro original removido do Storage: ${doc.storage_path}`);
+            }
+            catch (storageErr) {
+                console.warn(`[KNOWLEDGE] Falha ao remover ficheiro do Storage: ${storageErr.message}`);
+            }
+        }
         const { error } = await supabase_1.supabaseAdmin
             .from('knowledge_docs')
             .delete()
@@ -177,17 +230,40 @@ router.get('/:id/download', auth_1.requireAuth, async (req, res) => {
         const { id } = req.params;
         const { data: doc, error } = await supabase_1.supabaseAdmin
             .from('knowledge_docs')
-            .select('filename, mime_type, content')
+            .select('filename, mime_type, content, storage_path, file_url')
             .eq('id', id)
             .eq('org_id', orgId)
             .single();
         if (error || !doc) {
             return res.status(404).json({ error: 'Documento não encontrado.' });
         }
+        // ── Caminho 1: ficheiro original guardado no Supabase Storage ────────────
+        if (doc.storage_path) {
+            try {
+                const { data: fileBlob, error: dlErr } = await supabase_1.supabaseAdmin.storage
+                    .from('assets')
+                    .download(doc.storage_path);
+                if (!dlErr && fileBlob) {
+                    const buffer = Buffer.from(await fileBlob.arrayBuffer());
+                    const filename = doc.filename || 'documento';
+                    const mimeType = doc.mime_type || 'application/octet-stream';
+                    const safeAscii = filename.replace(/[^\x20-\x7E]/g, '_');
+                    const encoded = encodeURIComponent(filename).replace(/'/g, '%27');
+                    res.setHeader('Content-Type', mimeType);
+                    res.setHeader('Content-Disposition', `attachment; filename="${safeAscii}"; filename*=UTF-8''${encoded}`);
+                    res.setHeader('Content-Length', buffer.length);
+                    return res.send(buffer);
+                }
+                console.warn('[KNOWLEDGE] Storage download falhou, a usar fallback de texto:', dlErr?.message);
+            }
+            catch (storageErr) {
+                console.warn('[KNOWLEDGE] Erro no Storage download (fallback texto):', storageErr.message);
+            }
+        }
+        // ── Caminho 2 (fallback): ficheiro de texto extraído ─────────────────────
+        // Documentos antigos (sem storage_path) ou quando o Storage falha
         let filename = doc.filename || 'documento.txt';
         let mimeType = doc.mime_type || 'text/plain';
-        // Como o conteúdo armazenado é o texto plano extraído pelo RAG (e não o ficheiro binário original),
-        // forçamos o tipo text/plain e extensão .txt para garantir que abre perfeitamente em qualquer leitor.
         const isBinaryMime = mimeType.includes('pdf') || mimeType.includes('word') || mimeType.includes('officedocument') || mimeType.includes('msword');
         if (isBinaryMime) {
             mimeType = 'text/plain; charset=utf-8';
@@ -198,10 +274,9 @@ router.get('/:id/download', auth_1.requireAuth, async (req, res) => {
         else {
             mimeType = 'text/plain; charset=utf-8';
         }
-        res.setHeader('Content-Type', mimeType);
-        // RFC 5987: suporte a nomes de ficheiro com caracteres especiais (acentos, espaços, etc.)
         const safeAsciiFilename = filename.replace(/[^\x20-\x7E]/g, '_');
         const encodedFilename = encodeURIComponent(filename).replace(/'/g, '%27');
+        res.setHeader('Content-Type', mimeType);
         res.setHeader('Content-Disposition', `attachment; filename="${safeAsciiFilename}"; filename*=UTF-8''${encodedFilename}`);
         res.send(Buffer.from(doc.content || '', 'utf-8'));
     }

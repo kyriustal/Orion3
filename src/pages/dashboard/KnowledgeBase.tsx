@@ -10,6 +10,9 @@ type Doc = {
   file_size: number;
   content_preview: string;
   created_at: string;
+  mime_type?: string;
+  storage_path?: string | null;
+  file_url?: string | null;
 };
 
 export default function KnowledgeBase() {
@@ -216,7 +219,7 @@ export default function KnowledgeBase() {
     }
   };
 
-  const handleDownloadDoc = async (id: string, filename: string) => {
+  const handleDownloadDoc = async (id: string, filename: string, hasOriginal?: boolean) => {
     try {
       const res = await fetch(`/api/knowledge/${id}/download`, {
         headers: { Authorization: `Bearer ${token()}` }
@@ -227,9 +230,13 @@ export default function KnowledgeBase() {
       const a = document.createElement('a');
       a.href = url;
 
-      // Garantir que extensões .txt são preservadas
-      const isBinaryExt = filename.toLowerCase().match(/\.(pdf|doc|docx)$/);
-      a.download = isBinaryExt ? filename.replace(/\.[^.]+$/, '') + '_texto.txt' : filename;
+      // Se tem ficheiro original guardado, usa o nome original; senão adiciona _texto.txt
+      if (!hasOriginal) {
+        const isBinaryExt = filename.toLowerCase().match(/\.(pdf|doc|docx)$/);
+        a.download = isBinaryExt ? filename.replace(/\.[^.]+$/, '') + '_texto.txt' : filename;
+      } else {
+        a.download = filename;
+      }
 
       document.body.appendChild(a);
       a.click();
@@ -303,8 +310,8 @@ export default function KnowledgeBase() {
                     <Button 
                       variant="ghost" 
                       size="sm" 
-                      onClick={() => handleDownloadDoc(doc.id, doc.filename)} 
-                      title="Fazer Download do Texto Extraído" 
+                      onClick={() => handleDownloadDoc(doc.id, doc.filename, !!doc.storage_path)} 
+                      title={doc.storage_path ? `Download: ${doc.filename} (original)` : `Download: texto extraído (.txt)`} 
                       className="text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 shrink-0 h-8 w-8 p-0"
                     >
                       <Download className="w-4 h-4" />

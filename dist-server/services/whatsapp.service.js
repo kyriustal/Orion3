@@ -517,31 +517,48 @@ class WhatsAppService {
             }
             const components = [bodyComponent];
             if (template.buttons && template.buttons.length > 0) {
-                const formattedButtons = template.buttons.slice(0, 3).map(b => {
+                // ── Regra da Meta: templates UTILITY não aceitam QUICK_REPLY ──────────
+                // Só URL e PHONE_NUMBER são permitidos em UTILITY e AUTHENTICATION.
+                // Em MARKETING todos os tipos são permitidos.
+                const isUtility = (template.category || '').toUpperCase() === 'UTILITY'
+                    || (template.category || '').toUpperCase() === 'AUTHENTICATION';
+                const eligibleButtons = template.buttons.filter(b => {
                     const type = (b.type || 'QUICK_REPLY').toUpperCase();
-                    if (type === 'URL') {
-                        return {
-                            type: 'URL',
-                            text: (b.text || 'Acessar Link').substring(0, 25),
-                            url: b.url || 'https://example.com'
-                        };
-                    }
-                    if (type === 'PHONE_NUMBER' || type === 'PHONE') {
-                        return {
-                            type: 'PHONE_NUMBER',
-                            text: (b.text || 'Ligar').substring(0, 25),
-                            phone_number: b.phone_number || '+5511999999999'
-                        };
-                    }
-                    return {
-                        type: 'QUICK_REPLY',
-                        text: (b.text || 'Confirmar').substring(0, 25)
-                    };
+                    if (isUtility && type === 'QUICK_REPLY')
+                        return false; // removido para UTILITY
+                    return true;
                 });
-                components.push({
-                    type: "BUTTONS",
-                    buttons: formattedButtons
-                });
+                if (eligibleButtons.length === 0 && isUtility) {
+                    // Nenhum botão compatível — ignorar a secção de botões para não causar rejeição
+                    console.warn('[WHATSAPP] Template UTILITY com apenas QUICK_REPLY — botões ignorados para evitar rejeição pela Meta.');
+                }
+                else if (eligibleButtons.length > 0) {
+                    const formattedButtons = eligibleButtons.slice(0, 3).map(b => {
+                        const type = (b.type || 'QUICK_REPLY').toUpperCase();
+                        if (type === 'URL') {
+                            return {
+                                type: 'URL',
+                                text: (b.text || 'Acessar Link').substring(0, 25),
+                                url: b.url || 'https://example.com'
+                            };
+                        }
+                        if (type === 'PHONE_NUMBER' || type === 'PHONE') {
+                            return {
+                                type: 'PHONE_NUMBER',
+                                text: (b.text || 'Ligar').substring(0, 25),
+                                phone_number: b.phone_number || '+5511999999999'
+                            };
+                        }
+                        return {
+                            type: 'QUICK_REPLY',
+                            text: (b.text || 'Confirmar').substring(0, 25)
+                        };
+                    });
+                    components.push({
+                        type: "BUTTONS",
+                        buttons: formattedButtons
+                    });
+                }
             }
             // Sanitizar nome do template conforme regras da Meta: minúsculas, sem acentos, sem caracteres especiais
             const cleanName = template.name

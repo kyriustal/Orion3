@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/src/components/ui/card";
 import { Button } from "@/src/components/ui/button";
-import { Plus, MessageSquare, CheckCircle2, XCircle, Clock, Loader2, Globe, RefreshCw, Trash2, MousePointer2, Link2, Phone } from "lucide-react";
+import { Plus, MessageSquare, CheckCircle2, XCircle, Clock, Loader2, Globe, RefreshCw, Trash2, MousePointer2, Link2, Phone, AlertTriangle } from "lucide-react";
 import { Input } from "@/src/components/ui/input";
 import { Label } from "@/src/components/ui/label";
 import { ButtonPresetsPicker } from "@/src/components/ui/button-presets";
@@ -334,6 +334,17 @@ export default function Templates() {
                       <Plus className="w-3.5 h-3.5" /> Adicionar Botão
                     </Button>
                   </div>
+
+                  {/* Aviso UTILITY + QUICK_REPLY */}
+                  {newTemplate.category === 'UTILITY' && buttons.some(b => b.type === 'QUICK_REPLY') && (
+                    <div className="flex items-start gap-2 p-3 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-800">
+                      <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+                      <div>
+                        <p className="font-semibold">Aviso: Botões incompatíveis com a categoria UTILITY</p>
+                        <p className="mt-0.5 text-amber-700">A Meta <strong>não aprova</strong> botões de "Resposta Rápida" em templates de Utilidade. Esses botões serão removidos automaticamente ao enviar. Use apenas botões <strong>URL</strong> ou <strong>Telefone</strong> nesta categoria.</p>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Modelos Rápidos */}
                   <ButtonPresetsPicker currentCount={buttons.length} onSelect={applyPreset} />
