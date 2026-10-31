@@ -157,7 +157,7 @@ class WhatsAppService {
     /**
      * Envia media (imagem, vídeo, áudio ou documento) a partir de uma URL pública
      */
-    static async sendMediaByUrl(toNumber, mediaUrl, mimeType, fileName, phoneNumberId, accessToken) {
+    static async sendMediaByUrl(toNumber, mediaUrl, mimeType, fileName, phoneNumberId, accessToken, caption) {
         const token = accessToken || process.env.META_ACCESS_TOKEN;
         if (!token)
             return null;
@@ -180,16 +180,16 @@ class WhatsAppService {
                 type: type,
             };
             if (isImage) {
-                payload.image = { link: mediaUrl };
+                payload.image = { link: mediaUrl, ...(caption ? { caption } : {}) };
             }
             else if (isVideo) {
-                payload.video = { link: mediaUrl };
+                payload.video = { link: mediaUrl, ...(caption ? { caption } : {}) };
             }
             else if (isAudio) {
                 payload.audio = { link: mediaUrl };
             }
             else {
-                payload.document = { link: mediaUrl, filename: fileName };
+                payload.document = { link: mediaUrl, filename: fileName, ...(caption ? { caption } : {}) };
             }
             const response = await axios_1.default.post(url, payload, {
                 headers: {
@@ -571,7 +571,7 @@ class WhatsAppService {
     /**
      * Envia uma mensagem baseada em template oficial da Meta ou fallback interativo com botões
      */
-    static async sendTemplateMessage(phoneNumberId, to, templateName, languageCode = 'pt_BR', variables = {}, buttons = [], accessToken, contentFallback) {
+    static async sendTemplateMessage(phoneNumberId, to, templateName, languageCode = 'pt_BR', variables = {}, buttons = [], accessToken, contentFallback, mediaHeader) {
         const token = accessToken || process.env.META_ACCESS_TOKEN;
         if (!token) {
             console.error('WhatsApp Access Token não configurado.');
@@ -586,6 +586,20 @@ class WhatsAppService {
                 text: variables[key] || ""
             }));
             const components = [];
+            if (mediaHeader && mediaHeader.url) {
+                const headerType = mediaHeader.type === 'video' ? 'video' : mediaHeader.type === 'document' ? 'document' : 'image';
+                const headerParam = { type: headerType };
+                if (headerType === 'image')
+                    headerParam.image = { link: mediaHeader.url };
+                else if (headerType === 'video')
+                    headerParam.video = { link: mediaHeader.url };
+                else if (headerType === 'document')
+                    headerParam.document = { link: mediaHeader.url, filename: mediaHeader.filename || 'documento' };
+                components.push({
+                    type: "header",
+                    parameters: [headerParam]
+                });
+            }
             if (bodyParams.length > 0) {
                 components.push({
                     type: "body",

@@ -6,7 +6,8 @@ import {
   Megaphone, Plus, PlayCircle, PauseCircle, Settings2, Loader2, MousePointer2, Link2,
   Phone, Trash2, ChevronDown, ChevronUp, FileText, CheckCircle2, XCircle, Search,
   Users, Upload, RefreshCw, X, UploadCloud, FileSpreadsheet, AlertCircle, Eye, EyeOff,
-  UserMinus, UserCheck, ListChecks, Calendar, CalendarClock, Zap, Building2, User, Mail, Sparkles, MessageSquare
+  UserMinus, UserCheck, ListChecks, Calendar, CalendarClock, Zap, Building2, User, Mail, Sparkles, MessageSquare,
+  Image, Video, Music, Paperclip
 } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 import { toast } from "sonner";
@@ -94,6 +95,17 @@ export default function Campaigns() {
     filters: "",
     delay_seconds: 5
   });
+
+  // --- Mídia / Anexos (Imagem, Documento, Vídeo, Áudio) ---
+  const [attachedMedia, setAttachedMedia] = useState<{
+    url: string;
+    type: "image" | "video" | "audio" | "document";
+    filename: string;
+    size?: number;
+    mime_type?: string;
+  } | null>(null);
+  const [isUploadingMedia, setIsUploadingMedia] = useState(false);
+  const mediaFileInputRef = useRef<HTMLInputElement>(null);
 
   // --- Agendamento / Calendarização ---
   const [scheduleMode, setScheduleMode] = useState<"now" | "scheduled">("now");
@@ -540,6 +552,52 @@ export default function Campaigns() {
     });
   };
 
+  const handleMediaFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 50 * 1024 * 1024) {
+      toast.error("O arquivo excede o limite máximo permitido de 50MB.");
+      return;
+    }
+
+    setIsUploadingMedia(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const res = await fetch("/api/campaigns/upload-media", {
+        method: "POST",
+        headers: {
+          ...authHeaders(),
+        },
+        body: formData,
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || "Falha no upload do arquivo.");
+      }
+
+      const data = await res.json();
+      setAttachedMedia({
+        url: data.url,
+        type: data.type,
+        filename: data.filename,
+        size: data.size,
+        mime_type: data.mime_type,
+      });
+      toast.success(`${data.type.toUpperCase()} anexado com sucesso à campanha!`);
+    } catch (err: any) {
+      toast.error(err.message || "Erro ao fazer upload do arquivo.");
+    } finally {
+      setIsUploadingMedia(false);
+      if (mediaFileInputRef.current) {
+        mediaFileInputRef.current.value = "";
+      }
+    }
+  };
+
   const handleStartCampaign = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newCampaign.name) { toast.error("Dê um nome à campanha."); return; }
@@ -587,7 +645,11 @@ export default function Campaigns() {
           buttons: effectiveButtons,
           contact_ids: newCampaign.audience === "selected" ? Array.from(selectedContactIds) : [],
           exclude_phones: Array.from(excludedPhones),
-          scheduled_at: scheduleMode === "scheduled" ? new Date(scheduledDateTime).toISOString() : null
+          scheduled_at: scheduleMode === "scheduled" ? new Date(scheduledDateTime).toISOString() : null,
+          media: attachedMedia || null,
+          media_url: attachedMedia?.url || null,
+          media_type: attachedMedia?.type || null,
+          media_name: attachedMedia?.filename || null
         })
       });
 
@@ -604,6 +666,7 @@ export default function Campaigns() {
       setScheduledDateTime("");
       setTemplateVars({});
       setButtons([]);
+      setAttachedMedia(null);
       setExcludedPhones(new Set());
       setShowContactPreview(false);
       setPreviewSearch("");
@@ -724,6 +787,12 @@ export default function Campaigns() {
                             <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-200">
                               <CalendarClock className="w-3.5 h-3.5 text-indigo-600" />
                               Disparo agendado: {camp.scheduledAtFormatted || new Date(camp.scheduledAt).toLocaleString("pt-BR")}
+                            </span>
+                          )}
+                          {camp.media && camp.media.url && (
+                            <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-md bg-purple-50 text-purple-700 border border-purple-200">
+                              <Paperclip className="w-3 h-3 text-purple-600" />
+                              <span className="capitalize">{camp.media.type || 'Mídia'}</span>
                             </span>
                           )}
                         </div>
@@ -1128,6 +1197,125 @@ export default function Campaigns() {
                     })}
                   </div>
                 )}
+
+                {/* Anexo de Mídia (Imagens, Documentos, Vídeos, Áudios) */}
+                <div className="space-y-3 border border-zinc-200 rounded-lg p-4 bg-zinc-50">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Paperclip className="w-4 h-4 text-indigo-600" />
+                      <span className="text-sm font-semibold text-zinc-700">Mídia / Anexo (Opcional)</span>
+                      {attachedMedia && (
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 uppercase">
+                          {attachedMedia.type}
+                        </span>
+                      )}
+                    </div>
+                    {attachedMedia && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setAttachedMedia(null)}
+                        className="h-7 text-xs text-red-600 hover:text-red-700 hover:bg-red-50 gap-1 px-2"
+                      >
+                        <X className="w-3.5 h-3.5" /> Remover
+                      </Button>
+                    )}
+                  </div>
+                  <p className="text-xs text-zinc-500 -mt-1">
+                    Anexe uma imagem, documento/PDF, vídeo ou áudio para acompanhar o disparo da campanha.
+                  </p>
+
+                  {attachedMedia ? (
+                    <div className="bg-white border border-zinc-200 rounded-lg p-3 flex flex-col sm:flex-row items-center gap-3">
+                      {attachedMedia.type === "image" && (
+                        <img
+                          src={attachedMedia.url}
+                          alt={attachedMedia.filename}
+                          className="w-16 h-16 object-cover rounded-md border border-zinc-200 shrink-0"
+                        />
+                      )}
+                      {attachedMedia.type === "video" && (
+                        <video
+                          src={attachedMedia.url}
+                          className="w-20 h-16 object-cover rounded-md border border-zinc-200 bg-black shrink-0"
+                          controls={false}
+                        />
+                      )}
+                      {attachedMedia.type === "audio" && (
+                        <div className="p-3 rounded-md bg-amber-50 text-amber-600 border border-amber-200 shrink-0">
+                          <Music className="w-6 h-6" />
+                        </div>
+                      )}
+                      {attachedMedia.type === "document" && (
+                        <div className="p-3 rounded-md bg-blue-50 text-blue-600 border border-blue-200 shrink-0">
+                          <FileText className="w-6 h-6" />
+                        </div>
+                      )}
+
+                      <div className="flex-1 min-w-0 text-left w-full">
+                        <p className="text-sm font-medium text-zinc-800 truncate">{attachedMedia.filename}</p>
+                        <div className="flex items-center gap-2 mt-0.5 text-xs text-zinc-500">
+                          <span className="capitalize">{attachedMedia.type}</span>
+                          {attachedMedia.size && (
+                            <>
+                              <span>•</span>
+                              <span>{(attachedMedia.size / (1024 * 1024)).toFixed(2)} MB</span>
+                            </>
+                          )}
+                        </div>
+                        {attachedMedia.type === "audio" && (
+                          <audio src={attachedMedia.url} controls className="h-8 mt-2 w-full max-w-xs" />
+                        )}
+                      </div>
+
+                      <a
+                        href={attachedMedia.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs text-indigo-600 hover:text-indigo-800 underline shrink-0 font-medium"
+                      >
+                        Visualizar ↗
+                      </a>
+                    </div>
+                  ) : (
+                    <div
+                      onClick={() => mediaFileInputRef.current?.click()}
+                      className="border-2 border-dashed border-zinc-300 hover:border-indigo-500 bg-white hover:bg-indigo-50/20 transition-all rounded-lg p-5 text-center cursor-pointer group"
+                    >
+                      <input
+                        ref={mediaFileInputRef}
+                        type="file"
+                        className="hidden"
+                        accept="image/*,video/mp4,video/3gpp,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.txt"
+                        onChange={handleMediaFileSelect}
+                      />
+                      {isUploadingMedia ? (
+                        <div className="flex flex-col items-center gap-2 py-2">
+                          <Loader2 className="w-6 h-6 text-indigo-600 animate-spin" />
+                          <p className="text-xs text-zinc-600 font-medium">A carregar e processar o anexo...</p>
+                        </div>
+                      ) : (
+                        <div className="flex flex-col items-center gap-2">
+                          <div className="flex items-center gap-2 text-zinc-400 group-hover:text-indigo-600 transition-colors">
+                            <Image className="w-5 h-5" />
+                            <FileText className="w-5 h-5" />
+                            <Video className="w-5 h-5" />
+                            <Music className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <p className="text-xs font-semibold text-zinc-700 group-hover:text-indigo-700">
+                              Clique para anexar Imagem, Documento, Vídeo ou Áudio
+                            </p>
+                            <p className="text-[11px] text-zinc-400 mt-0.5">
+                              PNG, JPG, PDF, MP4, MP3, etc. (Máx. 50MB)
+                            </p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
 
                 {/* Botões */}
                 <div className="space-y-3 border border-zinc-200 rounded-lg p-4 bg-zinc-50">
@@ -1731,6 +1919,46 @@ export default function Campaigns() {
                       <p className="text-2xl font-bold text-blue-800 mt-1">{selectedReport.campaign.progress}%</p>
                     </div>
                   </div>
+
+                  {/* Mídia Anexada (se houver) */}
+                  {selectedReport.campaign.media && selectedReport.campaign.media.url && (
+                    <div className="bg-indigo-50/60 border border-indigo-200 rounded-xl p-3 flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-3 min-w-0">
+                        {selectedReport.campaign.media.type === 'image' && (
+                          <img src={selectedReport.campaign.media.url} className="w-12 h-12 object-cover rounded-md border shrink-0" alt="Mídia" />
+                        )}
+                        {selectedReport.campaign.media.type === 'video' && (
+                          <video src={selectedReport.campaign.media.url} className="w-16 h-12 object-cover rounded-md border bg-black shrink-0" />
+                        )}
+                        {selectedReport.campaign.media.type === 'audio' && (
+                          <div className="p-2.5 rounded-md bg-amber-100 text-amber-700 shrink-0">
+                            <Music className="w-5 h-5" />
+                          </div>
+                        )}
+                        {selectedReport.campaign.media.type === 'document' && (
+                          <div className="p-2.5 rounded-md bg-blue-100 text-blue-700 shrink-0">
+                            <FileText className="w-5 h-5" />
+                          </div>
+                        )}
+                        <div className="min-w-0">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-700 bg-indigo-100 px-1.5 py-0.5 rounded">
+                            {selectedReport.campaign.media.type}
+                          </span>
+                          <p className="text-xs font-semibold text-zinc-800 mt-0.5 truncate max-w-sm">
+                            {selectedReport.campaign.media.filename}
+                          </p>
+                        </div>
+                      </div>
+                      <a
+                        href={selectedReport.campaign.media.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs font-medium text-indigo-600 hover:text-indigo-800 underline shrink-0"
+                      >
+                        Visualizar anexo ↗
+                      </a>
+                    </div>
+                  )}
 
                   {/* Tabela de logs */}
                   <div className="space-y-3">

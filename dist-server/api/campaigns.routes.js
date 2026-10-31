@@ -67,6 +67,11 @@ const upload = (0, multer_1.default)({
         }
     }
 });
+// Multer para upload de mídias de campanhas (imagens, vídeos, áudios, documentos até 50MB)
+const uploadMedia = (0, multer_1.default)({
+    storage: multer_1.default.memoryStorage(),
+    limits: { fileSize: 50 * 1024 * 1024 } // 50 MB
+});
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -340,21 +345,63 @@ async function processCampaign(campaignId, orgId) {
             }
             // Resolução inteligente e precisa das variáveis para este contato específico
             const { variablesForMeta, renderedText } = whatsapp_service_1.WhatsAppService.resolveVariables(templateContent, campaign.template_variables || {}, contact, companyName);
+            // Obter informações de mídia anexada à campanha (se houver)
+            const campaignMedia = campaign.filters?.media || (campaign.media_url ? {
+                url: campaign.media_url,
+                type: campaign.media_type || 'image',
+                filename: campaign.media_name || 'arquivo',
+                mime_type: campaign.filters?.media?.mime_type
+            } : null);
             let sentId = null;
-            if (phoneNumberId && accessToken) {
-                sentId = await whatsapp_service_1.WhatsAppService.sendTemplateMessage(phoneNumberId, contact.phone, campaign.template, templateLanguage, variablesForMeta, templateButtons, accessToken, renderedText);
+            let mediaSentId = null;
+            if (campaignMedia && campaignMedia.url) {
+                const mType = (campaignMedia.type || 'image').toLowerCase();
+                const mime = campaignMedia.mime_type || (mType === 'image' ? 'image/jpeg' :
+                    mType === 'video' ? 'video/mp4' :
+                        mType === 'audio' ? 'audio/mp4' :
+                            'application/pdf');
+                // 1. Tentar primeiro via template oficial com header de mídia (se a WABA Meta possuir header)
+                if (phoneNumberId && accessToken) {
+                    sentId = await whatsapp_service_1.WhatsAppService.sendTemplateMessage(phoneNumberId, contact.phone, campaign.template, templateLanguage, variablesForMeta, templateButtons, accessToken, renderedText, { type: mType === 'audio' ? 'document' : mType, url: campaignMedia.url, filename: campaignMedia.filename });
+                }
+                // 2. Se o template oficial não incluiu o header ou falhou (template sem header na Meta),
+                // envia a mídia diretamente via sendMediaByUrl com legenda inteligente
+                if (!sentId) {
+                    const caption = mType !== 'audio' ? renderedText : undefined;
+                    mediaSentId = await whatsapp_service_1.WhatsAppService.sendMediaByUrl(contact.phone, campaignMedia.url, mime, campaignMedia.filename || 'anexo', phoneNumberId || process.env.DEFAULT_PHONE_NUMBER_ID || '', accessToken || undefined, caption);
+                    // Se houver botões interativos ou se for áudio (que não aceita legenda na Meta), envia o texto/botões
+                    if (templateButtons && templateButtons.length > 0) {
+                        const formattedBtns = templateButtons.map((b, idx) => ({
+                            id: b.id || `btn_${idx + 1}`,
+                            title: b.text || b.title || `Opção ${idx + 1}`
+                        }));
+                        sentId = await whatsapp_service_1.WhatsAppService.sendInteractiveButtons(phoneNumberId || process.env.DEFAULT_PHONE_NUMBER_ID || '', contact.phone, renderedText, formattedBtns, accessToken || undefined);
+                    }
+                    else if (mType === 'audio' && renderedText) {
+                        sentId = await whatsapp_service_1.WhatsAppService.sendTextMessage(phoneNumberId || process.env.DEFAULT_PHONE_NUMBER_ID || '', contact.phone, renderedText, accessToken || undefined);
+                    }
+                    else {
+                        sentId = mediaSentId;
+                    }
+                }
             }
-            else if (templateButtons && templateButtons.length > 0) {
-                const formattedBtns = templateButtons.map((b, idx) => ({
-                    id: b.id || `btn_${idx + 1}`,
-                    title: b.text || b.title || `Opção ${idx + 1}`
-                }));
-                sentId = await whatsapp_service_1.WhatsAppService.sendInteractiveButtons(process.env.DEFAULT_PHONE_NUMBER_ID || '', contact.phone, renderedText, formattedBtns);
+            else {
+                // Disparo padrão sem mídia
+                if (phoneNumberId && accessToken) {
+                    sentId = await whatsapp_service_1.WhatsAppService.sendTemplateMessage(phoneNumberId, contact.phone, campaign.template, templateLanguage, variablesForMeta, templateButtons, accessToken, renderedText);
+                }
+                else if (templateButtons && templateButtons.length > 0) {
+                    const formattedBtns = templateButtons.map((b, idx) => ({
+                        id: b.id || `btn_${idx + 1}`,
+                        title: b.text || b.title || `Opção ${idx + 1}`
+                    }));
+                    sentId = await whatsapp_service_1.WhatsAppService.sendInteractiveButtons(process.env.DEFAULT_PHONE_NUMBER_ID || '', contact.phone, renderedText, formattedBtns);
+                }
+                else if (renderedText) {
+                    sentId = await whatsapp_service_1.WhatsAppService.sendTextMessage(process.env.DEFAULT_PHONE_NUMBER_ID || '', contact.phone, renderedText);
+                }
             }
-            else if (renderedText) {
-                sentId = await whatsapp_service_1.WhatsAppService.sendTextMessage(process.env.DEFAULT_PHONE_NUMBER_ID || '', contact.phone, renderedText);
-            }
-            if (sentId) {
+            if (sentId || mediaSentId) {
                 sentCount++;
                 // 1. Gravar mensagem enviada no histórico de conversa com metadata da campanha
                 try {
@@ -362,7 +409,7 @@ async function processCampaign(campaignId, orgId) {
                         org_id: orgId,
                         customer_phone: normalizedTargetPhone,
                         sender: 'bot',
-                        text: renderedText,
+                        text: renderedText || (campaignMedia ? `[${campaignMedia.type.toUpperCase()}] ${campaignMedia.filename}` : ''),
                         metadata: {
                             is_campaign: true,
                             campaign_id: campaignId,
@@ -370,9 +417,13 @@ async function processCampaign(campaignId, orgId) {
                             template_name: campaign.template,
                             buttons: templateButtons,
                             variables: variablesForMeta,
-                            message_id: sentId,
+                            message_id: sentId || mediaSentId,
                             platform: 'whatsapp',
-                            raw_phone: contact.phone
+                            raw_phone: contact.phone,
+                            has_media: !!campaignMedia,
+                            media_url: campaignMedia?.url,
+                            media_type: campaignMedia?.type,
+                            media_name: campaignMedia?.filename
                         }
                     });
                     // 2. Notificar o Live Chat em tempo real via Socket.io
@@ -380,7 +431,7 @@ async function processCampaign(campaignId, orgId) {
                         (0, socket_1.getIo)().to(`org:${orgId}`).emit('new_message', {
                             phone: normalizedTargetPhone,
                             sender: 'bot',
-                            text: renderedText,
+                            text: renderedText || (campaignMedia ? `[${campaignMedia.type.toUpperCase()}] ${campaignMedia.filename}` : ''),
                             time: new Date().toLocaleTimeString('pt-PT', { timeZone: 'Africa/Luanda', hour: '2-digit', minute: '2-digit' }),
                             timestamp: new Date().toISOString(),
                             platform: 'whatsapp',
@@ -389,7 +440,10 @@ async function processCampaign(campaignId, orgId) {
                                 campaign_id: campaignId,
                                 campaign_name: campaign.name,
                                 buttons: templateButtons,
-                                message_id: sentId
+                                message_id: sentId || mediaSentId,
+                                has_media: !!campaignMedia,
+                                media_url: campaignMedia?.url,
+                                media_type: campaignMedia?.type
                             }
                         });
                     }
@@ -495,13 +549,23 @@ router.post('/send', auth_1.requireAuth, async (req, res) => {
         const parsedTags = filters
             ? (typeof filters === 'string' ? filters.split(',').map((t) => t.trim()).filter(Boolean) : filters)
             : [];
+        const mediaParam = req.body.media || (req.body.media_url ? {
+            url: req.body.media_url,
+            type: req.body.media_type || 'image',
+            filename: req.body.media_name || 'arquivo',
+            mime_type: req.body.mime_type
+        } : null);
         const campaignFilters = {
             tags: parsedTags,
             delay_seconds: Number(delay_seconds) || 5,
             contact_ids: Array.isArray(contact_ids) ? contact_ids.filter(Boolean) : [],
             target_phones: Array.isArray(target_phones) ? target_phones.filter(Boolean) : [],
             exclude_phones: Array.isArray(exclude_phones) ? exclude_phones.filter(Boolean) : [],
-            scheduled_at: scheduledDateIso
+            scheduled_at: scheduledDateIso,
+            media: mediaParam,
+            media_url: mediaParam?.url || null,
+            media_type: mediaParam?.type || null,
+            media_name: mediaParam?.filename || null
         };
         // 1. Resolver audiência com antecedência para validar alvos
         const targetContacts = await resolveCampaignAudience(orgId, audience || 'all', campaignFilters);
@@ -526,14 +590,22 @@ router.post('/send', auth_1.requireAuth, async (req, res) => {
         if (scheduledDateIso) {
             insertPayload.scheduled_at = scheduledDateIso;
         }
+        if (mediaParam?.url) {
+            insertPayload.media_url = mediaParam.url;
+            insertPayload.media_type = mediaParam.type;
+            insertPayload.media_name = mediaParam.filename;
+        }
         let insertResult = await supabase_1.supabaseAdmin
             .from('campaigns')
             .insert(insertPayload)
             .select()
             .single();
-        // Fallback: se a coluna scheduled_at ainda não existir no schema do Supabase, salvar sem a coluna (já está em filters.scheduled_at)
-        if (insertResult.error && insertResult.error.message.includes('scheduled_at')) {
+        // Fallback: se as colunas media_url ou scheduled_at ainda não existirem no schema do Supabase, salvar sem elas
+        if (insertResult.error && (insertResult.error.message.includes('scheduled_at') || insertResult.error.message.includes('media_url') || insertResult.error.message.includes('media_type') || insertResult.error.message.includes('media_name'))) {
             delete insertPayload.scheduled_at;
+            delete insertPayload.media_url;
+            delete insertPayload.media_type;
+            delete insertPayload.media_name;
             insertResult = await supabase_1.supabaseAdmin
                 .from('campaigns')
                 .insert(insertPayload)
@@ -619,6 +691,11 @@ router.get('/:id/report', auth_1.requireAuth, async (req, res) => {
                 name: campaign.name,
                 template: campaign.template,
                 buttons: campaign.buttons || [],
+                media: campaign.filters?.media || (campaign.media_url ? {
+                    url: campaign.media_url,
+                    type: campaign.media_type || 'image',
+                    filename: campaign.media_name || 'arquivo'
+                } : null),
                 status: campaign.status,
                 progress: campaign.progress || 0,
                 sentCount: campaign.sent_count || 0,
@@ -681,6 +758,11 @@ router.get('/', auth_1.requireAuth, async (req, res) => {
                 name: c.name,
                 template: c.template,
                 buttons: c.buttons || [],
+                media: c.filters?.media || (c.media_url ? {
+                    url: c.media_url,
+                    type: c.media_type || 'image',
+                    filename: c.media_name || 'arquivo'
+                } : null),
                 status: c.status,
                 progress: c.progress || 0,
                 sentCount: c.sent_count || 0,
@@ -930,6 +1012,73 @@ router.post('/contacts/upload', auth_1.requireAuth, upload.single('file'), async
     catch (error) {
         console.error('[CONTACTS UPLOAD] Erro:', error.message);
         res.status(500).json({ error: error.message });
+    }
+});
+// ─── Upload de mídia para campanhas (Imagem, Documento, Vídeo, Áudio) ────────
+router.post('/upload-media', auth_1.requireAuth, uploadMedia.single('file'), async (req, res) => {
+    try {
+        const orgId = req.user.orgId;
+        const file = req.file;
+        if (!file)
+            return res.status(400).json({ error: 'Nenhum ficheiro enviado.' });
+        // Determinar o tipo de mídia
+        let mediaType = 'document';
+        if (file.mimetype.startsWith('image/'))
+            mediaType = 'image';
+        else if (file.mimetype.startsWith('video/'))
+            mediaType = 'video';
+        else if (file.mimetype.startsWith('audio/'))
+            mediaType = 'audio';
+        const sanitizedName = file.originalname
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .replace(/[^a-zA-Z0-9._-]/g, '_')
+            .replace(/_+/g, '_')
+            .replace(/^_|_$/g, '');
+        const fileName = `${orgId}/campaigns/${Date.now()}_${sanitizedName}`;
+        // Garantir que o bucket 'assets' existe no Supabase Storage
+        try {
+            const { data: buckets } = await supabase_1.supabaseAdmin.storage.listBuckets();
+            const bucketExists = buckets?.some(b => b.name === 'assets');
+            if (!bucketExists) {
+                await supabase_1.supabaseAdmin.storage.createBucket('assets', { public: true });
+            }
+        }
+        catch (_) { }
+        // Upload para Supabase Storage
+        const { error: uploadError } = await supabase_1.supabaseAdmin.storage
+            .from('assets')
+            .upload(fileName, file.buffer, {
+            contentType: file.mimetype,
+            upsert: true
+        });
+        if (uploadError)
+            throw uploadError;
+        const { data: { publicUrl } } = supabase_1.supabaseAdmin.storage
+            .from('assets')
+            .getPublicUrl(fileName);
+        // Opcional: registrar em public_assets
+        try {
+            await supabase_1.supabaseAdmin.from('public_assets').insert({
+                org_id: orgId,
+                filename: file.originalname,
+                file_url: publicUrl,
+                mime_type: file.mimetype,
+                description: `Mídia de campanha: ${file.originalname}`
+            });
+        }
+        catch (_) { }
+        res.json({
+            url: publicUrl,
+            type: mediaType,
+            filename: file.originalname,
+            size: file.size,
+            mime_type: file.mimetype
+        });
+    }
+    catch (error) {
+        console.error('[CAMPAIGN MEDIA UPLOAD] Erro:', error.message);
+        res.status(500).json({ error: error.message || 'Erro ao processar arquivo de mídia.' });
     }
 });
 exports.default = router;

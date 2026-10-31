@@ -169,7 +169,8 @@ export class WhatsAppService {
         mimeType: string, 
         fileName: string,
         phoneNumberId: string, 
-        accessToken?: string
+        accessToken?: string,
+        caption?: string
     ) {
         const token = accessToken || process.env.META_ACCESS_TOKEN;
         if (!token) return null;
@@ -193,13 +194,13 @@ export class WhatsAppService {
             };
 
             if (isImage) {
-                payload.image = { link: mediaUrl };
+                payload.image = { link: mediaUrl, ...(caption ? { caption } : {}) };
             } else if (isVideo) {
-                payload.video = { link: mediaUrl };
+                payload.video = { link: mediaUrl, ...(caption ? { caption } : {}) };
             } else if (isAudio) {
                 payload.audio = { link: mediaUrl };
             } else {
-                payload.document = { link: mediaUrl, filename: fileName };
+                payload.document = { link: mediaUrl, filename: fileName, ...(caption ? { caption } : {}) };
             }
 
             const response = await axios.post(url, payload, {
@@ -617,7 +618,8 @@ export class WhatsAppService {
         variables: Record<string, string> = {},
         buttons: { id?: string; type?: string; text: string; title?: string }[] = [],
         accessToken?: string,
-        contentFallback?: string
+        contentFallback?: string,
+        mediaHeader?: { type: 'image' | 'video' | 'document'; url: string; filename?: string }
     ): Promise<string | null> {
         const token = accessToken || process.env.META_ACCESS_TOKEN;
         if (!token) {
@@ -636,6 +638,20 @@ export class WhatsAppService {
                 }));
 
             const components: any[] = [];
+
+            if (mediaHeader && mediaHeader.url) {
+                const headerType = mediaHeader.type === 'video' ? 'video' : mediaHeader.type === 'document' ? 'document' : 'image';
+                const headerParam: any = { type: headerType };
+                if (headerType === 'image') headerParam.image = { link: mediaHeader.url };
+                else if (headerType === 'video') headerParam.video = { link: mediaHeader.url };
+                else if (headerType === 'document') headerParam.document = { link: mediaHeader.url, filename: mediaHeader.filename || 'documento' };
+
+                components.push({
+                    type: "header",
+                    parameters: [headerParam]
+                });
+            }
+
             if (bodyParams.length > 0) {
                 components.push({
                     type: "body",

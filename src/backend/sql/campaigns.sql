@@ -17,6 +17,9 @@ CREATE TABLE IF NOT EXISTS campaigns (
     total_contacts     INTEGER DEFAULT 0,
     sent_count         INTEGER DEFAULT 0,
     failed_count       INTEGER DEFAULT 0,
+    media_url          TEXT DEFAULT NULL,
+    media_type         TEXT DEFAULT NULL,
+    media_name         TEXT DEFAULT NULL,
     scheduled_at       TIMESTAMPTZ DEFAULT NULL,
     created_at         TIMESTAMPTZ DEFAULT NOW(),
     updated_at         TIMESTAMPTZ DEFAULT NOW()
@@ -34,6 +37,9 @@ ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS progress           INTEGER DEFAUL
 ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS total_contacts     INTEGER DEFAULT 0;
 ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS sent_count         INTEGER DEFAULT 0;
 ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS failed_count       INTEGER DEFAULT 0;
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS media_url          TEXT DEFAULT NULL;
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS media_type         TEXT DEFAULT NULL;
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS media_name         TEXT DEFAULT NULL;
 ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS scheduled_at       TIMESTAMPTZ DEFAULT NULL;
 ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS created_at         TIMESTAMPTZ DEFAULT NOW();
 ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS updated_at         TIMESTAMPTZ DEFAULT NOW();
