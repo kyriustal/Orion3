@@ -90,8 +90,12 @@ function cleanGreetingName(name) {
     const parts = cleaned.split(/\s+/).filter(p => /\p{L}/u.test(p));
     if (parts.length === 0)
         return '';
-    if (parts.length > 1 && /^(dr|dra|sr|sra|mr|mrs|ms)\.?$/i.test(parts[0])) {
+    const ROLE_TITLES = /^(ceo|admin|adm|diretor|diretora|gerente|dr|dra|sr|sra|mr|mrs|ms|eng|engª|prof|professor|professora|adv|advogado|advogada|cliente|user|info)\.?$/i;
+    if (parts.length > 1 && ROLE_TITLES.test(parts[0])) {
         return parts[1];
+    }
+    if (parts.length === 1 && ROLE_TITLES.test(parts[0])) {
+        return '';
     }
     return parts[0];
 }
@@ -103,20 +107,10 @@ function formatGreeting(name) {
 // ─── Mensagens do protocolo padrão de follow-up (condicionados ao contexto) ───
 // Fluxo padrão: Step 1 (12h) → Step 2 (24h, encerramento cordial) → fim silencioso
 exports.FOLLOWUP_MESSAGES = {
-    /** Step 1 — após 12h sem resposta (retoma leve, contextualizada por cenário) */
-    step1: (name, scenario = 4, ctx) => {
+    /** Step 1 — após 12h sem resposta (retoma leve, neutra ao assunto e serviço) */
+    step1: (name, _scenario = 4, _ctx) => {
         const n = formatGreeting(name);
-        const s = ctx?.service || 'atendimento';
-        switch (scenario) {
-            case 1: // 📄 Cenário 1: Aguardava documentos / fotos / dados
-                return `${n} Sei que a rotina é corrida, por isso passo só para saber se conseguiu ver a minha última mensagem sobre os documentos para o seu ${s} ou se prefere que conversemos noutro momento. Abraço!`;
-            case 2: // 💰 Cenário 2: Enviou orçamento / valores
-                return `${n} Sei que a rotina é corrida, por isso passo só para saber se conseguiu analisar a proposta e os valores do seu ${s} ou se prefere que conversemos noutro momento. Abraço!`;
-            case 3: // 📅 Cenário 3: Faltava agendar consultoria
-                return `${n} Sei que a rotina é corrida, por isso passo só para saber se conseguiu ver as opções de horário para agendarmos o seu atendimento ou se prefere conversar noutro momento. Abraço!`;
-            default: // 🌍 Cenário 4: Abordagem geral
-                return `${n} Sei que a rotina é corrida, por isso passo só para saber se conseguiu ver a minha última mensagem sobre o seu ${s} ou se prefere que conversemos noutro momento. Abraço!`;
-        }
+        return `${n} Sei que a rotina é corrida, por isso passo só para saber se conseguiu ver a minha última mensagem ou se prefere que conversemos noutro momento. Abraço!`;
     },
     /** Step 2 — Desativado a pedido do utilizador (não enviar mensagem de encerramento) */
     step2: (_name, _scenario = 4, _ctx) => {
