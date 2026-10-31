@@ -20,10 +20,11 @@ export function OrionWebChat() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Posição draggable
-  const [position,    setPosition]    = useState({ x: 24, y: 24 });
+  const isMobile = typeof window !== 'undefined' && window.innerWidth < 640;
+  const [position,    setPosition]    = useState({ x: isMobile ? 16 : 24, y: isMobile ? 16 : 24 });
   const [isDragging,  setIsDragging]  = useState(false);
   const dragStartPos  = useRef({ x: 0, y: 0 });
-  const initialPos    = useRef({ x: 24, y: 24 });
+  const initialPos    = useRef({ x: isMobile ? 16 : 24, y: isMobile ? 16 : 24 });
 
   const now = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
@@ -116,9 +117,9 @@ export function OrionWebChat() {
             onTouchStart={handleTouchStart}
             onTouchMove={handleTouchMove}
             onTouchEnd={handleTouchEnd}
-            className="relative w-14 h-14 bg-emerald-600 text-white rounded-full shadow-2xl flex items-center justify-center hover:bg-emerald-700 transition-all transform hover:scale-105 active:scale-95"
+            className="relative w-12 h-12 sm:w-14 sm:h-14 bg-emerald-600 text-white rounded-full shadow-2xl flex items-center justify-center hover:bg-emerald-700 transition-all transform hover:scale-105 active:scale-95"
           >
-            <MessageSquare className="w-6 h-6" />
+            <MessageSquare className="w-5 h-5 sm:w-6 sm:h-6" />
             {/* Pulse ring */}
             <span className="absolute inset-0 rounded-full bg-emerald-500 animate-ping opacity-20" />
           </button>

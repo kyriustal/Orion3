@@ -691,7 +691,7 @@ export default function Campaigns() {
     };
     const s = map[status] || { label: status, cls: "bg-zinc-100 text-zinc-500" };
     return (
-      <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${s.cls}`}>{s.label}</span>
+      <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${s.cls} shrink-0 whitespace-nowrap`}>{s.label}</span>
     );
   };
 
@@ -700,15 +700,15 @@ export default function Campaigns() {
   return (
     <div className="space-y-6 max-w-6xl mx-auto">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h2 className="text-2xl font-bold tracking-tight text-zinc-900">Campanhas em Massa</h2>
-          <p className="text-zinc-500">Envie mensagens proativas e gerencie a sua base de contatos.</p>
+          <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-zinc-900">Campanhas em Massa</h2>
+          <p className="text-xs sm:text-sm text-zinc-500">Envie mensagens proativas e gerencie a sua base de contatos.</p>
         </div>
         <Button
           onClick={() => setIsModalOpen(true)}
           disabled={approvedTemplates.length === 0}
-          className="gap-2"
+          className="gap-2 self-start sm:self-auto text-xs sm:text-sm"
           title={approvedTemplates.length === 0 ? "Nenhum template aprovado disponível" : ""}
         >
           <Plus className="w-4 h-4" /> Nova Campanha
@@ -765,32 +765,34 @@ export default function Campaigns() {
                 </div>
               ) : (
                 campaigns.map(camp => (
-                  <div key={camp.id} className="flex items-center justify-between p-4 rounded-xl border border-zinc-200 bg-white hover:bg-zinc-50 transition-colors">
-                    <div className="flex items-center gap-4 min-w-0">
-                      <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${
+                  <div key={camp.id} className="p-3.5 sm:p-4 rounded-xl border border-zinc-200 bg-white hover:bg-zinc-50 transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-3.5 w-full overflow-hidden">
+                    <div className="flex items-start sm:items-center gap-3 min-w-0 flex-1">
+                      <div className={`w-9 h-9 sm:w-10 sm:h-10 rounded-lg flex items-center justify-center shrink-0 mt-0.5 sm:mt-0 ${
                         camp.status === "SCHEDULED" ? "bg-indigo-50 text-indigo-600" : "bg-zinc-100 text-zinc-500"
                       }`}>
-                        {camp.status === "SCHEDULED" ? <CalendarClock className="w-5 h-5" /> : <Megaphone className="w-5 h-5" />}
+                        {camp.status === "SCHEDULED" ? <CalendarClock className="w-4 h-4 sm:w-5 sm:h-5" /> : <Megaphone className="w-4 h-4 sm:w-5 sm:h-5" />}
                       </div>
-                      <div className="min-w-0">
+                      <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <p className="font-semibold text-zinc-900 truncate">{camp.name}</p>
+                          <p className="font-semibold text-zinc-900 text-sm sm:text-base break-words line-clamp-1">{camp.name}</p>
                           {statusBadge(camp.status)}
                         </div>
-                        <div className="flex items-center gap-2 mt-1 flex-wrap">
-                          <span className="text-xs font-medium px-2 py-0.5 rounded-md bg-zinc-100 text-zinc-600 uppercase tracking-wider">{camp.template}</span>
-                          <span className="text-xs text-zinc-500">{camp.date}</span>
+                        <div className="flex items-center gap-1.5 sm:gap-2 mt-1 flex-wrap">
+                          <span className="text-[11px] sm:text-xs font-medium px-2 py-0.5 rounded-md bg-zinc-100 text-zinc-600 uppercase tracking-wider max-w-[170px] sm:max-w-xs truncate shrink-0" title={camp.template}>
+                            {camp.template}
+                          </span>
+                          <span className="text-[11px] sm:text-xs text-zinc-500 shrink-0">{camp.date}</span>
                           {camp.totalContacts > 0 && (
-                            <span className="text-xs text-zinc-500">{camp.sentCount}/{camp.totalContacts} enviados</span>
+                            <span className="text-[11px] sm:text-xs text-zinc-500 shrink-0">{camp.sentCount}/{camp.totalContacts} enviados</span>
                           )}
                           {camp.status === "SCHEDULED" && (camp.scheduledAtFormatted || camp.scheduledAt) && (
-                            <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-200">
-                              <CalendarClock className="w-3.5 h-3.5 text-indigo-600" />
-                              Disparo agendado: {camp.scheduledAtFormatted || new Date(camp.scheduledAt).toLocaleString("pt-BR")}
+                            <span className="inline-flex items-center gap-1 text-[11px] sm:text-xs font-medium px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-200">
+                              <CalendarClock className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                              Disparo: {camp.scheduledAtFormatted || new Date(camp.scheduledAt).toLocaleString("pt-BR")}
                             </span>
                           )}
                           {camp.media && camp.media.url && (
-                            <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-md bg-purple-50 text-purple-700 border border-purple-200">
+                            <span className="inline-flex items-center gap-1 text-[11px] sm:text-xs font-medium px-2 py-0.5 rounded-md bg-purple-50 text-purple-700 border border-purple-200 shrink-0">
                               <Paperclip className="w-3 h-3 text-purple-600" />
                               <span className="capitalize">{camp.media.type || 'Mídia'}</span>
                             </span>
@@ -798,10 +800,10 @@ export default function Campaigns() {
                         </div>
                       </div>
                     </div>
-                    <div className="flex items-center gap-3 shrink-0">
+                    <div className="flex items-center justify-between sm:justify-end gap-2.5 shrink-0 pt-2.5 sm:pt-0 border-t sm:border-t-0 border-zinc-100 w-full sm:w-auto">
                       {camp.totalContacts > 0 && camp.status !== "SCHEDULED" && (
-                        <div className="w-28 hidden sm:block">
-                          <div className="flex justify-between text-xs mb-1">
+                        <div className="w-24 sm:w-28 shrink-0">
+                          <div className="flex justify-between text-[11px] sm:text-xs mb-1">
                             <span className="font-medium text-zinc-700">{camp.progress}%</span>
                           </div>
                           <div className="w-full bg-zinc-200 rounded-full h-1.5">
@@ -812,7 +814,7 @@ export default function Campaigns() {
                           </div>
                         </div>
                       )}
-                      <div className="flex gap-1.5 items-center">
+                      <div className="flex gap-1.5 items-center ml-auto">
                         {camp.status === "SCHEDULED" && (
                           <>
                             <Button
@@ -871,7 +873,7 @@ export default function Campaigns() {
                             <X className="w-4 h-4" />
                           </Button>
                         )}
-                        <Button variant="outline" size="icon" title="Ver Relatório" onClick={() => handleOpenReport(camp.id)}>
+                        <Button variant="outline" size="icon" className="h-8 w-8 shrink-0" title="Ver Relatório" onClick={() => handleOpenReport(camp.id)}>
                           <FileText className="w-4 h-4 text-zinc-600" />
                         </Button>
                       </div>

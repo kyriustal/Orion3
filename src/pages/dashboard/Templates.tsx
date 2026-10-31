@@ -150,84 +150,86 @@ export default function Templates() {
 
   return (
     <div className="space-y-6 max-w-5xl">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h2 className="text-2xl font-bold tracking-tight text-zinc-900">Gestor de Templates (HSM)</h2>
-          <p className="text-zinc-500">Crie e gerencie mensagens proativas aprovadas pela Meta.</p>
+          <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-zinc-900">Gestor de Templates (HSM)</h2>
+          <p className="text-xs sm:text-sm text-zinc-500">Crie e gerencie mensagens proativas aprovadas pela Meta.</p>
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={() => handleSync()} disabled={isSyncing} className="gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button variant="outline" size="sm" onClick={() => handleSync()} disabled={isSyncing} className="gap-2 text-xs sm:text-sm">
             {isSyncing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
             Sincronizar
           </Button>
-          <Button onClick={() => setIsModalOpen(true)} className="gap-2 bg-emerald-600 hover:bg-emerald-700">
+          <Button size="sm" onClick={() => setIsModalOpen(true)} className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-xs sm:text-sm">
             <Plus className="w-4 h-4" /> Novo Template
           </Button>
         </div>
       </div>
 
       <Card>
-        <CardHeader>
-          <CardTitle>Templates Ativos</CardTitle>
-          <CardDescription>Para iniciar conversas após 24h, você deve usar um template aprovado.</CardDescription>
+        <CardHeader className="p-4 sm:p-6">
+          <CardTitle className="text-lg sm:text-xl">Templates Ativos</CardTitle>
+          <CardDescription className="text-xs sm:text-sm">Para iniciar conversas após 24h, você deve usar um template aprovado.</CardDescription>
         </CardHeader>
-        <CardContent>
-          <div className="space-y-4">
+        <CardContent className="p-3 sm:p-6 pt-0">
+          <div className="space-y-3 sm:space-y-4">
             {templates.length === 0 ? (
               <div className="text-center py-8 text-zinc-500 border-2 border-dashed rounded-xl">
                 Nenhum template cadastrado ainda.
               </div>
             ) : (
               templates.map(template => (
-                <div key={template.id} className="flex flex-col gap-3 p-4 rounded-xl border border-zinc-200 bg-white hover:bg-zinc-50 transition-colors">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-4">
-                      <div className="w-10 h-10 rounded-lg bg-emerald-50 flex items-center justify-center flex-shrink-0">
-                        <MessageSquare className="w-5 h-5 text-emerald-600" />
+                <div key={template.id} className="flex flex-col gap-3 p-3.5 sm:p-4 rounded-xl border border-zinc-200 bg-white hover:bg-zinc-50 transition-colors w-full overflow-hidden">
+                  <div className="flex items-start sm:items-center justify-between gap-2.5 sm:gap-4 w-full">
+                    <div className="flex items-start sm:items-center gap-2.5 sm:gap-3.5 min-w-0 flex-1">
+                      <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-lg bg-emerald-50 flex items-center justify-center shrink-0 mt-0.5 sm:mt-0">
+                        <MessageSquare className="w-4 h-4 sm:w-5 sm:h-5 text-emerald-600" />
                       </div>
-                      <div>
-                        <p className="font-semibold text-zinc-900">{template.name}</p>
-                        <div className="flex items-center gap-2 mt-1">
-                          <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-zinc-100 text-zinc-600 uppercase tracking-widest">
+                      <div className="min-w-0 flex-1">
+                        <p className="font-semibold text-zinc-900 text-sm sm:text-base break-words break-all sm:break-normal line-clamp-2 leading-tight">
+                          {template.name}
+                        </p>
+                        <div className="flex items-center gap-1.5 sm:gap-2 mt-1.5 flex-wrap">
+                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-zinc-100 text-zinc-600 uppercase tracking-widest shrink-0">
                             {template.category}
                           </span>
-                          <span className="text-[10px] text-zinc-400 flex items-center gap-1">
+                          <span className="text-[10px] text-zinc-500 flex items-center gap-1 shrink-0">
                             <Globe className="w-3 h-3" /> {template.language}
                           </span>
                           {template.buttons && template.buttons.length > 0 && (
-                            <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-blue-50 text-blue-600 flex items-center gap-1">
+                            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 flex items-center gap-1 shrink-0">
                               <MousePointer2 className="w-3 h-3" /> {template.buttons.length} botão(ões)
                             </span>
                           )}
                         </div>
                       </div>
                     </div>
-                    <div>
+                    <div className="shrink-0 self-start sm:self-center ml-1 sm:ml-2">
                       {template.status === 'approved' ? (
-                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-700">
-                          <CheckCircle2 className="w-3.5 h-3.5" /> Aprovado
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 sm:px-3 sm:py-1 rounded-full text-[11px] sm:text-xs font-semibold bg-emerald-100 text-emerald-700 whitespace-nowrap">
+                          <CheckCircle2 className="w-3 h-3 sm:w-3.5 sm:h-3.5" /> Aprovado
                         </span>
                       ) : template.status === 'rejected' ? (
-                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-red-100 text-red-700">
-                          <XCircle className="w-3.5 h-3.5" /> Rejeitado
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 sm:px-3 sm:py-1 rounded-full text-[11px] sm:text-xs font-semibold bg-red-100 text-red-700 whitespace-nowrap">
+                          <XCircle className="w-3 h-3 sm:w-3.5 sm:h-3.5" /> Rejeitado
                         </span>
                       ) : (
-                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-700">
-                          <Clock className="w-3.5 h-3.5" /> Em Análise
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 sm:px-3 sm:py-1 rounded-full text-[11px] sm:text-xs font-semibold bg-amber-100 text-amber-700 whitespace-nowrap">
+                          <Clock className="w-3 h-3 sm:w-3.5 sm:h-3.5" /> Em Análise
                         </span>
                       )}
                     </div>
                   </div>
                   {template.content && (
-                    <div className="ml-14 bg-zinc-50 border border-zinc-100 rounded-md px-3 py-2">
-                      <p className="text-xs text-zinc-500 whitespace-pre-wrap line-clamp-2">{template.content}</p>
+                    <div className="sm:ml-12.5 bg-zinc-50 border border-zinc-100 rounded-md px-3 py-2">
+                      <p className="text-xs text-zinc-500 whitespace-pre-wrap line-clamp-3">{template.content}</p>
                     </div>
                   )}
                   {template.buttons && template.buttons.length > 0 && (
-                    <div className="ml-14 flex flex-wrap gap-2">
+                    <div className="sm:ml-12.5 flex flex-wrap gap-1.5 sm:gap-2">
                       {template.buttons.map((btn: TemplateButton, i: number) => (
-                        <span key={i} className="inline-flex items-center gap-1 text-xs px-3 py-1 rounded-full border border-zinc-200 bg-white text-zinc-600 font-medium shadow-sm">
-                          {buttonTypeIcons[btn.type] || <MousePointer2 className="w-3.5 h-3.5" />}
+                        <span key={i} className="inline-flex items-center gap-1 text-[11px] sm:text-xs px-2.5 py-1 rounded-full border border-zinc-200 bg-white text-zinc-600 font-medium shadow-2xs">
+                          {buttonTypeIcons[btn.type] || <MousePointer2 className="w-3 h-3 sm:w-3.5 sm:h-3.5" />}
                           {btn.text}
                         </span>
                       ))}
@@ -242,16 +244,16 @@ export default function Templates() {
 
       {/* Modal Novo Template */}
       {isModalOpen && (
-        <div className="fixed inset-0 bg-zinc-950/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <Card className="w-full max-w-2xl shadow-2xl animate-in fade-in zoom-in-95 duration-200 overflow-y-auto max-h-[92vh]">
+        <div className="fixed inset-0 bg-zinc-950/50 backdrop-blur-sm flex items-center justify-center z-50 p-2 sm:p-4">
+          <Card className="w-full max-w-2xl shadow-2xl animate-in fade-in zoom-in-95 duration-200 overflow-y-auto max-h-[96vh] sm:max-h-[92vh]">
             <form onSubmit={handleCreate}>
-              <CardHeader>
-                <CardTitle>Criar Novo Template</CardTitle>
-                <CardDescription>Configure o conteúdo, botões e envie para revisão da Meta.</CardDescription>
+              <CardHeader className="p-4 sm:p-6">
+                <CardTitle className="text-lg sm:text-xl">Criar Novo Template</CardTitle>
+                <CardDescription className="text-xs sm:text-sm">Configure o conteúdo, botões e envie para revisão da Meta.</CardDescription>
               </CardHeader>
-              <CardContent className="space-y-5">
+              <CardContent className="space-y-5 p-4 sm:p-6 pt-0">
                 {/* Linha 1: Nome e Categoria */}
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                   <div className="space-y-2">
                     <Label htmlFor="tName">Identificador (Nome)</Label>
                     <Input

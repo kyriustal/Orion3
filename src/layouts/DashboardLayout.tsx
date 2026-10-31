@@ -380,7 +380,7 @@ export default function DashboardLayout() {
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 overflow-y-auto overflow-x-hidden px-3.5 py-4 sm:px-6 sm:py-6 md:p-8 w-full max-w-full min-h-0">
+      <main className="flex-1 overflow-y-auto overflow-x-hidden px-3 pt-3.5 pb-24 sm:px-6 sm:py-6 md:p-8 w-full max-w-full min-h-0">
         <PageTransition>
           <Outlet />
         </PageTransition>
