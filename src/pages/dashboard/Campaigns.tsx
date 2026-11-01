@@ -1229,57 +1229,62 @@ export default function Campaigns() {
                   </p>
 
                   {attachedMedia ? (
-                    <div className="bg-white border border-zinc-200 rounded-lg p-3 flex flex-col sm:flex-row items-center gap-3">
-                      {attachedMedia.type === "image" && (
-                        <img
-                          src={attachedMedia.url}
-                          alt={attachedMedia.filename}
-                          className="w-16 h-16 object-cover rounded-md border border-zinc-200 shrink-0"
-                        />
-                      )}
-                      {attachedMedia.type === "video" && (
-                        <video
-                          src={attachedMedia.url}
-                          className="w-20 h-16 object-cover rounded-md border border-zinc-200 bg-black shrink-0"
-                          controls={false}
-                        />
-                      )}
-                      {attachedMedia.type === "audio" && (
-                        <div className="p-3 rounded-md bg-amber-50 text-amber-600 border border-amber-200 shrink-0">
-                          <Music className="w-6 h-6" />
-                        </div>
-                      )}
-                      {attachedMedia.type === "document" && (
-                        <div className="p-3 rounded-md bg-blue-50 text-blue-600 border border-blue-200 shrink-0">
-                          <FileText className="w-6 h-6" />
-                        </div>
-                      )}
+                    <>
+                      <div className="bg-white border border-zinc-200 rounded-lg p-3 flex flex-col sm:flex-row items-center gap-3">
+                        {attachedMedia.type === "image" && (
+                          <img
+                            src={attachedMedia.url}
+                            alt={attachedMedia.filename}
+                            className="w-16 h-16 object-cover rounded-md border border-zinc-200 shrink-0"
+                          />
+                        )}
+                        {attachedMedia.type === "video" && (
+                          <video
+                            src={attachedMedia.url}
+                            className="w-20 h-16 object-cover rounded-md border border-zinc-200 bg-black shrink-0"
+                            controls={false}
+                          />
+                        )}
+                        {attachedMedia.type === "audio" && (
+                          <div className="p-3 rounded-md bg-amber-50 text-amber-600 border border-amber-200 shrink-0">
+                            <Music className="w-6 h-6" />
+                          </div>
+                        )}
+                        {attachedMedia.type === "document" && (
+                          <div className="p-3 rounded-md bg-blue-50 text-blue-600 border border-blue-200 shrink-0">
+                            <FileText className="w-6 h-6" />
+                          </div>
+                        )}
 
-                      <div className="flex-1 min-w-0 text-left w-full">
-                        <p className="text-sm font-medium text-zinc-800 truncate">{attachedMedia.filename}</p>
-                        <div className="flex items-center gap-2 mt-0.5 text-xs text-zinc-500">
-                          <span className="capitalize">{attachedMedia.type}</span>
-                          {attachedMedia.size && (
-                            <>
-                              <span>•</span>
-                              <span>{(attachedMedia.size / (1024 * 1024)).toFixed(2)} MB</span>
-                            </>
+                        <div className="flex-1 min-w-0 text-left w-full">
+                          <p className="text-sm font-medium text-zinc-800 truncate">{attachedMedia.filename}</p>
+                          <div className="flex items-center gap-2 mt-0.5 text-xs text-zinc-500">
+                            <span className="capitalize">{attachedMedia.type}</span>
+                            {attachedMedia.size && (
+                              <>
+                                <span>•</span>
+                                <span>{(attachedMedia.size / (1024 * 1024)).toFixed(2)} MB</span>
+                              </>
+                            )}
+                          </div>
+                          {attachedMedia.type === "audio" && (
+                            <audio src={attachedMedia.url} controls className="h-8 mt-2 w-full max-w-xs" />
                           )}
                         </div>
-                        {attachedMedia.type === "audio" && (
-                          <audio src={attachedMedia.url} controls className="h-8 mt-2 w-full max-w-xs" />
-                        )}
-                      </div>
 
-                      <a
-                        href={attachedMedia.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-xs text-indigo-600 hover:text-indigo-800 underline shrink-0 font-medium"
-                      >
-                        Visualizar ↗
-                      </a>
-                    </div>
+                        <a
+                          href={attachedMedia.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs text-indigo-600 hover:text-indigo-800 underline shrink-0 font-medium"
+                        >
+                          Visualizar ↗
+                        </a>
+                      </div>
+                      <p className="text-[11px] text-zinc-500 bg-white/80 border border-zinc-200 rounded px-2.5 py-1.5 mt-2">
+                        💡 <strong>Envio inteligente:</strong> Se o modelo na Meta possuir cabeçalho de mídia, o anexo vai embutido. Se o modelo for de texto, o template oficial aprovado é entregue e o anexo enviado logo em seguida.
+                      </p>
+                    </>
                   ) : (
                     <div
                       onClick={() => mediaFileInputRef.current?.click()}

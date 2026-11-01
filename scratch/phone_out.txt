@@ -1,0 +1,11 @@
+Testing 9-digit phone without country code (940402546)...
+Success without country code: {
+  messaging_product: 'whatsapp',
+  contacts: [ { input: '940402546', wa_id: '244940402546' } ],
+  messages: [
+    {
+      id: 'wamid.HBgMMjQ0OTQwNDAyNTQ2FQIAERgSOEVDMDE2MUIyQ0YxRDczRUVBAA==',
+      message_status: 'accepted'
+    }
+  ]
+}

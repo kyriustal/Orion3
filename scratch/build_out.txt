@@ -1,0 +1,11 @@
+
+> orion-2@1.0.0 build
+> npm run build:client && npm run build:server
+
+
+> orion-2@1.0.0 build:client
+> vite build
+
+[36mvite v5.4.21 [32mbuilding for production...[36m[39m
+transforming...
+[32m✓[39m 30 modules transformed.

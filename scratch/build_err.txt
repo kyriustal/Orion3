@@ -1,0 +1,24 @@
+[31mx[39m Build failed in 1.17s
+[31merror during build:
+[31m[vite:esbuild] Transform failed with 1 error:
+C:/Personal/Projetos/Orion 2/src/pages/dashboard/Campaigns.tsx:1283:23: ERROR: Expected ")" but found "className"[31m
+file: [36mC:/Personal/Projetos/Orion 2/src/pages/dashboard/Campaigns.tsx:1283:23[31m
+[33m
+[33mExpected ")" but found "className"[33m
+1281|                        </a>
+1282|                      </div>
+1283|                      <p className="text-[11px] text-zinc-500 bg-white/80 border border-zinc-200 rounded px-2.5 py-1.5 mt-2">
+   |                         ^
+1284|                        💡 <strong>Envio inteligente:</strong> Se o modelo na Meta possuir cabeçalho de mídia, o anexo vai embutido. Se o modelo for de texto, o template oficial aprovado é entregue e o anexo enviado logo em seguida.
+1285|                      </p>
+[31m
+    at failureErrorWithLog (C:\Personal\Projetos\Orion 2\node_modules\vite\node_modules\esbuild\lib\main.js:1472:15)
+    at C:\Personal\Projetos\Orion 2\node_modules\vite\node_modules\esbuild\lib\main.js:755:50
+    at responseCallbacks.<computed> (C:\Personal\Projetos\Orion 2\node_modules\vite\node_modules\esbuild\lib\main.js:622:9)
+    at handleIncomingPacket (C:\Personal\Projetos\Orion 2\node_modules\vite\node_modules\esbuild\lib\main.js:677:12)
+    at Socket.readFromStdout (C:\Personal\Projetos\Orion 2\node_modules\vite\node_modules\esbuild\lib\main.js:600:7)
+    at Socket.emit (node:events:508:28)
+    at addChunk (node:internal/streams/readable:559:12)
+    at readableAddChunkPushByteMode (node:internal/streams/readable:510:3)
+    at Readable.push (node:internal/streams/readable:390:5)
+    at Pipe.onStreamRead (node:internal/stream_base_commons:189:23)[39m

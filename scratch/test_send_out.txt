@@ -1,0 +1,36 @@
+--- TEST 1: Template with header parameter on a template that has no header ---
+Test 1 Error: {
+  error: {
+    message: '(#132018) There’s an issue with the parameters in your template',
+    code: 132018,
+    type: 'OAuthException',
+    error_data: {
+      messaging_product: 'whatsapp',
+      details: 'header: Template does not contain title component, no parameters allowed'
+    },
+    fbtrace_id: 'AtDZxL6iyeJzFYRopto4VTZ'
+  }
+}
+
+--- TEST 2: Direct media message ---
+Test 2 Success: {
+  messaging_product: 'whatsapp',
+  contacts: [ { input: '244940402546', wa_id: '244940402546' } ],
+  messages: [
+    {
+      id: 'wamid.HBgMMjQ0OTQwNDAyNTQ2FQIAERgSQzg3RTk1QkQ5RTNGM0ZEODlDAA=='
+    }
+  ]
+}
+
+--- TEST 3: Template WITHOUT header parameter ---
+Test 3 Success: {
+  messaging_product: 'whatsapp',
+  contacts: [ { input: '244940402546', wa_id: '244940402546' } ],
+  messages: [
+    {
+      id: 'wamid.HBgMMjQ0OTQwNDAyNTQ2FQIAERgSQzAxOTI0NTdBNTc0QjFERTQ3AA==',
+      message_status: 'accepted'
+    }
+  ]
+}

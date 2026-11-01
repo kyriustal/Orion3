@@ -1,0 +1,203 @@
+--- RECENT CAMPAIGNS ---
+
+Campaign ID: bd1ad77c-4012-4de4-9f6e-83e5e25691d7
+Name: DV Lottery Suspenso | Template: dv_lottery_suspenso | Status: COMPLETED | Sent: 2 | Failed: 0
+Media URL: https://iinubqqhkmopwyndjbja.supabase.co/storage/v1/object/public/assets/b4647d91-6352-4947-8988-0df409b245b3/campaigns/1793543352167_DV-Lottery_continua_suspenso.png
+Media details: {"url":"https://iinubqqhkmopwyndjbja.supabase.co/storage/v1/object/public/assets/b4647d91-6352-4947-8988-0df409b245b3/campaigns/1793543352167_DV-Lottery_continua_suspenso.png","size":1608893,"type":"image","filename":"DV-Lottery continua suspenso.png","mime_type":"image/png"}
+Sample logs: [
+  {
+    id: '7e9223bb-c2de-4b9a-9e13-0f2c91bccda2',
+    campaign_id: 'bd1ad77c-4012-4de4-9f6e-83e5e25691d7',
+    org_id: 'b4647d91-6352-4947-8988-0df409b245b3',
+    customer_phone: '940402546',
+    customer_name: 'José Natal',
+    status: 'sent',
+    message_id: 'wamid.HBgMMjQ0OTQwNDAyNTQ2FQIAERgSRTg4OURCODAxNUQxMURDQThGAA==',
+    created_at: '2026-11-01T14:29:52.039036+00:00'
+  },
+  {
+    id: '8f3479a3-6f59-4de8-bb91-2a21af9d32e4',
+    campaign_id: 'bd1ad77c-4012-4de4-9f6e-83e5e25691d7',
+    org_id: 'b4647d91-6352-4947-8988-0df409b245b3',
+    customer_phone: '244940402546',
+    customer_name: 'Cyrus',
+    status: 'sent',
+    message_id: 'wamid.HBgMMjQ0OTQwNDAyNTQ2FQIAERgSRUFGRTk1QkYwM0MzNkNFNTcwAA==',
+    created_at: '2026-11-01T14:29:59.063224+00:00'
+  }
+]
+
+Campaign ID: 9367bd12-42d8-465f-8e01-d362b1131af0
+Name: DV Lottery Suspenso | Template: dv_lottery_suspenso | Status: COMPLETED | Sent: 2 | Failed: 0
+Media URL: none
+Media details: null
+Sample logs: [
+  {
+    id: 'd7cea7e5-bb3c-4f8b-9198-dc888fef86e4',
+    campaign_id: '9367bd12-42d8-465f-8e01-d362b1131af0',
+    org_id: 'b4647d91-6352-4947-8988-0df409b245b3',
+    customer_phone: '940402546',
+    customer_name: 'José Natal',
+    status: 'sent',
+    message_id: 'wamid.HBgMMjQ0OTQwNDAyNTQ2FQIAERgSQkU4OUU4N0I1RTNFRjVBQzg5AA==',
+    created_at: '2026-11-01T14:28:33.191439+00:00'
+  },
+  {
+    id: '5867198d-56ef-4f07-9281-e7e8e1b4ab9a',
+    campaign_id: '9367bd12-42d8-465f-8e01-d362b1131af0',
+    org_id: 'b4647d91-6352-4947-8988-0df409b245b3',
+    customer_phone: '244940402546',
+    customer_name: 'Cyrus',
+    status: 'sent',
+    message_id: 'wamid.HBgMMjQ0OTQwNDAyNTQ2FQIAERgSM0NCNEFBMEE4Nzk4Nzk5QkQ1AA==',
+    created_at: '2026-11-01T14:28:39.42505+00:00'
+  }
+]
+
+Campaign ID: 6beb1415-cea8-4146-ac3c-51edf16ff015
+Name: Vem Aí o Programa Sonhadores! | Template: vem_ai_programa_sonhadores | Status: COMPLETED | Sent: 2 | Failed: 0
+Media URL: https://iinubqqhkmopwyndjbja.supabase.co/storage/v1/object/public/assets/b4647d91-6352-4947-8988-0df409b245b3/campaigns/1793497859994_Cartaz_do_Programa_Sonhadores.png
+Media details: {"url":"https://iinubqqhkmopwyndjbja.supabase.co/storage/v1/object/public/assets/b4647d91-6352-4947-8988-0df409b245b3/campaigns/1793497859994_Cartaz_do_Programa_Sonhadores.png","size":1922743,"type":"image","filename":"Cartaz do Programa Sonhadores.png","mime_type":"image/png"}
+Sample logs: [
+  {
+    id: '9f850fed-06af-4bbd-84b8-2ce336025139',
+    campaign_id: '6beb1415-cea8-4146-ac3c-51edf16ff015',
+    org_id: 'b4647d91-6352-4947-8988-0df409b245b3',
+    customer_phone: '940402546',
+    customer_name: 'José Natal',
+    status: 'sent',
+    message_id: 'wamid.HBgMMjQ0OTQwNDAyNTQ2FQIAERgSOUVEMEY3OENEMDRERDMxMjczAA==',
+    created_at: '2026-11-01T01:51:42.430253+00:00'
+  },
+  {
+    id: '39e2d4c1-7591-44a3-9da0-079d152c7200',
+    campaign_id: '6beb1415-cea8-4146-ac3c-51edf16ff015',
+    org_id: 'b4647d91-6352-4947-8988-0df409b245b3',
+    customer_phone: '244940402546',
+    customer_name: 'Cyrus',
+    status: 'sent',
+    message_id: 'wamid.HBgMMjQ0OTQwNDAyNTQ2FQIAERgSRjNGNDcwRjJFNUMxNzZGQTBCAA==',
+    created_at: '2026-11-01T01:51:50.485588+00:00'
+  }
+]
+
+Campaign ID: afab4722-65ea-41e2-8d57-5f84eff7c14f
+Name: DV Lottery Suspenso | Template: dv_lottery_suspenso | Status: COMPLETED | Sent: 3 | Failed: 0
+Media URL: https://iinubqqhkmopwyndjbja.supabase.co/storage/v1/object/public/assets/b4647d91-6352-4947-8988-0df409b245b3/campaigns/1793471194345_DV-Lottery_continua_suspenso.png
+Media details: {"url":"https://iinubqqhkmopwyndjbja.supabase.co/storage/v1/object/public/assets/b4647d91-6352-4947-8988-0df409b245b3/campaigns/1793471194345_DV-Lottery_continua_suspenso.png","size":1608893,"type":"image","filename":"DV-Lottery continua suspenso.png","mime_type":"image/png"}
+Sample logs: [
+  {
+    id: 'd05813fc-8b08-451e-bd1d-e3457b589bf3',
+    campaign_id: 'afab4722-65ea-41e2-8d57-5f84eff7c14f',
+    org_id: 'b4647d91-6352-4947-8988-0df409b245b3',
+    customer_phone: '940402546',
+    customer_name: 'José Natal',
+    status: 'sent',
+    message_id: 'wamid.HBgMMjQ0OTQwNDAyNTQ2FQIAERgSQkI4RTc1RTMxOUVCQjdGOTk1AA==',
+    created_at: '2026-10-31T18:27:49.603083+00:00'
+  },
+  {
+    id: '89c438a3-ac82-4b26-872f-4784427c93da',
+    campaign_id: 'afab4722-65ea-41e2-8d57-5f84eff7c14f',
+    org_id: 'b4647d91-6352-4947-8988-0df409b245b3',
+    customer_phone: '244940402546',
+    customer_name: 'Cyrus',
+    status: 'sent',
+    message_id: 'wamid.HBgMMjQ0OTQwNDAyNTQ2FQIAERgSN0FGRjYyMTY2NDAwRTRGNUUyAA==',
+    created_at: '2026-10-31T18:27:56.608504+00:00'
+  },
+  {
+    id: 'd400176d-5e4c-4699-b66a-1f5b20f289ab',
+    campaign_id: 'afab4722-65ea-41e2-8d57-5f84eff7c14f',
+    org_id: 'b4647d91-6352-4947-8988-0df409b245b3',
+    customer_phone: '244975158030',
+    customer_name: 'Onli',
+    status: 'sent',
+    message_id: 'wamid.HBgMMjQ0OTc1MTU4MDMwFQIAERgSRkRFMDQzRjkyMURGOEEzRTNDAA==',
+    created_at: '2026-10-31T18:28:03.776066+00:00'
+  }
+]
+
+Campaign ID: afe694c7-68d8-45d2-be44-6b6b645bcbe7
+Name: Vem Aí o Programa Sonhadores (Teste 3) | Template: vem_ai_programa_sonhadores | Status: COMPLETED | Sent: 3 | Failed: 0
+Media URL: none
+Media details: null
+Sample logs: [
+  {
+    id: '9c303513-c324-430e-8ced-b014277bd75c',
+    campaign_id: 'afe694c7-68d8-45d2-be44-6b6b645bcbe7',
+    org_id: 'b4647d91-6352-4947-8988-0df409b245b3',
+    customer_phone: '940402546',
+    customer_name: 'José Natal',
+    status: 'sent',
+    message_id: 'wamid.HBgMMjQ0OTQwNDAyNTQ2FQIAERgSM0E0RURCQ0VFMzYyNjVBNkUzAA==',
+    created_at: '2026-10-31T18:21:32.801108+00:00'
+  },
+  {
+    id: 'e057d9a5-394a-4c8d-b635-3e912ae9c464',
+    campaign_id: 'afe694c7-68d8-45d2-be44-6b6b645bcbe7',
+    org_id: 'b4647d91-6352-4947-8988-0df409b245b3',
+    customer_phone: '244940402546',
+    customer_name: 'Cyrus',
+    status: 'sent',
+    message_id: 'wamid.HBgMMjQ0OTQwNDAyNTQ2FQIAERgSMzE0QzU2MTdCNkJBRUNERTY2AA==',
+    created_at: '2026-10-31T18:21:39.965199+00:00'
+  },
+  {
+    id: 'b38aa899-0fb6-4827-a9e4-2bc263d3b198',
+    campaign_id: 'afe694c7-68d8-45d2-be44-6b6b645bcbe7',
+    org_id: 'b4647d91-6352-4947-8988-0df409b245b3',
+    customer_phone: '244975158030',
+    customer_name: 'Onli',
+    status: 'sent',
+    message_id: 'wamid.HBgMMjQ0OTc1MTU4MDMwFQIAERgSNDNDRTU4MDUyNzRGMjA3Q0VGAA==',
+    created_at: '2026-10-31T18:21:47.55767+00:00'
+  }
+]
+
+--- TEMPLATES ---
+Template: Boas Vindas (pending) | Category: MARKETING | Lang: pt_BR
+Components: null
+Content: Olá, {{1}}! Seja bem-vindo à On Visa!
+Teremos muito gosto em atendê-lo.
+Template: Vagas de Emprego na Europa (PT, LU, PO) (pending) | Category: MARKETING | Lang: pt_BR
+Components: null
+Content: A  [On Visa] está a divulgar oportunidades de emprego para candidatos interessad
+Template: novas_vagas_portugal (pending) | Category: MARKETING | Lang: pt_BR
+Components: null
+Content: 🇵🇹🔥 PORTUGAL ESTÁ A CONTRATAR!
+
+NOVAS VAGAS + VISTO DE TRABALHO 🇵🇹
+
+🪚 Carp
+Template: vagas_de_emprego_na_europa_pt_lu_po_ (approved) | Category: MARKETING | Lang: pt_BR
+Components: null
+Content: A  {{1}} está a divulgar oportunidades de emprego para candidatos interessados e
+Template: conheca_o_programa_sonhadores (approved) | Category: MARKETING | Lang: pt_BR
+Components: null
+Content: Conheça as oportunidades que o Programa Sonhares. Uma oportunidade de asssessori
+Template: hello_world (approved) | Category: UTILITY | Lang: en_US
+Components: null
+Content: Welcome and congratulations!! This message demonstrates your ability to send a W
+Template: ultimas_vagas_polonia (approved) | Category: MARKETING | Lang: pt_BR
+Components: null
+Content: 🇵🇱 ÚLTIMAS VAGAS DE TRABALHO PARA A POLÓNIA ✈️
+
+Olá,  {{1}}!
+
+Queres mudar de 
+Template: dv_lottery_suspenso (approved) | Category: MARKETING | Lang: pt_BR
+Components: null
+Content: COMUNICADO | DV-LOTTERY 🇺🇸🎫🤞
+
+Informamos que o programa Diversity Visa Lotte
+Template: vagas_po_lu_pt (approved) | Category: MARKETING | Lang: pt_BR
+Components: null
+Content: 🌍✈️ *NOVAS VAGAS DE EMPREGO NA EUROPA!* 🇱🇺🇵🇱🇵🇹
+
+🚨 *LUXEMBURGO • POLÓNIA 
+Template: vem_ai_programa_sonhadores (approved) | Category: MARKETING | Lang: pt_BR
+Components: null
+Content: 🚨🌍 *ATENÇÃO, SONHADOR! A TUA OPORTUNIDADE ESTÁ A CHEGAR!* ✨
+
+Já imaginaste est

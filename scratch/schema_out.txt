@@ -1,0 +1,7 @@
+Columns in templates: [
+  'id',       'org_id',
+  'name',     'category',
+  'language', 'content',
+  'status',   'created_at',
+  'meta_id',  'buttons'
+]

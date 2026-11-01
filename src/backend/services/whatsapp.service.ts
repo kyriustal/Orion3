@@ -173,9 +173,18 @@ export class WhatsAppService {
         caption?: string
     ) {
         const token = accessToken || process.env.META_ACCESS_TOKEN;
-        if (!token) return null;
+        if (!token) {
+            console.error('[WHATSAPP] Token de acesso ausente para sendMediaByUrl');
+            return null;
+        }
 
         try {
+            const cleanTo = (toNumber || '').replace(/\D/g, '');
+            if (!cleanTo || cleanTo.length < 8) {
+                console.warn(`[WHATSAPP] Número inválido para envio de mídia: "${toNumber}"`);
+                return null;
+            }
+
             const isImage = mimeType.startsWith('image/');
             const isVideo = mimeType.startsWith('video/');
             const isAudio = mimeType.startsWith('audio/');
@@ -189,7 +198,7 @@ export class WhatsAppService {
             const payload: any = {
                 messaging_product: "whatsapp",
                 recipient_type: "individual",
-                to: toNumber,
+                to: cleanTo,
                 type: type,
             };
 
@@ -210,9 +219,12 @@ export class WhatsAppService {
                 }
             });
 
-            return response.data?.messages?.[0]?.id || null;
+            const msgId = response.data?.messages?.[0]?.id || null;
+            console.log(`[WHATSAPP] ✅ Mídia (${type}: ${fileName}) enviada para ${cleanTo} (msgId: ${msgId})`);
+            return msgId;
         } catch (error: any) {
-            console.error(`[WHATSAPP] Erro ao enviar media por URL (${fileName}):`, error.response?.data || error.message);
+            const metaErr = error.response?.data;
+            console.error(`[WHATSAPP] ❌ Erro ao enviar media por URL (${fileName}) para ${toNumber}:`, metaErr || error.message);
             return null;
         }
     }
@@ -625,9 +637,11 @@ export class WhatsAppService {
     }
 
     /**
-     * Envia uma mensagem baseada em template oficial da Meta ou fallback interativo com botões
+     * Envia um template oficial da Meta com suporte inteligente a cabeçalho de mídia (imagem, documento ou vídeo).
+     * Se o template na Meta não possuir cabeçalho de mídia (erro 132018), tenta automaticamente enviar
+     * o template sem cabeçalho e sinaliza mediaIncluded: false para que o caller possa enviar o ficheiro em separado.
      */
-    static async sendTemplateMessage(
+    static async sendTemplateMessageWithMediaCheck(
         phoneNumberId: string,
         to: string,
         templateName: string,
@@ -637,38 +651,90 @@ export class WhatsAppService {
         accessToken?: string,
         contentFallback?: string,
         mediaHeader?: { type: 'image' | 'video' | 'document'; url: string; filename?: string }
-    ): Promise<string | null> {
+    ): Promise<{ messageId: string | null; mediaIncluded: boolean }> {
         const token = accessToken || process.env.META_ACCESS_TOKEN;
         if (!token) {
-            console.error('WhatsApp Access Token não configurado.');
-            return null;
+            console.error('[WHATSAPP] WhatsApp Access Token não configurado.');
+            return { messageId: null, mediaIncluded: false };
         }
 
-        try {
-            const url = `https://graph.facebook.com/v19.0/${phoneNumberId}/messages`;
+        const cleanTo = (to || '').replace(/\D/g, '');
+        if (!cleanTo || cleanTo.length < 8) {
+            console.warn(`[WHATSAPP] Destinatário inválido: "${to}"`);
+            return { messageId: null, mediaIncluded: false };
+        }
 
-            const bodyParams = Object.keys(variables)
-                .sort((a, b) => parseInt(a) - parseInt(b))
-                .map(key => ({
-                    type: "text",
-                    text: variables[key] || ""
-                }));
+        const url = `https://graph.facebook.com/v19.0/${phoneNumberId}/messages`;
 
-            const components: any[] = [];
+        const bodyParams = Object.keys(variables)
+            .sort((a, b) => parseInt(a) - parseInt(b))
+            .map(key => ({
+                type: "text",
+                text: variables[key] || ""
+            }));
 
-            if (mediaHeader && mediaHeader.url) {
-                const headerType = mediaHeader.type === 'video' ? 'video' : mediaHeader.type === 'document' ? 'document' : 'image';
-                const headerParam: any = { type: headerType };
-                if (headerType === 'image') headerParam.image = { link: mediaHeader.url };
-                else if (headerType === 'video') headerParam.video = { link: mediaHeader.url };
-                else if (headerType === 'document') headerParam.document = { link: mediaHeader.url, filename: mediaHeader.filename || 'documento' };
+        // 1. Se foi solicitada mídia anexada, tenta primeiro com o cabeçalho de mídia
+        if (mediaHeader && mediaHeader.url) {
+            const headerType = mediaHeader.type === 'video' ? 'video' : mediaHeader.type === 'document' ? 'document' : 'image';
+            const headerParam: any = { type: headerType };
+            if (headerType === 'image') headerParam.image = { link: mediaHeader.url };
+            else if (headerType === 'video') headerParam.video = { link: mediaHeader.url };
+            else if (headerType === 'document') headerParam.document = { link: mediaHeader.url, filename: mediaHeader.filename || 'documento' };
 
-                components.push({
+            const componentsWithHeader: any[] = [
+                {
                     type: "header",
                     parameters: [headerParam]
+                }
+            ];
+
+            if (bodyParams.length > 0) {
+                componentsWithHeader.push({
+                    type: "body",
+                    parameters: bodyParams
                 });
             }
 
+            try {
+                const response = await axios.post(url, {
+                    messaging_product: "whatsapp",
+                    recipient_type: "individual",
+                    to: cleanTo,
+                    type: "template",
+                    template: {
+                        name: templateName,
+                        language: { code: languageCode },
+                        components: componentsWithHeader
+                    }
+                }, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                const msgId = response.data?.messages?.[0]?.id || null;
+                console.log(`[WHATSAPP] ✅ Template oficial "${templateName}" com cabeçalho de mídia entregue a ${cleanTo} (msgId: ${msgId})`);
+                return { messageId: msgId, mediaIncluded: true };
+            } catch (headerError: any) {
+                const metaErr = headerError.response?.data;
+                const metaErrCode = metaErr?.error?.code;
+                const metaErrMsg = metaErr?.error?.message || headerError.message;
+                const isHeaderMismatch = metaErrCode === 132018 
+                    || JSON.stringify(metaErr || '').toLowerCase().includes('header')
+                    || JSON.stringify(metaErr || '').toLowerCase().includes('title component');
+
+                if (isHeaderMismatch) {
+                    console.log(`[WHATSAPP] ℹ️ Template "${templateName}" é de texto e não possui cabeçalho de mídia na Meta (código ${metaErrCode}). A enviar template oficial de texto...`);
+                } else {
+                    console.warn(`[WHATSAPP] ⚠️ Erro ao tentar template com cabeçalho de mídia: ${metaErrMsg}. Tentando template oficial sem cabeçalho...`);
+                }
+            }
+        }
+
+        // 2. Envio do template oficial padrão (sem cabeçalho de mídia)
+        try {
+            const components: any[] = [];
             if (bodyParams.length > 0) {
                 components.push({
                     type: "body",
@@ -679,7 +745,7 @@ export class WhatsAppService {
             const response = await axios.post(url, {
                 messaging_product: "whatsapp",
                 recipient_type: "individual",
-                to,
+                to: cleanTo,
                 type: "template",
                 template: {
                     name: templateName,
@@ -693,13 +759,16 @@ export class WhatsAppService {
                 }
             });
 
-            console.log(`[WHATSAPP] Template ${templateName} enviado para ${to}`);
-            return response.data?.messages?.[0]?.id || null;
+            const msgId = response.data?.messages?.[0]?.id || null;
+            console.log(`[WHATSAPP] ✅ Template oficial "${templateName}" entregue a ${cleanTo} (msgId: ${msgId})`);
+            return { messageId: msgId, mediaIncluded: false };
         } catch (error: any) {
             const metaErr = error.response?.data;
             const metaErrCode = metaErr?.error?.code;
             const metaErrMsg = metaErr?.error?.message || error.message;
-            console.error(`[WHATSAPP] ❌ Falha no template "${templateName}" para ${to} | Código Meta: ${metaErrCode} | Mensagem: ${metaErrMsg}`, metaErr || '');
+            console.error(`[WHATSAPP] ❌ Falha no template oficial "${templateName}" para ${cleanTo} | Código Meta: ${metaErrCode} | Mensagem: ${metaErrMsg}`);
+
+            // Fallback de texto livre apenas se fornecido explicitamente
             if (contentFallback) {
                 let filledText = contentFallback;
                 Object.keys(variables).forEach(k => {
@@ -711,13 +780,43 @@ export class WhatsAppService {
                         id: b.id || `btn_${idx + 1}`,
                         title: b.text || b.title || `Opção ${idx + 1}`
                     }));
-                    return this.sendInteractiveButtons(phoneNumberId, to, filledText, formattedBtns, token);
+                    const fallbackId = await this.sendInteractiveButtons(phoneNumberId, cleanTo, filledText, formattedBtns, token);
+                    return { messageId: fallbackId, mediaIncluded: false };
                 } else {
-                    return this.sendTextMessage(phoneNumberId, to, filledText, token);
+                    const fallbackId = await this.sendTextMessage(phoneNumberId, cleanTo, filledText, token);
+                    return { messageId: fallbackId, mediaIncluded: false };
                 }
             }
-            return null;
+            return { messageId: null, mediaIncluded: false };
         }
+    }
+
+    /**
+     * Envia uma mensagem baseada em template oficial da Meta ou fallback interativo com botões
+     */
+    static async sendTemplateMessage(
+        phoneNumberId: string,
+        to: string,
+        templateName: string,
+        languageCode: string = 'pt_BR',
+        variables: Record<string, string> = {},
+        buttons: { id?: string; type?: string; text: string; title?: string }[] = [],
+        accessToken?: string,
+        contentFallback?: string,
+        mediaHeader?: { type: 'image' | 'video' | 'document'; url: string; filename?: string }
+    ): Promise<string | null> {
+        const result = await this.sendTemplateMessageWithMediaCheck(
+            phoneNumberId,
+            to,
+            templateName,
+            languageCode,
+            variables,
+            buttons,
+            accessToken,
+            contentFallback,
+            mediaHeader
+        );
+        return result.messageId;
     }
 
     /**

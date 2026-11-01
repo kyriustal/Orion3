@@ -1,0 +1,23 @@
+Testing with target phone 244975158030...
+Step 1: Sending approved template...
+Step 1 Template Success: {
+  messaging_product: 'whatsapp',
+  contacts: [ { input: '244975158030', wa_id: '244975158030' } ],
+  messages: [
+    {
+      id: 'wamid.HBgMMjQ0OTc1MTU4MDMwFQIAERgSRERGQzg1MENCQkNEMTAyMjIzAA==',
+      message_status: 'accepted'
+    }
+  ]
+}
+
+Step 2: Sending media message...
+Step 2 Media Success: {
+  messaging_product: 'whatsapp',
+  contacts: [ { input: '244975158030', wa_id: '244975158030' } ],
+  messages: [
+    {
+      id: 'wamid.HBgMMjQ0OTc1MTU4MDMwFQIAERgSQzM0MzcwNUQ0NEE3MTZDMThDAA=='
+    }
+  ]
+}

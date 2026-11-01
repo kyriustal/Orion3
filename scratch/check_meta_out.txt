@@ -1,0 +1,146 @@
+WA Config: {
+  phone_number_id: '1008277882367215',
+  waba_id: '1168656055187167',
+  has_token: true
+}
+Found 6 templates on Meta:
+
+Name: dv_lottery_suspenso | Status: APPROVED | Category: MARKETING
+Components: [
+  {
+    "type": "BODY",
+    "text": "COMUNICADO | DV-LOTTERY 🇺🇸🎫🤞\n\nInformamos que o programa Diversity Visa Lottery (DV-Lottery) continua suspenso para 2027.\n\nRecomendamos que acompanhe os canais oficiais para obter informações atualizadas e evitar notícias falsas e burlas.\n\nA  {{1}} continuará atenta a qualquer novidade para manter os seus clientes informados.\n\nON VISA – Your Dreams, Our Priority.",
+    "example": {
+      "body_text": [
+        [
+          "Empresa Exemplo"
+        ]
+      ]
+    }
+  }
+]
+
+Name: ultimas_vagas_polonia | Status: APPROVED | Category: MARKETING
+Components: [
+  {
+    "type": "BODY",
+    "text": "🇵🇱 ÚLTIMAS VAGAS DE TRABALHO PARA A POLÓNIA ✈️\n\nOlá,  {{1}}!\n\nQueres mudar de vida e trabalhar num dos países que mais cresce na União Europeia? Estamos com as últimas vagas para os setores de Logística, Produção, Hotelaria, Construção.\n\n*Por que deves candidatar-te agora?*\n*• Sem exigência de idioma:* Não precisas de falar polaco para a maioria das funções.\n*• Processo seguro:* Entrada legalizada com autorização de trabalho (Work Permit).\n*• Estabilidade:* Salários atrativos e boas condições de trabalho.\n\nAs vagas estão na fase final de preenchimento. Responde a esta mensagem ou clica no link abaixo para enviar o teu currículo e agendar a tua entrevista!\n\n👇 Clica aqui para garantir a tua vaga:",
+    "example": {
+      "body_text": [
+        [
+          "Maria Silva"
+        ]
+      ]
+    }
+  },
+  {
+    "type": "BUTTONS",
+    "buttons": [
+      {
+        "type": "URL",
+        "text": "Visitar Site",
+        "url": "https://www.onvisamundo.com/candidatura"
+      },
+      {
+        "type": "QUICK_REPLY",
+        "text": "Falar com Consultor"
+      }
+    ]
+  }
+]
+
+Name: vagas_po_lu_pt | Status: APPROVED | Category: MARKETING
+Components: [
+  {
+    "type": "BODY",
+    "text": "🌍✈️ *NOVAS VAGAS DE EMPREGO NA EUROPA!* 🇱🇺🇵🇱🇵🇹\n\n🚨 *LUXEMBURGO • POLÓNIA • PORTUGAL*\n\nQueres trabalhar na Europa? Esta pode ser a tua oportunidade! 💼🔥\n\nA  {{1}} está a divulgar oportunidades de emprego para candidatos interessados em trabalhar no estrangeiro, com orientação para o processo de candidatura e visto de trabalho.\n\n✅ Oportunidades em diferentes áreas profissionais\n✅ Informação sobre requisitos e condições\n✅ Orientação para o processo de visto de trabalho\n\n📲 *QUERES CONHECER AS VAGAS DISPONÍVEIS?*\n\nResponde *“TENHO INTERESSE”* e a nossa equipa entrará em contacto contigo!\n\n🚀 O teu próximo passo profissional pode começar aqui!",
+    "example": {
+      "body_text": [
+        [
+          "Empresa Exemplo"
+        ]
+      ]
+    }
+  },
+  {
+    "type": "BUTTONS",
+    "buttons": [
+      {
+        "type": "QUICK_REPLY",
+        "text": "Estou Interessado"
+      },
+      {
+        "type": "QUICK_REPLY",
+        "text": "Não Estou Interessado"
+      }
+    ]
+  }
+]
+
+Name: vagas_de_emprego_na_europa_pt_lu_po_ | Status: APPROVED | Category: MARKETING
+Components: [
+  {
+    "type": "BODY",
+    "text": "A  {{1}} está a divulgar oportunidades de emprego para candidatos interessados em trabalhar no estrangeiro, com orientação para o processo de candidatura e visto de trabalho.\n\n✅ Oportunidades em diferentes áreas profissionais\n✅ Informação sobre requisitos e condições\n✅ Orientação para o processo de visto de trabalho\n\n📲 *QUERES CONHECER AS VAGAS DISPONÍVEIS?*\n\nResponde *“TENHO INTERESSE”* e a nossa equipa entrará em contacto contigo!\n\nO teu próximo passo profissional pode começar aqui!",
+    "example": {
+      "body_text": [
+        [
+          "Exemplo_1"
+        ]
+      ]
+    }
+  },
+  {
+    "type": "BUTTONS",
+    "buttons": [
+      {
+        "type": "QUICK_REPLY",
+        "text": "Estou Interessado"
+      },
+      {
+        "type": "QUICK_REPLY",
+        "text": "Não Estou Interessado"
+      }
+    ]
+  }
+]
+
+Name: conheca_o_programa_sonhadores | Status: APPROVED | Category: MARKETING
+Components: [
+  {
+    "type": "BODY",
+    "text": "Conheça as oportunidades que o Programa Sonhares. Uma oportunidade de asssessoria gratuita para quem deseja estudar, trabalhar, ou precisa de tratamento médico no exterior.\n\nAs candidaturas reabrem já nos dias 5 a 15 de Novembro.\n\nSaiba mais em ⬇"
+  },
+  {
+    "type": "BUTTONS",
+    "buttons": [
+      {
+        "type": "URL",
+        "text": "Visitar Site",
+        "url": "https://www.onvisamundo.com/programa-sonhadores"
+      },
+      {
+        "type": "PHONE_NUMBER",
+        "text": "Falar com Consultor",
+        "phone_number": "+244924280444"
+      }
+    ]
+  }
+]
+
+Name: hello_world | Status: APPROVED | Category: UTILITY
+Components: [
+  {
+    "type": "HEADER",
+    "format": "TEXT",
+    "text": "Hello World"
+  },
+  {
+    "type": "BODY",
+    "text": "Welcome and congratulations!! This message demonstrates your ability to send a WhatsApp message notification from the Cloud API, hosted by Meta. Thank you for taking the time to test with us."
+  },
+  {
+    "type": "FOOTER",
+    "text": "WhatsApp Business Platform sample message"
+  }
+]

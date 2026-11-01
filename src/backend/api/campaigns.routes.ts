@@ -378,9 +378,11 @@ export async function processCampaign(campaignId: string, orgId: string) {
           'application/pdf'
         );
 
-        // 1. Tentar primeiro via template oficial com header de mídia (se a WABA Meta possuir header)
+        let templateResult = { messageId: null as string | null, mediaIncluded: false };
+
+        // 1. Tentar primeiro via template oficial da Meta (com verificação inteligente de header)
         if (phoneNumberId && accessToken) {
-          sentId = await WhatsAppService.sendTemplateMessage(
+          templateResult = await WhatsAppService.sendTemplateMessageWithMediaCheck(
             phoneNumberId,
             contact.phone,
             campaign.template,
@@ -391,11 +393,30 @@ export async function processCampaign(campaignId: string, orgId: string) {
             renderedText,
             { type: mType === 'audio' ? 'document' : (mType as any), url: campaignMedia.url, filename: campaignMedia.filename }
           );
+          sentId = templateResult.messageId;
         }
 
-        // 2. Se o template oficial não incluiu o header ou falhou (template sem header na Meta),
-        // envia a mídia diretamente via sendMediaByUrl com legenda inteligente
-        if (!sentId) {
+        // 2. Se o template oficial foi entregue mas a mídia NÃO estava embutida no cabeçalho do template
+        // (porque o template na Meta é do tipo texto), dispara o ficheiro/mídia logo a seguir!
+        if (templateResult.messageId && !templateResult.mediaIncluded) {
+          console.log(`[CAMPAIGN WORKER] 📎 Template oficial de texto entregue. A enviar arquivo de mídia (${campaignMedia.filename || mType}) para ${contact.phone}...`);
+          mediaSentId = await WhatsAppService.sendMediaByUrl(
+            contact.phone,
+            campaignMedia.url,
+            mime,
+            campaignMedia.filename || 'anexo',
+            phoneNumberId || process.env.DEFAULT_PHONE_NUMBER_ID || '',
+            accessToken || undefined
+          );
+          if (mediaSentId) {
+            console.log(`[CAMPAIGN WORKER] ✅ Arquivo de mídia entregue com sucesso para ${contact.phone} (mediaId: ${mediaSentId})`);
+          } else {
+            console.warn(`[CAMPAIGN WORKER] ⚠️ Arquivo de mídia não pôde ser entregue a ${contact.phone} (o template oficial de texto foi entregue)`);
+          }
+        }
+
+        // 3. Fallback: se o template oficial falhou completamente, tenta envio direto de mídia com legenda
+        if (!sentId && !mediaSentId) {
           const caption = mType !== 'audio' ? renderedText : undefined;
           mediaSentId = await WhatsAppService.sendMediaByUrl(
             contact.phone,
@@ -407,7 +428,6 @@ export async function processCampaign(campaignId: string, orgId: string) {
             caption
           );
 
-          // Se houver botões interativos ou se for áudio (que não aceita legenda na Meta), envia o texto/botões
           if (templateButtons && templateButtons.length > 0) {
             const formattedBtns = templateButtons.map((b: any, idx: number) => ({
               id: b.id || `btn_${idx + 1}`,

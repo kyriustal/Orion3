@@ -1,0 +1,13 @@
+Testing create template with HEADER: IMAGE on Meta...
+Create error: {
+  error: {
+    message: 'Invalid parameter',
+    type: 'OAuthException',
+    code: 100,
+    error_subcode: 2388273,
+    is_transient: false,
+    error_user_title: 'Parâmetro de amostra em falta para o tipo de título',
+    error_user_msg: 'Os modelos com o tipo de cabeçalho IMAGE precisam de um exemplo/amostra, mas não foi fornecido. Atualiza o tipo de título ou fornece um parâmetro de exemplo válido.',
+    fbtrace_id: 'AvZ-CNKWAuLPUPVXpQrbcTs'
+  }
+}
