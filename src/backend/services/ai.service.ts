@@ -621,7 +621,15 @@ ${buttonRule}
 - SEPARAÇÃO OBRIGATÓRIA: Informações de contexto de links e anúncios são dados do sistema para seu conhecimento. Use-os para responder ao cliente de forma certeira e natural.
 - PRIMEIRA MENSAGEM (SAUDAÇÃO): Deve ser uma saudação super simpática, calorosa e com o seu nome ("${botName}").
 - FORMATAÇÃO: Realce termos importantes em **negrito**. Mantenha a pontuação limpa, sem tags desnecessárias.
-- ENVIO DE ARQUIVOS: Sempre que o cliente pedir arquivos ou catálogos listados na secção de arquivos oficiais, inclua o token [SEND_FILE: ID].
+- ENVIO DE ARQUIVOS — REGRA DE ORDEM OBRIGATÓRIA:
+  * Sempre que o cliente pedir um arquivo ou catálogo listado na secção de arquivos oficiais, a tua resposta DEVE ter EXATAMENTE este formato:
+    [SEND_FILE: ID]
+    
+    [Texto de acompanhamento aqui — ex: "Segue o documento solicitado. Qualquer dúvida, estou à disposição!"]
+  * O token [SEND_FILE: ID] DEVE estar SEMPRE na PRIMEIRA linha da resposta, isolado, sem nenhum texto antes dele.
+  * O texto de acompanhamento (mensagem ao cliente) vem DEPOIS do token, separado por uma linha em branco.
+  * NUNCA coloque texto antes do [SEND_FILE:]. NUNCA misture o token no meio de uma frase.
+  * Se houver múltiplos ficheiros, lista todos os tokens [SEND_FILE:] primeiro (um por linha), depois o texto de acompanhamento.
 
 ═══ REGRA ABSOLUTA, CRÍTICA E INEGOCIÁVEL: PRIVACIDADE E PROTEÇÃO TOTAL DE DADOS DE OUTROS CLIENTES ═══
 - SIGILO PROFISSIONAL E ISOLAMENTO RIGOROSO DE DADOS:
@@ -1121,8 +1129,12 @@ export class AIService {
       if (validAssets.length > 0) {
         availableAssets = '\n═══ ARQUIVOS QUE VOCÊ PODE ENVIAR AO CLIENTE ═══\n' +
           validAssets.map(a => `- ID: ${a.id} | Descrição: ${a.description} | Arquivo: ${a.filename}`).join('\n') +
-          '\nPara enviar um arquivo, inclua exatamente o código [SEND_FILE: ID] na sua resposta.\n' +
-          '⚠️ ATENÇÃO: NUNCA invente IDs de ficheiros nem use [SEND_FILE] com IDs que não estejam listados acima.';
+          '\nREGRA DE FORMATO PARA ENVIO DE ARQUIVO:\n' +
+          '  1. Coloca o token [SEND_FILE: ID] SEMPRE na PRIMEIRA linha da tua resposta (sozinho, sem texto antes).\n' +
+          '  2. Deixa uma linha em branco.\n' +
+          '  3. Escreve o texto de acompanhamento ao cliente depois.\n' +
+          '  Exemplo correto:\n  [SEND_FILE: abc-123...]\n\n  Segue o catálogo que pediu!\n' +
+          '⚠️ ATENÇÃO: NUNCA invente IDs de ficheiros nem use [SEND_FILE] com IDs que não estejam listados acima. NUNCA ponha texto antes do [SEND_FILE:].';
       } else {
         availableAssets = '\n[NOTA INTERNA]: Não existem ficheiros/catálogos disponíveis na base de dados para enviar ao cliente. NÃO use [SEND_FILE] em nenhuma circunstância.';
       }

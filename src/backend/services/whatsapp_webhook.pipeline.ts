@@ -340,6 +340,7 @@ export async function triggerAIResponse(params: {
         }
 
         // ── Processar envio de arquivos [SEND_FILE: ID] ───────────────────────
+        // IMPORTANTE: O ficheiro é sempre enviado PRIMEIRO, depois o texto de acompanhamento.
         const fileMatches = [...replyText.matchAll(/\[SEND_FILE:\s*([a-f0-9-]{36})\]/gi)];
         if (fileMatches.length > 0) {
           replyText = replyText.replace(/\[SEND_FILE:\s*[a-f0-9-]{36}\]/gi, '').trim();
@@ -396,6 +397,12 @@ export async function triggerAIResponse(params: {
                 });
               } catch (_) {}
             }
+          }
+
+          // Aguardar 1.2s após enviar todos os ficheiros antes do texto de acompanhamento
+          // Garante que o WhatsApp entrega o documento ANTES do texto — sem mensagens quebradas
+          if (replyText.trim()) {
+            await new Promise(r => setTimeout(r, 1200));
           }
         }
 
