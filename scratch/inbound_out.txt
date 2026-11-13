@@ -1,0 +1,11 @@
+--- CHECKING INBOUND MESSAGES ---
+Found 5 recent user messages:
+[2026-11-01T16:12:19.973409+00:00] From: 244921039312 | Text: Estou Interessado
+[2026-11-01T01:48:33.414766+00:00] From: 244926915139 | Text: Estou Interessado
+[2026-10-31T21:29:30.640838+00:00] From: 244950505254 | Text: Vou chegar no vosso escritório no morro Bento ( kikajil) 
+Ru
+[2026-10-31T21:27:21.402183+00:00] From: 244950505254 | Text: Na segunda feira vou organizar tudos os documentos
+[2026-10-31T21:23:42.646881+00:00] From: 244950505254 | Text: No meu passaporte tenho 
+5 visto para Portugal 
+3 visto para
+Found 0 recent client messages:

@@ -648,6 +648,37 @@ async function processWhatsAppWebhook(body, recorder) {
         for (const statusObj of statuses) {
             const recipientPhone = normalizeMetaPhone(statusObj.recipient_id);
             const status = statusObj.status;
+            const errors = statusObj.errors;
+            console.log(`[WHATSAPP-STATUS] 📬 MsgId ${statusObj.id} para ${recipientPhone} -> status: "${status}"${errors?.length ? ' | Erros Meta: ' + JSON.stringify(errors) : ''}`);
+            recorder({
+                method: 'POST',
+                outcome: 'status_update',
+                status,
+                recipient: recipientPhone,
+                messageId: statusObj.id,
+                errors: errors || null,
+                conversation: statusObj.conversation || null,
+                pricing: statusObj.pricing || null
+            });
+            // Se a Meta reportou falha na entrega, atualiza o log da campanha
+            if (statusObj.id && status === 'failed') {
+                const errMsg = errors?.[0]?.message || errors?.[0]?.title || `Meta delivery failed (code ${errors?.[0]?.code || 'unknown'})`;
+                console.error(`[CAMPAIGN-DELIVERY] ❌ Falha na entrega de ${statusObj.id} para ${recipientPhone}: ${errMsg}`);
+                try {
+                    await supabase_1.supabaseAdmin.from('campaign_logs')
+                        .update({ status: 'failed' })
+                        .eq('message_id', statusObj.id);
+                }
+                catch (_) { }
+            }
+            else if (statusObj.id && (status === 'delivered' || status === 'read')) {
+                try {
+                    await supabase_1.supabaseAdmin.from('campaign_logs')
+                        .update({ status: 'sent' })
+                        .eq('message_id', statusObj.id);
+                }
+                catch (_) { }
+            }
             if (recipientPhone && status) {
                 try {
                     const config = await findWhatsappConfigForWebhook(statusMetadata?.phone_number_id, statusWabaId);
@@ -656,6 +687,7 @@ async function processWhatsAppWebhook(body, recorder) {
                             phone: recipientPhone,
                             messageId: statusObj.id,
                             status: status,
+                            errors: errors || null
                         });
                     }
                 }

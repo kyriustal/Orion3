@@ -1,0 +1,3 @@
+Table conversation_history: 26154 rows (err: none)
+Table campaign_logs: 1489 rows (err: none)
+Table campaigns: 20 rows (err: none)

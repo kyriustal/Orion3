@@ -1,0 +1,187 @@
+Webhook Status on Production: {
+  "status": "ok",
+  "webhookUrl": "https://orionboot.com/api/whatsapp/webhook",
+  "now": "2026-11-01T18:44:50.115Z",
+  "recentWebhookEvents": [
+    {
+      "at": "2026-11-01T18:40:54.108Z",
+      "method": "POST",
+      "outcome": "status_only_or_empty",
+      "changes": 1
+    },
+    {
+      "at": "2026-11-01T18:40:53.881Z",
+      "method": "POST",
+      "object": "whatsapp_business_account",
+      "entryId": "1168656055187167",
+      "hasMessages": false,
+      "hasStatuses": true,
+      "phoneNumberId": "1008277882367215"
+    },
+    {
+      "at": "2026-11-01T18:34:44.659Z",
+      "method": "POST",
+      "outcome": "status_only_or_empty",
+      "changes": 1
+    },
+    {
+      "at": "2026-11-01T18:34:44.457Z",
+      "method": "POST",
+      "object": "whatsapp_business_account",
+      "entryId": "1168656055187167",
+      "hasMessages": false,
+      "hasStatuses": true,
+      "phoneNumberId": "1008277882367215"
+    },
+    {
+      "at": "2026-11-01T18:34:44.026Z",
+      "method": "POST",
+      "outcome": "status_only_or_empty",
+      "changes": 1
+    },
+    {
+      "at": "2026-11-01T18:34:43.681Z",
+      "method": "POST",
+      "object": "whatsapp_business_account",
+      "entryId": "1168656055187167",
+      "hasMessages": false,
+      "hasStatuses": true,
+      "phoneNumberId": "1008277882367215"
+    },
+    {
+      "at": "2026-11-01T18:28:01.306Z",
+      "method": "POST",
+      "outcome": "status_only_or_empty",
+      "changes": 1
+    },
+    {
+      "at": "2026-11-01T18:28:01.088Z",
+      "method": "POST",
+      "object": "whatsapp_business_account",
+      "entryId": "1168656055187167",
+      "hasMessages": false,
+      "hasStatuses": true,
+      "phoneNumberId": "1008277882367215"
+    },
+    {
+      "at": "2026-11-01T18:01:35.125Z",
+      "method": "POST",
+      "outcome": "status_only_or_empty",
+      "changes": 1
+    },
+    {
+      "at": "2026-11-01T18:01:34.906Z",
+      "method": "POST",
+      "object": "whatsapp_business_account",
+      "entryId": "1168656055187167",
+      "hasMessages": false,
+      "hasStatuses": true,
+      "phoneNumberId": "1008277882367215"
+    },
+    {
+      "at": "2026-11-01T18:01:28.273Z",
+      "method": "POST",
+      "outcome": "status_only_or_empty",
+      "changes": 1
+    },
+    {
+      "at": "2026-11-01T18:01:28.060Z",
+      "method": "POST",
+      "object": "whatsapp_business_account",
+      "entryId": "1168656055187167",
+      "hasMessages": false,
+      "hasStatuses": true,
+      "phoneNumberId": "1008277882367215"
+    },
+    {
+      "at": "2026-11-01T17:58:49.353Z",
+      "method": "POST",
+      "outcome": "status_only_or_empty",
+      "changes": 1
+    },
+    {
+      "at": "2026-11-01T17:58:49.141Z",
+      "method": "POST",
+      "object": "whatsapp_business_account",
+      "entryId": "1168656055187167",
+      "hasMessages": false,
+      "hasStatuses": true,
+      "phoneNumberId": "1008277882367215"
+    },
+    {
+      "at": "2026-11-01T17:58:43.171Z",
+      "method": "POST",
+      "outcome": "status_only_or_empty",
+      "changes": 1
+    },
+    {
+      "at": "2026-11-01T17:58:42.979Z",
+      "method": "POST",
+      "object": "whatsapp_business_account",
+      "entryId": "1168656055187167",
+      "hasMessages": false,
+      "hasStatuses": true,
+      "phoneNumberId": "1008277882367215"
+    },
+    {
+      "at": "2026-11-01T17:55:05.419Z",
+      "method": "POST",
+      "outcome": "status_only_or_empty",
+      "changes": 1
+    },
+    {
+      "at": "2026-11-01T17:55:05.208Z",
+      "method": "POST",
+      "object": "whatsapp_business_account",
+      "entryId": "1168656055187167",
+      "hasMessages": false,
+      "hasStatuses": true,
+      "phoneNumberId": "1008277882367215"
+    },
+    {
+      "at": "2026-11-01T17:55:00.622Z",
+      "method": "POST",
+      "outcome": "status_only_or_empty",
+      "changes": 1
+    },
+    {
+      "at": "2026-11-01T17:55:00.424Z",
+      "method": "POST",
+      "object": "whatsapp_business_account",
+      "entryId": "1168656055187167",
+      "hasMessages": false,
+      "hasStatuses": true,
+      "phoneNumberId": "1008277882367215"
+    },
+    {
+      "at": "2026-11-01T17:54:57.175Z",
+      "method": "POST",
+      "outcome": "status_only_or_empty",
+      "changes": 1
+    },
+    {
+      "at": "2026-11-01T17:54:56.977Z",
+      "method": "POST",
+      "object": "whatsapp_business_account",
+      "entryId": "1168656055187167",
+      "hasMessages": false,
+      "hasStatuses": true,
+      "phoneNumberId": "1008277882367215"
+    },
+    {
+      "at": "2026-11-01T17:54:55.217Z",
+      "method": "POST",
+      "outcome": "status_only_or_empty",
+      "changes": 1
+    },
+    {
+      "at": "2026-11-01T17:54:55.021Z",
+      "method": "POST",
+      "object": "whatsapp_business_account",
+      "entryId": "1168656055187167",
+      "hasMessages": false,
+      "hasStatuses": true,
+      "phoneNumberId": "1008277882367215"
+    }
+  ]
+}

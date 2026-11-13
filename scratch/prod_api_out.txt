@@ -1,0 +1,25 @@
+Testing campaigns query for this org...
+Latest 3 camps: [
+  {
+    id: '310e39cd-2d4c-4bfa-938a-25ed83708ca5',
+    name: 'DV Lottery Suspensa (Teste 5)',
+    status: 'COMPLETED',
+    sent: 2,
+    failed: 0
+  },
+  {
+    id: 'b29eb6fb-1fed-4adb-9ab9-cba48817a2c4',
+    name: 'DV Lottery Suspensa (Teste 4)',
+    status: 'COMPLETED',
+    sent: 2,
+    failed: 0
+  },
+  {
+    id: '0936b2ef-35ef-4a77-8dc4-0a1dfc4161d8',
+    name: 'dv_lottery_suspenso',
+    status: 'COMPLETED',
+    sent: 2,
+    failed: 0
+  }
+]
+Org name: On Visa

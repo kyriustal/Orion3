@@ -589,4 +589,59 @@ router.post('/comment-automation', requireAuth, async (req: AuthRequest, res) =>
   }
 });
 
+// ─── POST /api/facebook/send — Envio manual pelo agente humano via Messenger ──
+router.post('/send', requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const orgId = req.user?.orgId;
+    const { recipientId, message, clientMsgId } = req.body;
+
+    if (!recipientId || !message) {
+      return res.status(400).json({ error: 'recipientId e message são obrigatórios.' });
+    }
+
+    const { data: config } = await supabaseAdmin
+      .from('facebook_config')
+      .select('page_id, page_access_token, access_token')
+      .eq('org_id', orgId)
+      .eq('is_active', true)
+      .maybeSingle();
+
+    if (!config) return res.status(404).json({ error: 'Nenhuma configuração do Facebook activa.' });
+    const accessToken = config.page_access_token || config.access_token;
+    if (!accessToken) return res.status(400).json({ error: 'Token de acesso Facebook não configurado.' });
+
+    await FacebookService.sendMessage(config.page_id, recipientId, message, accessToken);
+
+    const agentName = req.user?.name || req.user?.email?.split('@')[0] || 'Agente';
+    const metadata = { agentName, clientMsgId, platform: 'facebook' };
+
+    await supabaseAdmin.from('conversation_history').insert({
+      org_id: orgId,
+      customer_phone: recipientId,
+      sender: 'human',
+      text: message,
+      metadata,
+    });
+
+    try {
+      getIo().to(`org:${orgId}`).emit('new_message', {
+        phone: recipientId,
+        sender: 'human',
+        text: message,
+        time: new Date().toLocaleTimeString('pt-PT', { timeZone: 'Africa/Luanda', hour: '2-digit', minute: '2-digit' }),
+        timestamp: new Date().toISOString(),
+        platform: 'facebook',
+        agentName,
+        metadata,
+      });
+    } catch (_) {}
+
+    res.json({ success: true, message: 'Mensagem enviada via Messenger.' });
+  } catch (err: any) {
+    console.error('[FB SEND] Erro ao enviar mensagem manual:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;
+

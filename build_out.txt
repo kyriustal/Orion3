@@ -1,0 +1,26 @@
+
+> orion-2@1.0.0 build
+> npm run build:client && npm run build:server
+
+
+> orion-2@1.0.0 build:client
+> vite build
+
+[36mvite v5.4.21 [32mbuilding for production...[36m[39m
+transforming...
+[32m✓[39m 1897 modules transformed.
+rendering chunks...
+computing gzip size...
+[2mdist/[22m[32mindex.html                 [39m[1m[2m    1.00 kB[22m[1m[22m[2m │ gzip:   0.50 kB[22m
+[2mdist/[22m[35massets/index-ijSNmaNy.css  [39m[1m[2m  102.47 kB[22m[1m[22m[2m │ gzip:  16.15 kB[22m
+[2mdist/[22m[36massets/index-CUhxajLh.js   [39m[1m[33m1,045.01 kB[39m[22m[2m │ gzip: 281.79 kB[22m
+[33m
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.[39m
+[32m✓ built in 14.18s[39m
+
+> orion-2@1.0.0 build:server
+> tsc -p tsconfig.server.json && node -e "require('fs').writeFileSync('dist-server/package.json', '{\"type\":\"commonjs\"}')"
+

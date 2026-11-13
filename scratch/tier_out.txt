@@ -1,0 +1,16 @@
+Querying phone number limit & status...
+Phone details: {
+  display_phone_number: '+244 954 143 199',
+  messaging_limit_tier: 'TIER_250',
+  quality_rating: 'GREEN',
+  status: 'CONNECTED',
+  throughput: { level: 'STANDARD' },
+  is_official_business_account: false,
+  id: '1008277882367215'
+}
+WABA details: {
+  id: '1168656055187167',
+  name: 'On Visa',
+  account_review_status: 'APPROVED',
+  ownership_type: 'SELF'
+}

@@ -1,0 +1,3 @@
+Testing sendMediaByUrl with IMG_5650.jpeg...
+[WHATSAPP] ✅ Mídia (image: IMG_5650.jpeg) enviada para 244940402546 (msgId: wamid.HBgMMjQ0OTQwNDAyNTQ2FQIAERgSQUIwRUI4QzY0MDU3Q0FCRUI4AA==)
+Result sendMediaByUrl: wamid.HBgMMjQ0OTQwNDAyNTQ2FQIAERgSQUIwRUI4QzY0MDU3Q0FCRUI4AA==

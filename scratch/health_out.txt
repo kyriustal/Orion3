@@ -1,0 +1,39 @@
+WA Config in DB: {
+  phone_number_id: '1008277882367215',
+  waba_id: '1168656055187167',
+  app_id: undefined
+}
+
+--- 1. PHONE NUMBER DETAILS ---
+Phone details: {
+  display_phone_number: '+244 954 143 199',
+  verified_name: 'On Visa',
+  code_verification_status: 'EXPIRED',
+  quality_rating: 'GREEN',
+  status: 'CONNECTED',
+  throughput: { level: 'STANDARD' },
+  account_mode: 'LIVE',
+  id: '1008277882367215'
+}
+
+--- 2. WABA DETAILS ---
+WABA details: {
+  id: '1168656055187167',
+  name: 'On Visa',
+  currency: 'USD',
+  timezone_id: '96',
+  message_template_namespace: 'cbc1477b_d19a_4d55_bcc7_837187e433ed',
+  account_review_status: 'APPROVED'
+}
+
+--- 3. TEST SEND TEMPLATE NOW ---
+Hello World Test Result: {
+  messaging_product: 'whatsapp',
+  contacts: [ { input: '244940402546', wa_id: '244940402546' } ],
+  messages: [
+    {
+      id: 'wamid.HBgMMjQ0OTQwNDAyNTQ2FQIAERgSRTk0RDMyQTZGN0FGNzY1QUVBAA==',
+      message_status: 'accepted'
+    }
+  ]
+}

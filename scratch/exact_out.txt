@@ -1,0 +1,33 @@
+--- TEST 1: Sending dv_lottery_suspenso with variables ---
+Result dv_lottery_suspenso: {
+  "messaging_product": "whatsapp",
+  "contacts": [
+    {
+      "input": "244940402546",
+      "wa_id": "244940402546"
+    }
+  ],
+  "messages": [
+    {
+      "id": "wamid.HBgMMjQ0OTQwNDAyNTQ2FQIAERgSNTlDRjkxRjZFREEyNkU0QjE2AA==",
+      "message_status": "accepted"
+    }
+  ]
+}
+
+--- TEST 2: Sending vagas_de_emprego_na_europa_pt_lu_po_ with variables ---
+Result vagas: {
+  "messaging_product": "whatsapp",
+  "contacts": [
+    {
+      "input": "244940402546",
+      "wa_id": "244940402546"
+    }
+  ],
+  "messages": [
+    {
+      "id": "wamid.HBgMMjQ0OTQwNDAyNTQ2FQIAERgSNjExRTYwNzEyRUE1NzIwQzVCAA==",
+      "message_status": "accepted"
+    }
+  ]
+}
