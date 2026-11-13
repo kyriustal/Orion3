@@ -340,8 +340,11 @@ export async function triggerAIResponse(params: {
         }
 
         // ── Processar envio de arquivos [SEND_FILE: ID] ───────────────────────
-        // IMPORTANTE: O ficheiro é sempre enviado PRIMEIRO, depois o texto de acompanhamento.
+        // IMPORTANTE: O documento é enviado como uma mensagem isolada na Meta Media API.
+        // O texto de acompanhamento (se houver) é enviado numa segunda mensagem separada.
         const fileMatches = [...replyText.matchAll(/\[SEND_FILE:\s*([a-f0-9-]{36})\]/gi)];
+        let sentAnyFile = false;
+
         if (fileMatches.length > 0) {
           replyText = replyText.replace(/\[SEND_FILE:\s*[a-f0-9-]{36}\]/gi, '').trim();
           ptReplyText = ptReplyText.replace(/\[SEND_FILE:\s*[a-f0-9-]{36}\]/gi, '').trim();
@@ -364,7 +367,10 @@ export async function triggerAIResponse(params: {
                 phoneNumberId, 
                 accessToken
               );
-              if (sentMediaId) botSentMessages.add(sentMediaId);
+              if (sentMediaId) {
+                botSentMessages.add(sentMediaId);
+                sentAnyFile = true;
+              }
 
               const fileMsgText = `[Ficheiro: ${asset.filename}](${asset.file_url})`;
               await supabaseAdmin.from('conversation_history').insert({
@@ -399,17 +405,17 @@ export async function triggerAIResponse(params: {
             }
           }
 
-          // Aguardar 1.2s após enviar todos os ficheiros antes do texto de acompanhamento
-          // Garante que o WhatsApp entrega o documento ANTES do texto — sem mensagens quebradas
+          // Aguardar 1.5s após enviar o ficheiro antes da mensagem de texto de acompanhamento
+          // Garante que o WhatsApp entrega a mensagem do documento ANTES da mensagem de texto
           if (replyText.trim()) {
-            await new Promise(r => setTimeout(r, 1200));
+            await new Promise(r => setTimeout(r, 1500));
           }
         }
 
-        // ── Enviar Mensagem via WhatsApp ────────────────────────────────────
+        // ── Enviar Mensagem de Texto (Separada) via WhatsApp ────────────────
         sentMsgId = null;
 
-        if (isAudio && isVoiceAllowed && attempt === 1) {
+        if (isAudio && isVoiceAllowed && attempt === 1 && replyText) {
           try {
             const audioPath = await AudioService.textToSpeech(replyText);
             if (audioPath && fs.existsSync(audioPath)) {
@@ -428,10 +434,11 @@ export async function triggerAIResponse(params: {
           sentMsgId = await WhatsAppService.sendTextMessage(phoneNumberId, fromNumber, replyText, accessToken);
         }
 
-        if (sentMsgId) {
-          botSentMessages.add(sentMsgId);
+        // Se enviou texto ou enviou com sucesso pelo menos um ficheiro
+        if (sentMsgId || (sentAnyFile && !replyText)) {
+          if (sentMsgId) botSentMessages.add(sentMsgId);
           sendSuccess = true;
-          console.log(`[PROTOCOLO SEGURANÇA IA] ✅ Mensagem entregue com sucesso para ${fromNumber} na tentativa ${attempt}! ID: ${sentMsgId}`);
+          console.log(`[PROTOCOLO SEGURANÇA IA] ✅ Mensagem entregue com sucesso para ${fromNumber} na tentativa ${attempt}! ID: ${sentMsgId || 'MEDIA_ONLY'}`);
           break;
         } else {
           throw new Error('Meta API não retornou ID de mensagem entregue.');
@@ -575,29 +582,32 @@ export async function triggerAIResponse(params: {
       botMetadata.booking = true;
     }
 
-    const { error: botInsertError } = await supabaseAdmin.from('conversation_history').insert({
-      org_id: orgId,
-      customer_phone: fromNumber,
-      sender: 'bot',
-      text: ptReplyText,
-      metadata: Object.keys(botMetadata).length > 0 ? botMetadata : undefined,
-    });
-    if (botInsertError) {
-      throw new Error(`Resposta enviada, mas falhou ao gravar no histórico: ${formatDbError(botInsertError)}`);
-    }
-
-    try {
-      getIo().to(`org:${orgId}`).emit('new_message', {
-        phone:     fromNumber,
-        sender:    'bot',
-        text:      ptReplyText,
-        botName:   botName,
-        time:      new Date().toLocaleTimeString('pt-PT', { timeZone: 'Africa/Luanda', hour: '2-digit', minute: '2-digit' }),
-        timestamp: new Date().toISOString(),
-        platform:  'whatsapp',
-        metadata:  Object.keys(botMetadata).length > 0 ? botMetadata : undefined,
+    // Se houve texto enviado separadamente do ficheiro, persiste no histórico e emite evento
+    if (ptReplyText && ptReplyText.trim().length > 0) {
+      const { error: botInsertError } = await supabaseAdmin.from('conversation_history').insert({
+        org_id: orgId,
+        customer_phone: fromNumber,
+        sender: 'bot',
+        text: ptReplyText,
+        metadata: Object.keys(botMetadata).length > 0 ? botMetadata : undefined,
       });
-    } catch (_) {}
+      if (botInsertError) {
+        throw new Error(`Resposta enviada, mas falhou ao gravar no histórico: ${formatDbError(botInsertError)}`);
+      }
+
+      try {
+        getIo().to(`org:${orgId}`).emit('new_message', {
+          phone:     fromNumber,
+          sender:    'bot',
+          text:      ptReplyText,
+          botName:   botName,
+          time:      new Date().toLocaleTimeString('pt-PT', { timeZone: 'Africa/Luanda', hour: '2-digit', minute: '2-digit' }),
+          timestamp: new Date().toISOString(),
+          platform:  'whatsapp',
+          metadata:  Object.keys(botMetadata).length > 0 ? botMetadata : undefined,
+        });
+      } catch (_) {}
+    }
 
     if (aiResult?.contactData && (aiResult.contactData.name || aiResult.contactData.email)) {
       try {

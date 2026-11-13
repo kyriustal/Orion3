@@ -19,7 +19,7 @@ computing gzip size...
 - Using dynamic import() to code-split the application
 - Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
 - Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.[39m
-[32m✓ built in 14.65s[39m
+[32m✓ built in 10.30s[39m
 
 > orion-2@1.0.0 build:server
 > tsc -p tsconfig.server.json && node -e "require('fs').writeFileSync('dist-server/package.json', '{\"type\":\"commonjs\"}')"

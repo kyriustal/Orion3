@@ -286,8 +286,10 @@ async function triggerAIResponse(params) {
                     ptReplyText = await ai_service_1.AIService.translateText(replyText, 'português');
                 }
                 // ── Processar envio de arquivos [SEND_FILE: ID] ───────────────────────
-                // IMPORTANTE: O ficheiro é sempre enviado PRIMEIRO, depois o texto de acompanhamento.
+                // IMPORTANTE: O documento é enviado como uma mensagem isolada na Meta Media API.
+                // O texto de acompanhamento (se houver) é enviado numa segunda mensagem separada.
                 const fileMatches = [...replyText.matchAll(/\[SEND_FILE:\s*([a-f0-9-]{36})\]/gi)];
+                let sentAnyFile = false;
                 if (fileMatches.length > 0) {
                     replyText = replyText.replace(/\[SEND_FILE:\s*[a-f0-9-]{36}\]/gi, '').trim();
                     ptReplyText = ptReplyText.replace(/\[SEND_FILE:\s*[a-f0-9-]{36}\]/gi, '').trim();
@@ -301,8 +303,10 @@ async function triggerAIResponse(params) {
                             .single();
                         if (asset) {
                             const sentMediaId = await whatsapp_service_1.WhatsAppService.sendMediaByUrl(fromNumber, asset.file_url, asset.mime_type, asset.filename, phoneNumberId, accessToken);
-                            if (sentMediaId)
+                            if (sentMediaId) {
                                 exports.botSentMessages.add(sentMediaId);
+                                sentAnyFile = true;
+                            }
                             const fileMsgText = `[Ficheiro: ${asset.filename}](${asset.file_url})`;
                             await supabase_1.supabaseAdmin.from('conversation_history').insert({
                                 org_id: orgId,
@@ -335,15 +339,15 @@ async function triggerAIResponse(params) {
                             catch (_) { }
                         }
                     }
-                    // Aguardar 1.2s após enviar todos os ficheiros antes do texto de acompanhamento
-                    // Garante que o WhatsApp entrega o documento ANTES do texto — sem mensagens quebradas
+                    // Aguardar 1.5s após enviar o ficheiro antes da mensagem de texto de acompanhamento
+                    // Garante que o WhatsApp entrega a mensagem do documento ANTES da mensagem de texto
                     if (replyText.trim()) {
-                        await new Promise(r => setTimeout(r, 1200));
+                        await new Promise(r => setTimeout(r, 1500));
                     }
                 }
-                // ── Enviar Mensagem via WhatsApp ────────────────────────────────────
+                // ── Enviar Mensagem de Texto (Separada) via WhatsApp ────────────────
                 sentMsgId = null;
-                if (isAudio && isVoiceAllowed && attempt === 1) {
+                if (isAudio && isVoiceAllowed && attempt === 1 && replyText) {
                     try {
                         const audioPath = await audio_service_1.AudioService.textToSpeech(replyText);
                         if (audioPath && fs_1.default.existsSync(audioPath)) {
@@ -361,10 +365,12 @@ async function triggerAIResponse(params) {
                 if (!sentMsgId && replyText) {
                     sentMsgId = await whatsapp_service_1.WhatsAppService.sendTextMessage(phoneNumberId, fromNumber, replyText, accessToken);
                 }
-                if (sentMsgId) {
-                    exports.botSentMessages.add(sentMsgId);
+                // Se enviou texto ou enviou com sucesso pelo menos um ficheiro
+                if (sentMsgId || (sentAnyFile && !replyText)) {
+                    if (sentMsgId)
+                        exports.botSentMessages.add(sentMsgId);
                     sendSuccess = true;
-                    console.log(`[PROTOCOLO SEGURANÇA IA] ✅ Mensagem entregue com sucesso para ${fromNumber} na tentativa ${attempt}! ID: ${sentMsgId}`);
+                    console.log(`[PROTOCOLO SEGURANÇA IA] ✅ Mensagem entregue com sucesso para ${fromNumber} na tentativa ${attempt}! ID: ${sentMsgId || 'MEDIA_ONLY'}`);
                     break;
                 }
                 else {
@@ -496,29 +502,32 @@ async function triggerAIResponse(params) {
             botMetadata.no_show_reschedule = true;
             botMetadata.booking = true;
         }
-        const { error: botInsertError } = await supabase_1.supabaseAdmin.from('conversation_history').insert({
-            org_id: orgId,
-            customer_phone: fromNumber,
-            sender: 'bot',
-            text: ptReplyText,
-            metadata: Object.keys(botMetadata).length > 0 ? botMetadata : undefined,
-        });
-        if (botInsertError) {
-            throw new Error(`Resposta enviada, mas falhou ao gravar no histórico: ${formatDbError(botInsertError)}`);
-        }
-        try {
-            (0, socket_1.getIo)().to(`org:${orgId}`).emit('new_message', {
-                phone: fromNumber,
+        // Se houve texto enviado separadamente do ficheiro, persiste no histórico e emite evento
+        if (ptReplyText && ptReplyText.trim().length > 0) {
+            const { error: botInsertError } = await supabase_1.supabaseAdmin.from('conversation_history').insert({
+                org_id: orgId,
+                customer_phone: fromNumber,
                 sender: 'bot',
                 text: ptReplyText,
-                botName: botName,
-                time: new Date().toLocaleTimeString('pt-PT', { timeZone: 'Africa/Luanda', hour: '2-digit', minute: '2-digit' }),
-                timestamp: new Date().toISOString(),
-                platform: 'whatsapp',
                 metadata: Object.keys(botMetadata).length > 0 ? botMetadata : undefined,
             });
+            if (botInsertError) {
+                throw new Error(`Resposta enviada, mas falhou ao gravar no histórico: ${formatDbError(botInsertError)}`);
+            }
+            try {
+                (0, socket_1.getIo)().to(`org:${orgId}`).emit('new_message', {
+                    phone: fromNumber,
+                    sender: 'bot',
+                    text: ptReplyText,
+                    botName: botName,
+                    time: new Date().toLocaleTimeString('pt-PT', { timeZone: 'Africa/Luanda', hour: '2-digit', minute: '2-digit' }),
+                    timestamp: new Date().toISOString(),
+                    platform: 'whatsapp',
+                    metadata: Object.keys(botMetadata).length > 0 ? botMetadata : undefined,
+                });
+            }
+            catch (_) { }
         }
-        catch (_) { }
         if (aiResult?.contactData && (aiResult.contactData.name || aiResult.contactData.email)) {
             try {
                 const cd = aiResult.contactData;
