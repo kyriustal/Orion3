@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/src/components/ui/card';
 import { Button } from '@/src/components/ui/button';
-import { BookOpen, UploadCloud, Trash2, Loader2, FileText, FileType, AlertCircle, Plus, Download, Eye, X } from 'lucide-react';
+import { BookOpen, UploadCloud, Trash2, Loader2, FileText, FileType, AlertCircle, Plus, Download, Eye, X, Sparkles, CheckCircle2, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 
 type Doc = {
@@ -55,7 +55,8 @@ export default function KnowledgeBase() {
 
   useEffect(() => { 
     fetchDocs(); 
-    fetchAssets(); 
+    fetchAssets();
+    fetchSuggestions();
   }, []);
 
   const uploadFile = async (file: File) => {
@@ -200,6 +201,62 @@ export default function KnowledgeBase() {
   const [previewDoc, setPreviewDoc] = useState<{ filename: string; content: string } | null>(null);
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
 
+  // ── Sugestões de auto-melhoria (perguntas que a IA não soube responder) ──
+  type Suggestion = {
+    id: string;
+    question: string;
+    suggested_answer: string | null;
+    channel: string;
+    occurrences: number;
+    created_at: string;
+  };
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [editingAnswers, setEditingAnswers] = useState<Record<string, string>>({});
+  const [processingId, setProcessingId] = useState<string | null>(null);
+
+  const fetchSuggestions = async () => {
+    try {
+      const res = await fetch('/api/knowledge/suggestions?status=pending', { headers: { Authorization: `Bearer ${token()}` } });
+      const data = await res.json();
+      if (Array.isArray(data)) setSuggestions(data);
+    } catch { /* silencioso */ }
+  };
+
+  const handleApproveSuggestion = async (s: Suggestion) => {
+    setProcessingId(s.id);
+    try {
+      const res = await fetch(`/api/knowledge/suggestions/${s.id}/approve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
+        body: JSON.stringify({ finalAnswer: editingAnswers[s.id] ?? s.suggested_answer ?? '' }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Erro ao aprovar.');
+      toast.success('Adicionado à base de conhecimento! A IA já sabe responder. 🎉');
+      setSuggestions(prev => prev.filter(x => x.id !== s.id));
+      fetchDocs();
+    } catch (err: any) {
+      toast.error(err.message);
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
+  const handleRejectSuggestion = async (id: string) => {
+    setProcessingId(id);
+    try {
+      await fetch(`/api/knowledge/suggestions/${id}/reject`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token()}` },
+      });
+      setSuggestions(prev => prev.filter(x => x.id !== id));
+    } catch {
+      toast.error('Erro ao rejeitar sugestão.');
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
   const handlePreviewDoc = async (id: string, filename: string) => {
     setIsLoadingPreview(true);
     setPreviewDoc(null);
@@ -332,6 +389,62 @@ export default function KnowledgeBase() {
             </div>
           </CardContent>
         </Card>
+
+        {/* ── Sugestões de Auto-melhoria da IA ─────────────────────────── */}
+        {suggestions.length > 0 && (
+          <Card className="border-violet-200 bg-violet-50/40">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base text-violet-900">
+                <Sparkles className="w-4 h-4 text-violet-600" /> Sugestões de Auto-melhoria
+              </CardTitle>
+              <CardDescription>
+                Perguntas que a IA não soube responder. Reveja a resposta sugerida e aprove com 1 clique — o bot aprende automaticamente.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {suggestions.map(s => (
+                <div key={s.id} className="bg-white border border-violet-100 rounded-xl p-4 space-y-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-zinc-800">"{s.question}"</p>
+                      <p className="text-[11px] text-zinc-400 mt-0.5">
+                        {s.channel} · {new Date(s.created_at).toLocaleDateString('pt-PT')}
+                        {s.occurrences > 1 && <span className="ml-1 text-violet-600 font-medium">· perguntado {s.occurrences}x</span>}
+                      </p>
+                    </div>
+                  </div>
+                  <textarea
+                    value={editingAnswers[s.id] ?? s.suggested_answer ?? ''}
+                    onChange={e => setEditingAnswers(prev => ({ ...prev, [s.id]: e.target.value }))}
+                    placeholder="Escreva ou edite a resposta que a IA deve aprender..."
+                    rows={3}
+                    className="w-full text-sm rounded-md border border-input bg-background p-2.5 placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-violet-500 leading-relaxed resize-none"
+                  />
+                  <div className="flex gap-2 justify-end">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleRejectSuggestion(s.id)}
+                      disabled={processingId === s.id}
+                      className="gap-1.5 text-zinc-600"
+                    >
+                      <XCircle className="w-4 h-4" /> Rejeitar
+                    </Button>
+                    <Button
+                      size="sm"
+                      onClick={() => handleApproveSuggestion(s)}
+                      disabled={processingId === s.id}
+                      className="gap-1.5 bg-violet-600 hover:bg-violet-700"
+                    >
+                      {processingId === s.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                      Aprovar e Ensinar
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        )}
       </div>
 
       <hr className="border-zinc-100" />

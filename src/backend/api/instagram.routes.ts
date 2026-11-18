@@ -10,6 +10,8 @@ import { getIo } from '../socket';
 import { AudioService } from '../services/audio.service';
 import { EmailService } from '../services/email.service';
 import { InsightsService } from '../services/insights.service';
+import { KnowledgeSuggestionsService } from '../services/knowledge_suggestions.service';
+import { ExternalIntegrationsService } from '../services/external_integrations.service';
 import axios from 'axios';
 
 const router = Router();
@@ -313,6 +315,14 @@ export async function processInstagramWebhook(body: any) {
       await InstagramService.markSeen(igUserId, senderId, accessToken);
       await InstagramService.sendTypingIndicator(igUserId, senderId, accessToken, 'typing_on');
 
+      // Segurança: dados de sistemas externos (CRM/ERP) + protocolo de identidade
+      let aiMessageText = messageText;
+      let igVerifyReference: string | null = null;
+      try {
+        const secCtx = await ExternalIntegrationsService.buildSecurityContext(orgId, senderId);
+        if (secCtx) aiMessageText = messageText + secCtx;
+      } catch (_) {}
+
       // 6. PROTOCOLO DE SEGURANÇA E AUTO-CURA DA IA (Até 3 tentativas de recuperação)
       let aiResult: any = null;
       let sendSuccess = false;
@@ -329,7 +339,7 @@ export async function processInstagramWebhook(body: any) {
           }
 
           aiResult = await AIService.generateResponse({
-            message: messageText,
+            message: aiMessageText,
             orgId,
             history,
             botName:  botName || 'Assistente',
@@ -340,6 +350,14 @@ export async function processInstagramWebhook(body: any) {
 
           if (!aiResult?.reply) {
             throw new Error('Resposta vazia da IA no Instagram.');
+          }
+
+          // Capturar etiqueta de verificação de identidade [VERIFY: ref] (remover antes de enviar)
+          const igVerifyMatch = (aiResult.reply || '').match(/\[VERIFY:\s*([^\]]+)\]/i);
+          if (igVerifyMatch) {
+            igVerifyReference = igVerifyMatch[1].trim();
+            aiResult.reply = aiResult.reply.replace(/\[VERIFY:\s*[^\]]+\]/gi, '').trim();
+            console.log(`[SEGURANÇA IG] 🔐 Verificação de identidade solicitada para sender=${senderId}: ref "${igVerifyReference}"`);
           }
 
           // Enviar resposta via Instagram DM
@@ -407,6 +425,42 @@ export async function processInstagramWebhook(body: any) {
         }).catch(e => console.error('[ALERTA IG] Erro ao enviar email de intervenção:', e.message));
 
         continue;
+      }
+
+      // Protocolo de segurança: verificação de identidade por nº de processo/contrato
+      if (igVerifyReference) {
+        (async () => {
+          try {
+            const profile = await ExternalIntegrationsService.lookupByReference(orgId, igVerifyReference);
+            const followUpText = profile.found
+              ? `✅ Identidade confirmada! Dados do processo/contrato ${igVerifyReference}:\n\n${profile.summary}\n\nEm que mais posso ajudar?`
+              : `🔒 Não consegui validar a referência ${igVerifyReference}. Por segurança, não partilho dados sem uma referência válida. Verifique o número ou contacte a empresa directamente.`;
+
+            if (profile.found) {
+              await ExternalIntegrationsService.markVerified(orgId, senderId, igVerifyReference, profile.data?.name ? String(profile.data.name) : undefined, 'instagram');
+            }
+            await InstagramService.sendMessage(igUserId, senderId, followUpText, accessToken);
+            await supabaseAdmin.from('conversation_history').insert({
+              org_id: orgId,
+              customer_phone: senderId,
+              sender: 'bot',
+              text: followUpText,
+              metadata: { platform: 'instagram', security_verification: true, verified: profile.found, reference: igVerifyReference },
+            });
+          } catch (verifyErr: any) {
+            console.warn('[SEGURANÇA IG] Erro na verificação:', verifyErr.message);
+          }
+        })();
+      }
+
+      // Auto-melhoria: se a IA não soube responder, registar sugestão de conhecimento
+      if (aiResult?.confirm && messageText) {
+        KnowledgeSuggestionsService.recordUnansweredQuestion({
+          orgId,
+          channel: 'instagram',
+          customerPhone: senderId,
+          question: messageText,
+        });
       }
 
       // Insights: registar interação da IA com sucesso (métricas de qualidade)

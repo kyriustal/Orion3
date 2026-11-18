@@ -11,6 +11,8 @@ import { BookingService } from './booking.service';
 import { FollowupService } from './followup.service';
 import { GoogleSheetsService } from './google_sheets.service';
 import { InsightsService } from './insights.service';
+import { KnowledgeSuggestionsService } from './knowledge_suggestions.service';
+import { ExternalIntegrationsService } from './external_integrations.service';
 
 export type WebhookEventRecorder = (event: Record<string, any>) => void;
 
@@ -304,12 +306,24 @@ export async function triggerAIResponse(params: {
       console.warn('[MEMÓRIA] Erro ao carregar perfil do cliente (não crítico):', memErr.message);
     }
 
+    // ── Segurança e dados de sistemas externos (CRM / ERP / Gestão) ──
+    // Injecta perfil do cliente (se número registado/verificado) ou o protocolo
+    // de segurança (se número desconhecido) no contexto da IA.
+    let aiMessage = message;
+    try {
+      const securityContext = await ExternalIntegrationsService.buildSecurityContext(orgId, fromNumber);
+      if (securityContext) aiMessage = message + securityContext;
+    } catch (secErr: any) {
+      console.warn('[SEGURANÇA] Erro ao construir contexto de segurança (não crítico):', secErr.message);
+    }
+
     let sendSuccess = false;
     let lastErrorMsg = '';
     let aiResult: any = null;
     let ptReplyText = '';
     let replyText = '';
     let sentMsgId: string | null = null;
+    let verifyReference: string | null = null; // nº de processo/contrato para verificação de segurança
 
     // ── PROTOCOLO DE SEGURANÇA E AUTO-CURA DA IA (Até 3 tentativas de recuperação) ──
     for (let attempt = 1; attempt <= 3; attempt++) {
@@ -321,7 +335,7 @@ export async function triggerAIResponse(params: {
         }
 
         aiResult = await AIService.generateResponse({
-          message,
+          message: aiMessage,
           orgId,
           history,
           botName,
@@ -343,6 +357,18 @@ export async function triggerAIResponse(params: {
         if (detectedLanguage !== 'pt' && detectedLanguage !== 'por') {
           console.log(`[IA] Traduzindo silenciosamente a resposta de ${detectedLanguage} para PT...`);
           ptReplyText = await AIService.translateText(replyText, 'português');
+        }
+
+        // ── Capturar etiqueta de verificação de identidade [VERIFY: ref] ──────
+        // A IA emite esta etiqueta quando um número desconhecido fornece um nº de
+        // processo/contrato. A etiqueta é removida ANTES de enviar ao cliente e
+        // a verificação corre no sistema externo após o envio da resposta.
+        const verifyMatch = replyText.match(/\[VERIFY:\s*([^\]]+)\]/i);
+        if (verifyMatch) {
+          verifyReference = verifyMatch[1].trim();
+          replyText = replyText.replace(/\[VERIFY:\s*[^\]]+\]/gi, '').trim();
+          ptReplyText = ptReplyText.replace(/\[VERIFY:\s*[^\]]+\]/gi, '').trim();
+          console.log(`[SEGURANÇA] 🔐 Verificação de identidade solicitada pela IA para ${fromNumber}: ref "${verifyReference}"`);
         }
 
         // ── Processar envio de arquivos [SEND_FILE: ID] ───────────────────────
@@ -680,6 +706,16 @@ export async function triggerAIResponse(params: {
       FollowupService.cancelPendingForPhone(orgId, fromNumber).catch(() => {});
     }
 
+    // ── Auto-melhoria: se a IA não soube responder, registar sugestão de conhecimento ──
+    if (aiResult?.confirm && message) {
+      KnowledgeSuggestionsService.recordUnansweredQuestion({
+        orgId,
+        channel: 'whatsapp',
+        customerPhone: fromNumber,
+        question: message,
+      });
+    }
+
     // ── Insights: registar interação da IA com sucesso (métricas de qualidade) ──
     InsightsService.recordAIInteraction({
       orgId,
@@ -694,6 +730,54 @@ export async function triggerAIResponse(params: {
       attempts: attemptsUsed,
       responseLatencyMs: Date.now() - aiStartedAt,
     });
+
+    // ── Protocolo de segurança: verificar identidade por nº de processo/contrato ──
+    if (verifyReference) {
+      (async () => {
+        try {
+          const profile = await ExternalIntegrationsService.lookupByReference(orgId, verifyReference);
+
+          let followUpText: string;
+          if (profile.found) {
+            await ExternalIntegrationsService.markVerified(
+              orgId, fromNumber, verifyReference,
+              profile.data?.name ? String(profile.data.name) : undefined,
+              'whatsapp'
+            );
+            followUpText = `✅ Identidade confirmada! Encontrei os dados do processo/contrato ${verifyReference}:\n\n${profile.summary}\n\nEm que mais posso ajudar?`;
+          } else {
+            followUpText = `🔒 Não consegui validar a referência ${verifyReference} nos nossos sistemas. Por segurança, não posso partilhar dados de processos ou contas sem uma referência válida. Verifique o número e tente novamente, ou ligue directamente para a empresa.`;
+          }
+
+          const followUpId = await WhatsAppService.sendTextMessage(phoneNumberId, fromNumber, followUpText, accessToken);
+          if (followUpId) botSentMessages.add(followUpId);
+
+          await supabaseAdmin.from('conversation_history').insert({
+            org_id: orgId,
+            customer_phone: fromNumber,
+            sender: 'bot',
+            text: followUpText,
+            metadata: { security_verification: true, verified: profile.found, reference: verifyReference },
+          });
+
+          try {
+            getIo().to(`org:${orgId}`).emit('new_message', {
+              phone: fromNumber,
+              sender: 'bot',
+              text: followUpText,
+              botName,
+              time: new Date().toLocaleTimeString('pt-PT', { timeZone: 'Africa/Luanda', hour: '2-digit', minute: '2-digit' }),
+              timestamp: new Date().toISOString(),
+              platform: 'whatsapp',
+            });
+          } catch (_) {}
+
+          console.log(`[SEGURANÇA] ${profile.found ? '✅ Identidade verificada' : '⛔ Verificação falhada'} para ${fromNumber} (ref: ${verifyReference})`);
+        } catch (verifyErr: any) {
+          console.warn('[SEGURANÇA] Erro na verificação de identidade:', verifyErr.message);
+        }
+      })();
+    }
 
     return { ok: true, sentMsgId };
 

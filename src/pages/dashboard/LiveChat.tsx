@@ -777,6 +777,35 @@ export default function LiveChat() {
   const activePhone = activeChatId || activeChat?.phone || activeChat?.id || "";
   const isSending = isSendingMessage || isSendingFile;
 
+  // ── Copilot de IA: sugerir resposta para o atendente humano ──
+  const [isSuggesting, setIsSuggesting] = useState(false);
+
+  const handleCopilotSuggest = async () => {
+    if (!activePhone || isSuggesting) return;
+    setIsSuggesting(true);
+    try {
+      const res = await fetch("/api/copilot/suggest", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token()}` },
+        body: JSON.stringify({ phone: activePhone, platform: activePlatform, draft: message.trim() || undefined }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Erro ao gerar sugestão");
+
+      if (data.suggestion) {
+        setMessage(data.suggestion);
+        toast.success("Sugestão pronta! Revise e envie quando quiser.");
+      }
+      if (data.summary) {
+        toast.info(data.summary, { duration: 10000 });
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Falha ao gerar sugestão de resposta.");
+    } finally {
+      setIsSuggesting(false);
+    }
+  };
+
   // Plataforma do chat ativo
   const activePlatform = activeChat?.platform || 'whatsapp';
 
@@ -1472,6 +1501,17 @@ export default function LiveChat() {
                   className="shrink-0 p-2.5 h-10 w-10 border border-zinc-200 text-zinc-600 hover:bg-emerald-50 hover:text-emerald-600 hover:border-emerald-200 transition-colors rounded-lg"
                 >
                   <Camera className="w-5 h-5" />
+                </Button>
+
+                <Button
+                  type="button"
+                  onClick={handleCopilotSuggest}
+                  disabled={isSuggesting || !activePhone}
+                  variant="outline"
+                  title="Copilot IA: sugere a próxima resposta com base na conversa"
+                  className="shrink-0 p-2.5 h-10 w-10 border border-violet-200 text-violet-600 hover:bg-violet-50 hover:text-violet-700 hover:border-violet-300 transition-colors rounded-lg"
+                >
+                  {isSuggesting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Sparkles className="w-5 h-5" />}
                 </Button>
 
                 <textarea

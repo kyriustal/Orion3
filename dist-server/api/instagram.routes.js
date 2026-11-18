@@ -16,6 +16,8 @@ const socket_1 = require("../socket");
 const audio_service_1 = require("../services/audio.service");
 const email_service_1 = require("../services/email.service");
 const insights_service_1 = require("../services/insights.service");
+const knowledge_suggestions_service_1 = require("../services/knowledge_suggestions.service");
+const external_integrations_service_1 = require("../services/external_integrations.service");
 const axios_1 = __importDefault(require("axios"));
 const router = (0, express_1.Router)();
 const VERIFY_TOKEN = process.env.META_VERIFY_TOKEN || 'orion_secure_token_123';
@@ -303,6 +305,15 @@ async function processInstagramWebhook(body) {
             // 5. Mark seen + typing indicator
             await instagram_service_1.InstagramService.markSeen(igUserId, senderId, accessToken);
             await instagram_service_1.InstagramService.sendTypingIndicator(igUserId, senderId, accessToken, 'typing_on');
+            // Segurança: dados de sistemas externos (CRM/ERP) + protocolo de identidade
+            let aiMessageText = messageText;
+            let igVerifyReference = null;
+            try {
+                const secCtx = await external_integrations_service_1.ExternalIntegrationsService.buildSecurityContext(orgId, senderId);
+                if (secCtx)
+                    aiMessageText = messageText + secCtx;
+            }
+            catch (_) { }
             // 6. PROTOCOLO DE SEGURANÇA E AUTO-CURA DA IA (Até 3 tentativas de recuperação)
             let aiResult = null;
             let sendSuccess = false;
@@ -317,7 +328,7 @@ async function processInstagramWebhook(body) {
                         await new Promise(r => setTimeout(r, attempt * 1000));
                     }
                     aiResult = await ai_service_1.AIService.generateResponse({
-                        message: messageText,
+                        message: aiMessageText,
                         orgId,
                         history,
                         botName: botName || 'Assistente',
@@ -327,6 +338,13 @@ async function processInstagramWebhook(body) {
                     });
                     if (!aiResult?.reply) {
                         throw new Error('Resposta vazia da IA no Instagram.');
+                    }
+                    // Capturar etiqueta de verificação de identidade [VERIFY: ref] (remover antes de enviar)
+                    const igVerifyMatch = (aiResult.reply || '').match(/\[VERIFY:\s*([^\]]+)\]/i);
+                    if (igVerifyMatch) {
+                        igVerifyReference = igVerifyMatch[1].trim();
+                        aiResult.reply = aiResult.reply.replace(/\[VERIFY:\s*[^\]]+\]/gi, '').trim();
+                        console.log(`[SEGURANÇA IG] 🔐 Verificação de identidade solicitada para sender=${senderId}: ref "${igVerifyReference}"`);
                     }
                     // Enviar resposta via Instagram DM
                     await instagram_service_1.InstagramService.sendMessage(igUserId, senderId, aiResult.reply, accessToken);
@@ -389,6 +407,40 @@ async function processInstagramWebhook(body) {
                     platform: 'Instagram',
                 }).catch(e => console.error('[ALERTA IG] Erro ao enviar email de intervenção:', e.message));
                 continue;
+            }
+            // Protocolo de segurança: verificação de identidade por nº de processo/contrato
+            if (igVerifyReference) {
+                (async () => {
+                    try {
+                        const profile = await external_integrations_service_1.ExternalIntegrationsService.lookupByReference(orgId, igVerifyReference);
+                        const followUpText = profile.found
+                            ? `✅ Identidade confirmada! Dados do processo/contrato ${igVerifyReference}:\n\n${profile.summary}\n\nEm que mais posso ajudar?`
+                            : `🔒 Não consegui validar a referência ${igVerifyReference}. Por segurança, não partilho dados sem uma referência válida. Verifique o número ou contacte a empresa directamente.`;
+                        if (profile.found) {
+                            await external_integrations_service_1.ExternalIntegrationsService.markVerified(orgId, senderId, igVerifyReference, profile.data?.name ? String(profile.data.name) : undefined, 'instagram');
+                        }
+                        await instagram_service_1.InstagramService.sendMessage(igUserId, senderId, followUpText, accessToken);
+                        await supabase_1.supabaseAdmin.from('conversation_history').insert({
+                            org_id: orgId,
+                            customer_phone: senderId,
+                            sender: 'bot',
+                            text: followUpText,
+                            metadata: { platform: 'instagram', security_verification: true, verified: profile.found, reference: igVerifyReference },
+                        });
+                    }
+                    catch (verifyErr) {
+                        console.warn('[SEGURANÇA IG] Erro na verificação:', verifyErr.message);
+                    }
+                })();
+            }
+            // Auto-melhoria: se a IA não soube responder, registar sugestão de conhecimento
+            if (aiResult?.confirm && messageText) {
+                knowledge_suggestions_service_1.KnowledgeSuggestionsService.recordUnansweredQuestion({
+                    orgId,
+                    channel: 'instagram',
+                    customerPhone: senderId,
+                    question: messageText,
+                });
             }
             // Insights: registar interação da IA com sucesso (métricas de qualidade)
             insights_service_1.InsightsService.recordAIInteraction({

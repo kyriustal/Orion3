@@ -42,6 +42,7 @@ const supabase_1 = require("../config/supabase");
 const multer_1 = __importDefault(require("multer"));
 const axios_1 = __importDefault(require("axios"));
 const document_service_1 = require("../services/document.service");
+const knowledge_suggestions_service_1 = require("../services/knowledge_suggestions.service");
 const router = (0, express_1.Router)();
 const upload = (0, multer_1.default)({ storage: multer_1.default.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } }); // 20MB max
 // ─── GET /api/knowledge — Listar documentos da base de conhecimento ──────────
@@ -198,6 +199,55 @@ router.get('/context', auth_1.requireAuth, async (req, res) => {
             .map(d => `=== ${d.filename} ===\n${d.content}`)
             .join('\n\n');
         res.json({ content: combined, doc_count: data?.length || 0 });
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+// ─── GET /api/knowledge/suggestions — Listar sugestões de auto-melhoria ──────
+router.get('/suggestions', auth_1.requireAuth, async (req, res) => {
+    try {
+        const orgId = req.user?.orgId;
+        const status = req.query.status || 'pending';
+        const { data, error } = await supabase_1.supabaseAdmin
+            .from('knowledge_suggestions')
+            .select('*')
+            .eq('org_id', orgId)
+            .eq('status', status)
+            .order('occurrences', { ascending: false })
+            .order('created_at', { ascending: false });
+        if (error)
+            throw error;
+        res.json(data || []);
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+// ─── POST /api/knowledge/suggestions/:id/approve — Aprovar e adicionar à base ─
+router.post('/suggestions/:id/approve', auth_1.requireAuth, async (req, res) => {
+    try {
+        const orgId = req.user?.orgId;
+        const { id } = req.params;
+        const { finalAnswer } = req.body || {};
+        const result = await knowledge_suggestions_service_1.KnowledgeSuggestionsService.approve(orgId, id, finalAnswer);
+        if (!result.success)
+            return res.status(400).json({ error: result.error });
+        res.json({ message: 'Sugestão aprovada e adicionada à base de conhecimento! 🎉' });
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+// ─── POST /api/knowledge/suggestions/:id/reject — Rejeitar sugestão ──────────
+router.post('/suggestions/:id/reject', auth_1.requireAuth, async (req, res) => {
+    try {
+        const orgId = req.user?.orgId;
+        const { id } = req.params;
+        const result = await knowledge_suggestions_service_1.KnowledgeSuggestionsService.reject(orgId, id);
+        if (!result.success)
+            return res.status(400).json({ error: result.error });
+        res.json({ message: 'Sugestão rejeitada.' });
     }
     catch (err) {
         res.status(500).json({ error: err.message });

@@ -2,6 +2,7 @@ import { Router, Response } from 'express';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import { supabaseAdmin } from '../config/supabase';
 import { AIService } from '../services/ai.service';
+import { GenAITextService } from '../services/genai_text.service';
 import { BookingService } from '../services/booking.service';
 
 const router = Router();
@@ -57,6 +58,112 @@ router.post('/agent/simulate', requireAuth, async (req: AuthRequest, res: Respon
   } catch (err: any) {
     console.error('[SIMULATE] Erro:', err.message);
     res.status(500).json({ error: 'Erro na simulação', details: err.message });
+  }
+});
+
+// ─── POST /api/copilot/suggest — Copilot: sugerir resposta para o humano ─────
+router.post('/copilot/suggest', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const orgId = req.user?.orgId || req.user?.id;
+    const { phone, draft } = req.body || {};
+
+    if (!orgId || !phone) {
+      return res.status(400).json({ error: 'Organização e telefone do cliente são obrigatórios.' });
+    }
+
+    const phoneVariants = [phone, `+${String(phone).replace(/\D/g, '')}`];
+
+    // Últimas 30 mensagens da conversa
+    const { data: historyRows } = await supabaseAdmin
+      .from('conversation_history')
+      .select('sender, text, created_at')
+      .eq('org_id', orgId)
+      .in('customer_phone', phoneVariants)
+      .order('created_at', { ascending: false })
+      .limit(30);
+
+    const history = (historyRows || []).reverse();
+    if (history.length === 0) {
+      return res.status(400).json({ error: 'Sem histórico de conversa para este cliente.' });
+    }
+
+    // Contexto da empresa
+    const { data: org } = await supabaseAdmin
+      .from('organizations')
+      .select('name, product_description, chatbot_name')
+      .eq('id', orgId)
+      .maybeSingle();
+
+    const { data: contact } = await supabaseAdmin
+      .from('contacts')
+      .select('name')
+      .eq('org_id', orgId)
+      .in('phone', phoneVariants)
+      .maybeSingle();
+
+    const transcript = history
+      .map(h => `${h.sender === 'user' ? 'CLIENTE' : h.sender === 'human' ? 'ATENDENTE' : 'BOT'}: ${h.text}`)
+      .join('\n');
+
+    const suggestion = await GenAITextService.generate(
+      `Conversa até agora:\n${transcript}\n\n${draft ? `O atendente começou a escrever: "${draft}"\n\nComplete/melhore este rascunho como resposta ao cliente.` : 'Sugira a próxima resposta que o atendente humano deve enviar ao cliente.'}\n\nResponda APENAS com o texto da mensagem sugerida (sem aspas, sem explicações).`,
+      {
+        system: `És um copilot de atendimento ao cliente da empresa "${org?.name || 'Empresa'}". ${org?.product_description ? `Sobre a empresa: ${org.product_description}` : ''} O cliente chama-se ${contact?.name || 'Cliente'}. Escreve respostas naturais, profissionais e empáticas, na mesma língua do cliente.`,
+        temperature: 0.6,
+        maxOutputTokens: 500,
+      }
+    );
+
+    // Resumo da conversa em paralelo lógico (segunda chamada leve)
+    const summary = await GenAITextService.generate(
+      `Resume esta conversa de atendimento em 2-3 linhas curtas (assunto, estado emocional do cliente, o que falta resolver):\n\n${transcript}`,
+      { temperature: 0.3, maxOutputTokens: 200 }
+    ).catch(() => '');
+
+    res.json({ suggestion, summary, customerName: contact?.name || null });
+  } catch (err: any) {
+    console.error('[COPILOT] Erro:', err.message);
+    res.status(500).json({ error: 'Erro ao gerar sugestão', details: err.message });
+  }
+});
+
+// ─── POST /api/agent/persona-message — Gerar mensagem de cliente sintético ────
+// Usado na página Simulação: a IA faz o papel de um cliente difícil para treinar
+// e testar o bot antes de mexer nos prompts em produção.
+const SIMULATION_PERSONAS: Record<string, string> = {
+  agressivo:  'És um cliente IRRITADO e impaciente. Reclamas de um atraso/problema, usas tom exigente e frustrado (mas sem insultos graves). Respostas curtas e ríspidas.',
+  confuso:    'És um cliente CONFUSO que não percebe tecnologia. Fazes perguntas desorganizadas, misturas assuntos, escreves com erros e mudas de ideias a meio.',
+  apressado:  'És um cliente com MUITA PRESSA. Queres tudo para ontem, escreves mensagens curtas e diretas, e ficas irritado se o bot enrolar.',
+  cetico:     'És um cliente CÉTICO e desconfiado. Questionas preços, pedes provas, comparas com a concorrência e duvidas das promessas do bot.',
+  indeciso:   'És um cliente INDECISO. Interessa-te pelo serviço mas nunca decides, fazes perguntas em círculos e pedes sempre "mais um desconto".',
+};
+
+router.post('/agent/persona-message', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const { persona = 'confuso', history = [] } = req.body || {};
+
+    const personaPrompt = SIMULATION_PERSONAS[persona] || SIMULATION_PERSONAS.confuso;
+
+    const transcript = (history as any[])
+      .slice(-20)
+      .map(h => `${h.sender === 'user' ? 'CLIENTE (tu)' : 'EMPRESA'}: ${h.text}`)
+      .join('\n');
+
+    const message = await GenAITextService.generate(
+      transcript
+        ? `Conversa até agora:\n${transcript}\n\nEscreve a PRÓXIMA mensagem do cliente (tu), dando continuidade natural à conversa.`
+        : 'Inicia a conversa como este cliente, com a tua primeira mensagem à empresa.',
+      {
+        system: `${personaPrompt}\n\nEstás a falar com o assistente virtual de uma empresa no WhatsApp. Escreve APENAS a mensagem do cliente, curta e realista (máx. 2-3 frases), em português.`,
+        temperature: 0.9,
+        maxOutputTokens: 200,
+      }
+    );
+
+    res.json({ message, persona });
+  } catch (err: any) {
+    console.error('[PERSONA] Erro:', err.message);
+    res.status(500).json({ error: 'Erro ao gerar mensagem do cliente', details: err.message });
   }
 });
 

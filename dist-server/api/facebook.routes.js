@@ -16,6 +16,8 @@ const google_sheets_service_1 = require("../services/google_sheets.service");
 const socket_1 = require("../socket");
 const audio_service_1 = require("../services/audio.service");
 const insights_service_1 = require("../services/insights.service");
+const knowledge_suggestions_service_1 = require("../services/knowledge_suggestions.service");
+const external_integrations_service_1 = require("../services/external_integrations.service");
 const instagram_routes_1 = require("./instagram.routes");
 const axios_1 = __importDefault(require("axios"));
 const router = (0, express_1.Router)();
@@ -358,6 +360,15 @@ router.post('/webhook', async (req, res) => {
                 // 4. Marcar visto e indicador de digitação
                 facebook_service_1.FacebookService.markSeen(pageId, senderId, accessToken).catch(() => { });
                 facebook_service_1.FacebookService.sendTypingIndicator(pageId, senderId, accessToken, 'typing_on').catch(() => { });
+                // Segurança: dados de sistemas externos (CRM/ERP) + protocolo de identidade
+                let aiMessageText = userText || '';
+                let fbVerifyReference = null;
+                try {
+                    const secCtx = await external_integrations_service_1.ExternalIntegrationsService.buildSecurityContext(orgId, senderId);
+                    if (secCtx)
+                        aiMessageText = (userText || '') + secCtx;
+                }
+                catch (_) { }
                 // 5. PROTOCOLO DE SEGURANÇA E AUTO-CURA DA IA (Até 3 tentativas de recuperação)
                 let aiResult = null;
                 let sendSuccess = false;
@@ -372,7 +383,7 @@ router.post('/webhook', async (req, res) => {
                             await new Promise(r => setTimeout(r, attempt * 1000));
                         }
                         aiResult = await ai_service_1.AIService.generateResponse({
-                            message: userText || '',
+                            message: aiMessageText,
                             orgId,
                             history,
                             botName: botName || 'Assistente',
@@ -383,6 +394,13 @@ router.post('/webhook', async (req, res) => {
                         console.log(`[FB WEBHOOK] 🤖 IA respondeu (tentativa ${attempt}): "${(aiResult?.reply || '').substring(0, 100)}"`);
                         if (!aiResult?.reply) {
                             throw new Error('Resposta vazia gerada pela IA para o Facebook.');
+                        }
+                        // Capturar etiqueta de verificação de identidade [VERIFY: ref] (remover antes de enviar)
+                        const fbVerifyMatch = (aiResult.reply || '').match(/\[VERIFY:\s*([^\]]+)\]/i);
+                        if (fbVerifyMatch) {
+                            fbVerifyReference = fbVerifyMatch[1].trim();
+                            aiResult.reply = aiResult.reply.replace(/\[VERIFY:\s*[^\]]+\]/gi, '').trim();
+                            console.log(`[SEGURANÇA FB] 🔐 Verificação de identidade solicitada para sender=${senderId}: ref "${fbVerifyReference}"`);
                         }
                         // Enviar resposta via Facebook Graph API (lança erro se a Meta rejeitar)
                         await facebook_service_1.FacebookService.sendMessage(pageId, senderId, aiResult.reply, accessToken);
@@ -443,6 +461,40 @@ router.post('/webhook', async (req, res) => {
                         platform: 'Facebook',
                     }).catch(e => console.error('[ALERTA FB] Erro ao enviar email de intervenção:', e.message));
                     continue;
+                }
+                // Protocolo de segurança: verificação de identidade por nº de processo/contrato
+                if (fbVerifyReference) {
+                    (async () => {
+                        try {
+                            const profile = await external_integrations_service_1.ExternalIntegrationsService.lookupByReference(orgId, fbVerifyReference);
+                            const followUpText = profile.found
+                                ? `✅ Identidade confirmada! Dados do processo/contrato ${fbVerifyReference}:\n\n${profile.summary}\n\nEm que mais posso ajudar?`
+                                : `🔒 Não consegui validar a referência ${fbVerifyReference}. Por segurança, não partilho dados sem uma referência válida. Verifique o número ou contacte a empresa directamente.`;
+                            if (profile.found) {
+                                await external_integrations_service_1.ExternalIntegrationsService.markVerified(orgId, senderId, fbVerifyReference, profile.data?.name ? String(profile.data.name) : undefined, 'facebook');
+                            }
+                            await facebook_service_1.FacebookService.sendMessage(pageId, senderId, followUpText, accessToken);
+                            await supabase_1.supabaseAdmin.from('conversation_history').insert({
+                                org_id: orgId,
+                                customer_phone: senderId,
+                                sender: 'bot',
+                                text: followUpText,
+                                metadata: { platform: 'facebook', security_verification: true, verified: profile.found, reference: fbVerifyReference },
+                            });
+                        }
+                        catch (verifyErr) {
+                            console.warn('[SEGURANÇA FB] Erro na verificação:', verifyErr.message);
+                        }
+                    })();
+                }
+                // Auto-melhoria: se a IA não soube responder, registar sugestão de conhecimento
+                if (aiResult?.confirm && userText) {
+                    knowledge_suggestions_service_1.KnowledgeSuggestionsService.recordUnansweredQuestion({
+                        orgId,
+                        channel: 'facebook',
+                        customerPhone: senderId,
+                        question: userText,
+                    });
                 }
                 // Insights: registar interação da IA com sucesso (métricas de qualidade)
                 insights_service_1.InsightsService.recordAIInteraction({

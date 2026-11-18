@@ -42,6 +42,7 @@ const express_1 = require("express");
 const supabase_1 = require("../config/supabase");
 const auth_1 = require("../middleware/auth");
 const whatsapp_service_1 = require("../services/whatsapp.service");
+const genai_text_service_1 = require("../services/genai_text.service");
 const socket_1 = require("../socket");
 const multer_1 = __importDefault(require("multer"));
 const XLSX = __importStar(require("xlsx"));
@@ -351,7 +352,32 @@ async function processCampaign(campaignId, orgId) {
                 continue;
             }
             // Resolução inteligente e precisa das variáveis para este contato específico
-            const { variablesForMeta, renderedText } = whatsapp_service_1.WhatsAppService.resolveVariables(templateContent, campaign.template_variables || {}, contact, companyName);
+            const { variablesForMeta, renderedText: baseRenderedText } = whatsapp_service_1.WhatsAppService.resolveVariables(templateContent, campaign.template_variables || {}, contact, companyName);
+            // ── Personalização 1:1 com IA — reescreve a mensagem por contato ──
+            let renderedText = baseRenderedText;
+            if (campaign.filters?.personalize_ai && baseRenderedText) {
+                try {
+                    // Últimas mensagens do cliente para contexto de personalização
+                    const { data: recentMsgs } = await supabase_1.supabaseAdmin
+                        .from('conversation_history')
+                        .select('sender, text')
+                        .eq('org_id', orgId)
+                        .in('customer_phone', [normalizedTargetPhone, `+${normalizedTargetPhone}`, contact.phone])
+                        .order('created_at', { ascending: false })
+                        .limit(4);
+                    const contextSnippet = (recentMsgs || [])
+                        .reverse()
+                        .map(m => `${m.sender === 'user' ? 'Cliente' : 'Empresa'}: ${(m.text || '').substring(0, 150)}`)
+                        .join('\n');
+                    const personalized = await genai_text_service_1.GenAITextService.generate(`Reescreve esta mensagem de campanha de forma ÚNICA e pessoal para o cliente "${contact.name || 'Cliente'}"${contextSnippet ? `, tendo em conta o histórico recente:\n${contextSnippet}\n` : '.'}\n\nMensagem original da campanha:\n"${baseRenderedText}"\n\nRegras: mantém o objetivo e a oferta da campanha, usa o nome do cliente, soa a conversa individual (não a spam), máximo 4 frases. Responde APENAS com a mensagem final.`, { temperature: 0.85, maxOutputTokens: 400 });
+                    if (personalized && personalized.trim().length > 10) {
+                        renderedText = personalized.trim();
+                    }
+                }
+                catch (pErr) {
+                    console.warn(`[CAMPAIGN 1:1] Falha na personalização para ${contact.phone}, a usar texto base: ${pErr.message}`);
+                }
+            }
             // Obter informações de mídia anexada à campanha (se houver)
             const campaignMedia = campaign.filters?.media || (campaign.media_url ? {
                 url: campaign.media_url,
@@ -553,7 +579,7 @@ async function processCampaign(campaignId, orgId) {
 router.post('/send', auth_1.requireAuth, async (req, res) => {
     try {
         const orgId = req.user.orgId;
-        const { name, template, template_variables, buttons, audience, filters, delay_seconds, contact_ids, target_phones, exclude_phones, scheduled_at } = req.body;
+        const { name, template, template_variables, buttons, audience, filters, delay_seconds, contact_ids, target_phones, exclude_phones, scheduled_at, personalize_ai } = req.body;
         if (!name || !template) {
             return res.status(400).json({ error: 'Nome e template são obrigatórios.' });
         }
@@ -584,6 +610,7 @@ router.post('/send', auth_1.requireAuth, async (req, res) => {
             target_phones: Array.isArray(target_phones) ? target_phones.filter(Boolean) : [],
             exclude_phones: Array.isArray(exclude_phones) ? exclude_phones.filter(Boolean) : [],
             scheduled_at: scheduledDateIso,
+            personalize_ai: personalize_ai === true,
             media: mediaParam,
             media_url: mediaParam?.url || null,
             media_type: mediaParam?.type || null,

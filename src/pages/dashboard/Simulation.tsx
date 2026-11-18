@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/src/components/ui/card';
 import { Button } from '@/src/components/ui/button';
 import { Input } from '@/src/components/ui/input';
-import { Bot, Send, RefreshCw, Loader2, User, Sparkles, RotateCcw, Info } from 'lucide-react';
+import { Bot, Send, RefreshCw, Loader2, User, Sparkles, RotateCcw, Info, Drama } from 'lucide-react';
 import { toast } from 'sonner';
 import ReactMarkdown from 'react-markdown';
 
@@ -20,7 +20,17 @@ export default function Simulation() {
   const [isTyping, setIsTyping] = useState(false);
   const [orgName, setOrgName]   = useState('');
   const [botName, setBotName]   = useState('Assistente');
+  const [persona, setPersona]   = useState('confuso');
+  const [isGeneratingPersona, setIsGeneratingPersona] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const PERSONAS = [
+    { value: 'agressivo', label: '😠 Agressivo' },
+    { value: 'confuso',   label: '😕 Confuso' },
+    { value: 'apressado', label: '⏱️ Apressado' },
+    { value: 'cetico',    label: '🤨 Cético' },
+    { value: 'indeciso',  label: '🤔 Indeciso' },
+  ];
 
   useEffect(() => {
     // Carregar nome da organização e bot
@@ -48,17 +58,18 @@ export default function Simulation() {
 
   const now = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-  const handleSend = async () => {
-    if (!input.trim() || isTyping) return;
+  const handleSend = async (overrideMessage?: string) => {
+    const textToSend = (overrideMessage ?? input).trim();
+    if (!textToSend || isTyping) return;
 
     const userMsg: Message = {
       id: Date.now(),
       sender: 'user',
-      text: input.trim(),
+      text: textToSend,
       time: now(),
     };
 
-    const currentInput = input.trim();
+    const currentInput = textToSend;
     setInput('');
     setMessages(prev => [...prev, userMsg]);
     setIsTyping(true);
@@ -101,6 +112,32 @@ export default function Simulation() {
       }]);
     } finally {
       setIsTyping(false);
+    }
+  };
+
+  const handlePersonaMessage = async () => {
+    if (isGeneratingPersona || isTyping) return;
+    setIsGeneratingPersona(true);
+    try {
+      const token = localStorage.getItem('token');
+      const history = messages
+        .filter(m => !m.isThinking)
+        .map(m => ({ sender: m.sender === 'user' ? 'user' : 'bot', text: m.text }));
+
+      const res = await fetch('/api/agent/persona-message', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ persona, history }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.details || data.error || 'Erro ao gerar cliente');
+
+      // Envia a mensagem gerada como se o cliente a tivesse escrito
+      await handleSend(data.message);
+    } catch (err: any) {
+      toast.error(err.message);
+    } finally {
+      setIsGeneratingPersona(false);
     }
   };
 
@@ -207,7 +244,31 @@ export default function Simulation() {
           <div ref={messagesEndRef} />
         </CardContent>
 
-        <div className="p-4 border-t border-zinc-100 bg-white">
+        <div className="p-4 border-t border-zinc-100 bg-white space-y-2">
+          {/* Personas de clientes difíceis para treinar o bot */}
+          <div className="flex items-center gap-2">
+            <Drama className="w-4 h-4 text-violet-500 shrink-0" />
+            <select
+              value={persona}
+              onChange={e => setPersona(e.target.value)}
+              className="h-8 rounded-md border border-input bg-background px-2 text-xs focus:outline-none focus:ring-1 focus:ring-violet-500"
+            >
+              {PERSONAS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
+            </select>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handlePersonaMessage}
+              disabled={isGeneratingPersona || isTyping}
+              className="h-8 text-xs gap-1.5 text-violet-700 border-violet-200 hover:bg-violet-50"
+            >
+              {isGeneratingPersona ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+              Cliente sintético escreve
+            </Button>
+            <span className="text-[10px] text-zinc-400 hidden sm:inline">Teste o bot contra clientes difíceis gerados por IA</span>
+          </div>
+
           <div className="flex gap-2">
             <Input
               value={input}
@@ -217,7 +278,7 @@ export default function Simulation() {
               disabled={isTyping}
               className="flex-1"
             />
-            <Button onClick={handleSend} disabled={!input.trim() || isTyping} className="shrink-0 bg-emerald-600 hover:bg-emerald-700">
+            <Button onClick={() => handleSend()} disabled={!input.trim() || isTyping} className="shrink-0 bg-emerald-600 hover:bg-emerald-700">
               {isTyping ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
             </Button>
           </div>

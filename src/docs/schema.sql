@@ -513,3 +513,83 @@ CREATE INDEX IF NOT EXISTS idx_ai_interactions_customer ON ai_interactions(org_i
 ALTER TABLE ai_interactions ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "service_role_ai_interactions" ON ai_interactions;
 CREATE POLICY "service_role_ai_interactions" ON ai_interactions FOR ALL USING (true) WITH CHECK (true);
+
+-- ------------------------------------------------------------------------------
+-- 24. EXTERNAL_INTEGRATIONS (Conector genérico de APIs — CRM, ERP, etc.)
+-- ------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS external_integrations (
+  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id           UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  name             TEXT NOT NULL,
+  description      TEXT,
+  base_url         TEXT NOT NULL,
+  auth_type        TEXT NOT NULL DEFAULT 'none', -- 'none' | 'bearer' | 'header' | 'basic' | 'query'
+  auth_config      JSONB DEFAULT '{}'::jsonb,
+  endpoints        JSONB DEFAULT '{}'::jsonb,    -- lookup_by_phone / lookup_by_reference com {{phone}} {{reference}}
+  field_mapping    JSONB DEFAULT '{}'::jsonb,    -- dot-notation: { name: 'data.nome', ... }
+  summary_template TEXT,
+  is_active        BOOLEAN NOT NULL DEFAULT TRUE,
+  timeout_ms       INT NOT NULL DEFAULT 10000,
+  created_at       TIMESTAMPTZ DEFAULT NOW(),
+  updated_at       TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_external_integrations_org ON external_integrations(org_id, is_active);
+
+DROP TRIGGER IF EXISTS set_external_integrations_timestamp ON external_integrations;
+CREATE TRIGGER set_external_integrations_timestamp
+BEFORE UPDATE ON external_integrations
+FOR EACH ROW EXECUTE FUNCTION trigger_set_timestamp();
+
+ALTER TABLE external_integrations ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "service_role_external_integrations" ON external_integrations;
+CREATE POLICY "service_role_external_integrations" ON external_integrations FOR ALL USING (true) WITH CHECK (true);
+
+-- ------------------------------------------------------------------------------
+-- 25. VERIFIED_IDENTITIES (Protocolo de segurança — identidades verificadas)
+-- ------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS verified_identities (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id        UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  phone         TEXT NOT NULL,
+  reference     TEXT NOT NULL,
+  customer_name TEXT,
+  channel       TEXT DEFAULT 'whatsapp',
+  verified_at   TIMESTAMPTZ DEFAULT NOW(),
+  expires_at    TIMESTAMPTZ DEFAULT NOW() + INTERVAL '30 days',
+  UNIQUE (org_id, phone)
+);
+
+CREATE INDEX IF NOT EXISTS idx_verified_identities_phone ON verified_identities(org_id, phone);
+
+ALTER TABLE verified_identities ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "service_role_verified_identities" ON verified_identities;
+CREATE POLICY "service_role_verified_identities" ON verified_identities FOR ALL USING (true) WITH CHECK (true);
+
+-- ------------------------------------------------------------------------------
+-- 26. KNOWLEDGE_SUGGESTIONS (Auto-melhoria da base de conhecimento)
+-- ------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS knowledge_suggestions (
+  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id           UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  question         TEXT NOT NULL,
+  suggested_answer TEXT,
+  status           TEXT NOT NULL DEFAULT 'pending', -- 'pending' | 'approved' | 'rejected'
+  channel          TEXT DEFAULT 'whatsapp',
+  customer_phone   TEXT,
+  occurrences      INT NOT NULL DEFAULT 1,
+  created_at       TIMESTAMPTZ DEFAULT NOW(),
+  updated_at       TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_knowledge_suggestions_org_status ON knowledge_suggestions(org_id, status);
+CREATE INDEX IF NOT EXISTS idx_knowledge_suggestions_created ON knowledge_suggestions(org_id, created_at DESC);
+
+DROP TRIGGER IF EXISTS set_knowledge_suggestions_timestamp ON knowledge_suggestions;
+CREATE TRIGGER set_knowledge_suggestions_timestamp
+BEFORE UPDATE ON knowledge_suggestions
+FOR EACH ROW EXECUTE FUNCTION trigger_set_timestamp();
+
+ALTER TABLE knowledge_suggestions ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "service_role_knowledge_suggestions" ON knowledge_suggestions;
+CREATE POLICY "service_role_knowledge_suggestions" ON knowledge_suggestions FOR ALL USING (true) WITH CHECK (true);

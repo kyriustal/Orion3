@@ -11,6 +11,8 @@ import { GoogleSheetsService } from '../services/google_sheets.service';
 import { getIo } from '../socket';
 import { AudioService } from '../services/audio.service';
 import { InsightsService } from '../services/insights.service';
+import { KnowledgeSuggestionsService } from '../services/knowledge_suggestions.service';
+import { ExternalIntegrationsService } from '../services/external_integrations.service';
 import { processInstagramWebhook } from './instagram.routes';
 import axios from 'axios';
 
@@ -382,6 +384,14 @@ router.post('/webhook', async (req, res) => {
         FacebookService.markSeen(pageId, senderId, accessToken).catch(() => {});
         FacebookService.sendTypingIndicator(pageId, senderId, accessToken, 'typing_on').catch(() => {});
 
+        // Segurança: dados de sistemas externos (CRM/ERP) + protocolo de identidade
+        let aiMessageText = userText || '';
+        let fbVerifyReference: string | null = null;
+        try {
+          const secCtx = await ExternalIntegrationsService.buildSecurityContext(orgId, senderId);
+          if (secCtx) aiMessageText = (userText || '') + secCtx;
+        } catch (_) {}
+
         // 5. PROTOCOLO DE SEGURANÇA E AUTO-CURA DA IA (Até 3 tentativas de recuperação)
         let aiResult: any = null;
         let sendSuccess = false;
@@ -398,7 +408,7 @@ router.post('/webhook', async (req, res) => {
             }
 
             aiResult = await AIService.generateResponse({
-              message: userText || '',
+              message: aiMessageText,
               orgId,
               history,
               botName: botName || 'Assistente',
@@ -411,6 +421,14 @@ router.post('/webhook', async (req, res) => {
 
             if (!aiResult?.reply) {
               throw new Error('Resposta vazia gerada pela IA para o Facebook.');
+            }
+
+            // Capturar etiqueta de verificação de identidade [VERIFY: ref] (remover antes de enviar)
+            const fbVerifyMatch = (aiResult.reply || '').match(/\[VERIFY:\s*([^\]]+)\]/i);
+            if (fbVerifyMatch) {
+              fbVerifyReference = fbVerifyMatch[1].trim();
+              aiResult.reply = aiResult.reply.replace(/\[VERIFY:\s*[^\]]+\]/gi, '').trim();
+              console.log(`[SEGURANÇA FB] 🔐 Verificação de identidade solicitada para sender=${senderId}: ref "${fbVerifyReference}"`);
             }
 
             // Enviar resposta via Facebook Graph API (lança erro se a Meta rejeitar)
@@ -476,6 +494,42 @@ router.post('/webhook', async (req, res) => {
           }).catch(e => console.error('[ALERTA FB] Erro ao enviar email de intervenção:', e.message));
 
           continue;
+        }
+
+        // Protocolo de segurança: verificação de identidade por nº de processo/contrato
+        if (fbVerifyReference) {
+          (async () => {
+            try {
+              const profile = await ExternalIntegrationsService.lookupByReference(orgId, fbVerifyReference);
+              const followUpText = profile.found
+                ? `✅ Identidade confirmada! Dados do processo/contrato ${fbVerifyReference}:\n\n${profile.summary}\n\nEm que mais posso ajudar?`
+                : `🔒 Não consegui validar a referência ${fbVerifyReference}. Por segurança, não partilho dados sem uma referência válida. Verifique o número ou contacte a empresa directamente.`;
+
+              if (profile.found) {
+                await ExternalIntegrationsService.markVerified(orgId, senderId, fbVerifyReference, profile.data?.name ? String(profile.data.name) : undefined, 'facebook');
+              }
+              await FacebookService.sendMessage(pageId, senderId, followUpText, accessToken);
+              await supabaseAdmin.from('conversation_history').insert({
+                org_id: orgId,
+                customer_phone: senderId,
+                sender: 'bot',
+                text: followUpText,
+                metadata: { platform: 'facebook', security_verification: true, verified: profile.found, reference: fbVerifyReference },
+              });
+            } catch (verifyErr: any) {
+              console.warn('[SEGURANÇA FB] Erro na verificação:', verifyErr.message);
+            }
+          })();
+        }
+
+        // Auto-melhoria: se a IA não soube responder, registar sugestão de conhecimento
+        if (aiResult?.confirm && userText) {
+          KnowledgeSuggestionsService.recordUnansweredQuestion({
+            orgId,
+            channel: 'facebook',
+            customerPhone: senderId,
+            question: userText,
+          });
         }
 
         // Insights: registar interação da IA com sucesso (métricas de qualidade)

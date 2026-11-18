@@ -1,5 +1,5 @@
 import { Outlet, Link, useLocation } from 'react-router-dom';
-import { Bot, Smartphone, LayoutDashboard, BookOpen, MessageSquare, CreditCard, Settings, Megaphone, Users, BarChart, LogOut, UserCircle, PlayCircle, Menu, X, Zap, Instagram } from 'lucide-react';
+import { Bot, Smartphone, LayoutDashboard, BookOpen, MessageSquare, CreditCard, Settings, Megaphone, Users, BarChart, LogOut, UserCircle, PlayCircle, Menu, X, Zap, Instagram, Plug } from 'lucide-react';
 import { PageTransition } from '@/src/components/ui/PageTransition';
 import { useState, useEffect } from 'react';
 import { io } from 'socket.io-client';
@@ -22,6 +22,7 @@ const navItems = [
   { name: 'Facebook Messenger',   path: '/dashboard/facebook',    icon: Smartphone },
   { name: 'Instagram Direct',     path: '/dashboard/instagram',   icon: Instagram },
   { name: 'Base de Conhecimento', path: '/dashboard/knowledge',   icon: BookOpen },
+  { name: 'Conexões (APIs)',      path: '/dashboard/api-connections', icon: Plug, isNew: true },
   { name: 'Campanhas',            path: '/dashboard/campaigns',   icon: Megaphone },
   { name: 'Automações',           path: '/dashboard/automations', icon: Zap },
   { name: 'Templates (HSM)', path: '/dashboard/templates', icon: MessageSquare },

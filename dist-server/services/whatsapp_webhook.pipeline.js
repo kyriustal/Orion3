@@ -24,6 +24,8 @@ const booking_service_1 = require("./booking.service");
 const followup_service_1 = require("./followup.service");
 const google_sheets_service_1 = require("./google_sheets.service");
 const insights_service_1 = require("./insights.service");
+const knowledge_suggestions_service_1 = require("./knowledge_suggestions.service");
+const external_integrations_service_1 = require("./external_integrations.service");
 // ─── Controlo de estado em memória ────────────────────────────────────────────
 /** Dedup — IDs de mensagens já processadas (limpa a cada 10 min) */
 exports.processedMessages = new Set();
@@ -255,12 +257,25 @@ async function triggerAIResponse(params) {
         catch (memErr) {
             console.warn('[MEMÓRIA] Erro ao carregar perfil do cliente (não crítico):', memErr.message);
         }
+        // ── Segurança e dados de sistemas externos (CRM / ERP / Gestão) ──
+        // Injecta perfil do cliente (se número registado/verificado) ou o protocolo
+        // de segurança (se número desconhecido) no contexto da IA.
+        let aiMessage = message;
+        try {
+            const securityContext = await external_integrations_service_1.ExternalIntegrationsService.buildSecurityContext(orgId, fromNumber);
+            if (securityContext)
+                aiMessage = message + securityContext;
+        }
+        catch (secErr) {
+            console.warn('[SEGURANÇA] Erro ao construir contexto de segurança (não crítico):', secErr.message);
+        }
         let sendSuccess = false;
         let lastErrorMsg = '';
         let aiResult = null;
         let ptReplyText = '';
         let replyText = '';
         let sentMsgId = null;
+        let verifyReference = null; // nº de processo/contrato para verificação de segurança
         // ── PROTOCOLO DE SEGURANÇA E AUTO-CURA DA IA (Até 3 tentativas de recuperação) ──
         for (let attempt = 1; attempt <= 3; attempt++) {
             try {
@@ -270,7 +285,7 @@ async function triggerAIResponse(params) {
                     await new Promise(r => setTimeout(r, attempt * 1000));
                 }
                 aiResult = await ai_service_1.AIService.generateResponse({
-                    message,
+                    message: aiMessage,
                     orgId,
                     history,
                     botName,
@@ -289,6 +304,17 @@ async function triggerAIResponse(params) {
                 if (detectedLanguage !== 'pt' && detectedLanguage !== 'por') {
                     console.log(`[IA] Traduzindo silenciosamente a resposta de ${detectedLanguage} para PT...`);
                     ptReplyText = await ai_service_1.AIService.translateText(replyText, 'português');
+                }
+                // ── Capturar etiqueta de verificação de identidade [VERIFY: ref] ──────
+                // A IA emite esta etiqueta quando um número desconhecido fornece um nº de
+                // processo/contrato. A etiqueta é removida ANTES de enviar ao cliente e
+                // a verificação corre no sistema externo após o envio da resposta.
+                const verifyMatch = replyText.match(/\[VERIFY:\s*([^\]]+)\]/i);
+                if (verifyMatch) {
+                    verifyReference = verifyMatch[1].trim();
+                    replyText = replyText.replace(/\[VERIFY:\s*[^\]]+\]/gi, '').trim();
+                    ptReplyText = ptReplyText.replace(/\[VERIFY:\s*[^\]]+\]/gi, '').trim();
+                    console.log(`[SEGURANÇA] 🔐 Verificação de identidade solicitada pela IA para ${fromNumber}: ref "${verifyReference}"`);
                 }
                 // ── Processar envio de arquivos [SEND_FILE: ID] ───────────────────────
                 // IMPORTANTE: O documento é enviado como uma mensagem isolada na Meta Media API.
@@ -599,6 +625,15 @@ async function triggerAIResponse(params) {
             // Se a conversa concluiu com agendamento, cancelar imediatamente qualquer follow-up de vendas
             followup_service_1.FollowupService.cancelPendingForPhone(orgId, fromNumber).catch(() => { });
         }
+        // ── Auto-melhoria: se a IA não soube responder, registar sugestão de conhecimento ──
+        if (aiResult?.confirm && message) {
+            knowledge_suggestions_service_1.KnowledgeSuggestionsService.recordUnansweredQuestion({
+                orgId,
+                channel: 'whatsapp',
+                customerPhone: fromNumber,
+                question: message,
+            });
+        }
         // ── Insights: registar interação da IA com sucesso (métricas de qualidade) ──
         insights_service_1.InsightsService.recordAIInteraction({
             orgId,
@@ -613,6 +648,48 @@ async function triggerAIResponse(params) {
             attempts: attemptsUsed,
             responseLatencyMs: Date.now() - aiStartedAt,
         });
+        // ── Protocolo de segurança: verificar identidade por nº de processo/contrato ──
+        if (verifyReference) {
+            (async () => {
+                try {
+                    const profile = await external_integrations_service_1.ExternalIntegrationsService.lookupByReference(orgId, verifyReference);
+                    let followUpText;
+                    if (profile.found) {
+                        await external_integrations_service_1.ExternalIntegrationsService.markVerified(orgId, fromNumber, verifyReference, profile.data?.name ? String(profile.data.name) : undefined, 'whatsapp');
+                        followUpText = `✅ Identidade confirmada! Encontrei os dados do processo/contrato ${verifyReference}:\n\n${profile.summary}\n\nEm que mais posso ajudar?`;
+                    }
+                    else {
+                        followUpText = `🔒 Não consegui validar a referência ${verifyReference} nos nossos sistemas. Por segurança, não posso partilhar dados de processos ou contas sem uma referência válida. Verifique o número e tente novamente, ou ligue directamente para a empresa.`;
+                    }
+                    const followUpId = await whatsapp_service_1.WhatsAppService.sendTextMessage(phoneNumberId, fromNumber, followUpText, accessToken);
+                    if (followUpId)
+                        exports.botSentMessages.add(followUpId);
+                    await supabase_1.supabaseAdmin.from('conversation_history').insert({
+                        org_id: orgId,
+                        customer_phone: fromNumber,
+                        sender: 'bot',
+                        text: followUpText,
+                        metadata: { security_verification: true, verified: profile.found, reference: verifyReference },
+                    });
+                    try {
+                        (0, socket_1.getIo)().to(`org:${orgId}`).emit('new_message', {
+                            phone: fromNumber,
+                            sender: 'bot',
+                            text: followUpText,
+                            botName,
+                            time: new Date().toLocaleTimeString('pt-PT', { timeZone: 'Africa/Luanda', hour: '2-digit', minute: '2-digit' }),
+                            timestamp: new Date().toISOString(),
+                            platform: 'whatsapp',
+                        });
+                    }
+                    catch (_) { }
+                    console.log(`[SEGURANÇA] ${profile.found ? '✅ Identidade verificada' : '⛔ Verificação falhada'} para ${fromNumber} (ref: ${verifyReference})`);
+                }
+                catch (verifyErr) {
+                    console.warn('[SEGURANÇA] Erro na verificação de identidade:', verifyErr.message);
+                }
+            })();
+        }
         return { ok: true, sentMsgId };
     }
     catch (err) {

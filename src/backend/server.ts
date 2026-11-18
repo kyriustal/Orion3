@@ -25,6 +25,8 @@ import pushRoutes from './api/push.routes';
 import calendarRoutes from './api/calendar.routes';
 import businessHoursRoutes from './api/business_hours.routes';
 import reportsRoutes from './api/reports.routes';
+import insightsRoutes from './api/insights.routes';
+import integrationsRoutes from './api/integrations.routes';
 import tiktokRoutes from './api/tiktok.routes';
 import emailInboxRoutes from './api/email_inbox.routes';
 
@@ -93,6 +95,8 @@ app.use('/api/team',             teamRoutes);
 app.use('/api/push',             pushRoutes);
 app.use('/api/settings/calendar', calendarRoutes);
 app.use('/api/reports',           reportsRoutes);
+app.use('/api/insights',          insightsRoutes);
+app.use('/api/integrations',      integrationsRoutes);
 app.use('/api',                  businessHoursRoutes);
 app.use('/api',                  followupRoutes);
 app.use('/api',                  coreRoutes);
