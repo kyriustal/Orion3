@@ -15,6 +15,7 @@ const booking_service_1 = require("../services/booking.service");
 const google_sheets_service_1 = require("../services/google_sheets.service");
 const socket_1 = require("../socket");
 const audio_service_1 = require("../services/audio.service");
+const insights_service_1 = require("../services/insights.service");
 const instagram_routes_1 = require("./instagram.routes");
 const axios_1 = __importDefault(require("axios"));
 const router = (0, express_1.Router)();
@@ -361,8 +362,11 @@ router.post('/webhook', async (req, res) => {
                 let aiResult = null;
                 let sendSuccess = false;
                 let lastErrorMsg = '';
+                let attemptsUsed = 0;
+                const aiStartedAt = Date.now();
                 for (let attempt = 1; attempt <= 3; attempt++) {
                     try {
+                        attemptsUsed = attempt;
                         console.log(`[FB WEBHOOK] 🛡️ Tentativa ${attempt}/3 para sender=${senderId}...`);
                         if (attempt > 1) {
                             await new Promise(r => setTimeout(r, attempt * 1000));
@@ -400,6 +404,17 @@ router.post('/webhook', async (req, res) => {
                 }
                 if (!sendSuccess) {
                     console.error(`[FB WEBHOOK] ❌ Fluxo falhou após 3 tentativas para sender=${senderId}: ${lastErrorMsg}`);
+                    // Insights: registar falha persistente da IA
+                    insights_service_1.InsightsService.recordAIInteraction({
+                        orgId,
+                        channel: 'facebook',
+                        customerPhone: senderId,
+                        customerMessage: userText,
+                        success: false,
+                        attempts: attemptsUsed,
+                        responseLatencyMs: Date.now() - aiStartedAt,
+                        errorMessage: lastErrorMsg,
+                    });
                     try {
                         await supabase_1.supabaseAdmin.from('conversation_history').insert({
                             org_id: orgId,
@@ -429,6 +444,20 @@ router.post('/webhook', async (req, res) => {
                     }).catch(e => console.error('[ALERTA FB] Erro ao enviar email de intervenção:', e.message));
                     continue;
                 }
+                // Insights: registar interação da IA com sucesso (métricas de qualidade)
+                insights_service_1.InsightsService.recordAIInteraction({
+                    orgId,
+                    channel: 'facebook',
+                    customerPhone: senderId,
+                    customerMessage: userText,
+                    success: true,
+                    transferred: !!aiResult?.transfer,
+                    bookingCreated: !!(aiResult?.booking || aiResult?.bookingData),
+                    proposal: !!aiResult?.proposal,
+                    confirm: !!aiResult?.confirm,
+                    attempts: attemptsUsed,
+                    responseLatencyMs: Date.now() - aiStartedAt,
+                });
                 // ── Disparar notificações de Booking, Handover ou Proposal ──
                 if (aiResult?.transfer || aiResult?.booking || aiResult?.proposal) {
                     const alertType = aiResult.transfer ? 'handover' : aiResult.booking ? 'booking' : 'proposal';

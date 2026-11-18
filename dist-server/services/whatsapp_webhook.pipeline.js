@@ -23,6 +23,7 @@ const push_service_1 = require("./push.service");
 const booking_service_1 = require("./booking.service");
 const followup_service_1 = require("./followup.service");
 const google_sheets_service_1 = require("./google_sheets.service");
+const insights_service_1 = require("./insights.service");
 // ─── Controlo de estado em memória ────────────────────────────────────────────
 /** Dedup — IDs de mensagens já processadas (limpa a cada 10 min) */
 exports.processedMessages = new Set();
@@ -143,6 +144,8 @@ async function findWhatsappConfigForWebhook(phoneNumberId, wabaId) {
 // ─────────────────────────────────────────────────────────────────────────────
 async function triggerAIResponse(params) {
     const { orgId, fromNumber, phoneNumberId, accessToken, botName, message, incomingMessageId, senderName, media, referral, isAudio, isVoiceAllowed, detectedLanguage = 'pt', buttonContext, } = params;
+    // Insights: marcar início do processamento para medir latência de resposta
+    const aiStartedAt = Date.now();
     // Verificar se o atendimento por IA está pausado para este cliente (humano no controlo)
     const historyKey = `${orgId}:${fromNumber}`;
     const pausedUntil = exports.aiPauses.get(historyKey);
@@ -151,6 +154,7 @@ async function triggerAIResponse(params) {
         return { ok: true };
     }
     let customerProfile;
+    let attemptsUsed = 0;
     try {
         // Indicador de "digitando..."
         try {
@@ -260,6 +264,7 @@ async function triggerAIResponse(params) {
         // ── PROTOCOLO DE SEGURANÇA E AUTO-CURA DA IA (Até 3 tentativas de recuperação) ──
         for (let attempt = 1; attempt <= 3; attempt++) {
             try {
+                attemptsUsed = attempt;
                 console.log(`[PROTOCOLO SEGURANÇA IA] 🛡️ Tentativa ${attempt}/3 para ${fromNumber}...`);
                 if (attempt > 1) {
                     await new Promise(r => setTimeout(r, attempt * 1000));
@@ -594,10 +599,35 @@ async function triggerAIResponse(params) {
             // Se a conversa concluiu com agendamento, cancelar imediatamente qualquer follow-up de vendas
             followup_service_1.FollowupService.cancelPendingForPhone(orgId, fromNumber).catch(() => { });
         }
+        // ── Insights: registar interação da IA com sucesso (métricas de qualidade) ──
+        insights_service_1.InsightsService.recordAIInteraction({
+            orgId,
+            channel: 'whatsapp',
+            customerPhone: fromNumber,
+            customerMessage: message,
+            success: true,
+            transferred: !!aiResult?.transfer,
+            bookingCreated: !!(aiResult?.booking || aiResult?.bookingData),
+            proposal: !!aiResult?.proposal,
+            confirm: !!aiResult?.confirm,
+            attempts: attemptsUsed,
+            responseLatencyMs: Date.now() - aiStartedAt,
+        });
         return { ok: true, sentMsgId };
     }
     catch (err) {
         console.error(`[PROTOCOLO SEGURANÇA IA] ❌ ERRO PERSISTENTE no fluxo para ${fromNumber}:`, err.message);
+        // Insights: registar falha persistente da IA
+        insights_service_1.InsightsService.recordAIInteraction({
+            orgId,
+            channel: 'whatsapp',
+            customerPhone: fromNumber,
+            customerMessage: message,
+            success: false,
+            attempts: attemptsUsed,
+            responseLatencyMs: Date.now() - aiStartedAt,
+            errorMessage: err.message,
+        });
         try {
             await supabase_1.supabaseAdmin.from('conversation_history').insert({
                 org_id: orgId,

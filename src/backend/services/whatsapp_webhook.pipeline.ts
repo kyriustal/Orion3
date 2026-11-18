@@ -10,6 +10,7 @@ import { PushService } from './push.service';
 import { BookingService } from './booking.service';
 import { FollowupService } from './followup.service';
 import { GoogleSheetsService } from './google_sheets.service';
+import { InsightsService } from './insights.service';
 
 export type WebhookEventRecorder = (event: Record<string, any>) => void;
 
@@ -182,6 +183,9 @@ export async function triggerAIResponse(params: {
     buttonContext,
   } = params;
 
+  // Insights: marcar início do processamento para medir latência de resposta
+  const aiStartedAt = Date.now();
+
   // Verificar se o atendimento por IA está pausado para este cliente (humano no controlo)
   const historyKey = `${orgId}:${fromNumber}`;
   const pausedUntil = aiPauses.get(historyKey);
@@ -191,6 +195,7 @@ export async function triggerAIResponse(params: {
   }
 
   let customerProfile: CustomerProfile | undefined;
+  let attemptsUsed = 0;
 
   try {
     // Indicador de "digitando..."
@@ -309,6 +314,7 @@ export async function triggerAIResponse(params: {
     // ── PROTOCOLO DE SEGURANÇA E AUTO-CURA DA IA (Até 3 tentativas de recuperação) ──
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
+        attemptsUsed = attempt;
         console.log(`[PROTOCOLO SEGURANÇA IA] 🛡️ Tentativa ${attempt}/3 para ${fromNumber}...`);
         if (attempt > 1) {
           await new Promise(r => setTimeout(r, attempt * 1000));
@@ -674,10 +680,37 @@ export async function triggerAIResponse(params: {
       FollowupService.cancelPendingForPhone(orgId, fromNumber).catch(() => {});
     }
 
+    // ── Insights: registar interação da IA com sucesso (métricas de qualidade) ──
+    InsightsService.recordAIInteraction({
+      orgId,
+      channel: 'whatsapp',
+      customerPhone: fromNumber,
+      customerMessage: message,
+      success: true,
+      transferred: !!aiResult?.transfer,
+      bookingCreated: !!(aiResult?.booking || aiResult?.bookingData),
+      proposal: !!aiResult?.proposal,
+      confirm: !!aiResult?.confirm,
+      attempts: attemptsUsed,
+      responseLatencyMs: Date.now() - aiStartedAt,
+    });
+
     return { ok: true, sentMsgId };
 
   } catch (err: any) {
     console.error(`[PROTOCOLO SEGURANÇA IA] ❌ ERRO PERSISTENTE no fluxo para ${fromNumber}:`, err.message);
+
+    // Insights: registar falha persistente da IA
+    InsightsService.recordAIInteraction({
+      orgId,
+      channel: 'whatsapp',
+      customerPhone: fromNumber,
+      customerMessage: message,
+      success: false,
+      attempts: attemptsUsed,
+      responseLatencyMs: Date.now() - aiStartedAt,
+      errorMessage: err.message,
+    });
 
     try {
       await supabaseAdmin.from('conversation_history').insert({

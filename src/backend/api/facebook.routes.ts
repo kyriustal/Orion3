@@ -10,6 +10,7 @@ import { BookingService } from '../services/booking.service';
 import { GoogleSheetsService } from '../services/google_sheets.service';
 import { getIo } from '../socket';
 import { AudioService } from '../services/audio.service';
+import { InsightsService } from '../services/insights.service';
 import { processInstagramWebhook } from './instagram.routes';
 import axios from 'axios';
 
@@ -385,9 +386,12 @@ router.post('/webhook', async (req, res) => {
         let aiResult: any = null;
         let sendSuccess = false;
         let lastErrorMsg = '';
+        let attemptsUsed = 0;
+        const aiStartedAt = Date.now();
 
         for (let attempt = 1; attempt <= 3; attempt++) {
           try {
+            attemptsUsed = attempt;
             console.log(`[FB WEBHOOK] 🛡️ Tentativa ${attempt}/3 para sender=${senderId}...`);
             if (attempt > 1) {
               await new Promise(r => setTimeout(r, attempt * 1000));
@@ -431,6 +435,18 @@ router.post('/webhook', async (req, res) => {
         if (!sendSuccess) {
           console.error(`[FB WEBHOOK] ❌ Fluxo falhou após 3 tentativas para sender=${senderId}: ${lastErrorMsg}`);
 
+          // Insights: registar falha persistente da IA
+          InsightsService.recordAIInteraction({
+            orgId,
+            channel: 'facebook',
+            customerPhone: senderId,
+            customerMessage: userText,
+            success: false,
+            attempts: attemptsUsed,
+            responseLatencyMs: Date.now() - aiStartedAt,
+            errorMessage: lastErrorMsg,
+          });
+
           try {
             await supabaseAdmin.from('conversation_history').insert({
               org_id: orgId,
@@ -461,6 +477,21 @@ router.post('/webhook', async (req, res) => {
 
           continue;
         }
+
+        // Insights: registar interação da IA com sucesso (métricas de qualidade)
+        InsightsService.recordAIInteraction({
+          orgId,
+          channel: 'facebook',
+          customerPhone: senderId,
+          customerMessage: userText,
+          success: true,
+          transferred: !!aiResult?.transfer,
+          bookingCreated: !!(aiResult?.booking || aiResult?.bookingData),
+          proposal: !!aiResult?.proposal,
+          confirm: !!aiResult?.confirm,
+          attempts: attemptsUsed,
+          responseLatencyMs: Date.now() - aiStartedAt,
+        });
 
         // ── Disparar notificações de Booking, Handover ou Proposal ──
         if (aiResult?.transfer || aiResult?.booking || aiResult?.proposal) {
