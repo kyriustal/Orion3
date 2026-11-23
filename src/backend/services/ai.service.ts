@@ -25,6 +25,7 @@ export interface CustomerProfile {
   email?: string;
   phone?: string;
   isReturning?: boolean; // tem histórico anterior às últimas 24h
+  notes?: string; // notas internas da equipa sobre o cliente
 }
 
 export interface ButtonContext {
@@ -33,6 +34,8 @@ export interface ButtonContext {
   campaignName?: string;
   campaignMessageText?: string;
   buttonOptions?: string[];
+  isAttendanceFollowup?: boolean;
+  attendanceStatus?: 'yes' | 'no';
 }
 
 export interface GenerateOptions {
@@ -506,9 +509,26 @@ INSTRUÇÕES CRÍTICAS PARA ATENDIMENTO DE LEADS DE ANÚNCIOS:
     ? `\n═══ MEMÓRIA PERMANENTE DO CLIENTE E CONTEXTO DAS CONVERSAS ═══\n${memoryLines.join('\n')}\n`
     : '';
 
+  let customerNotesSection = '';
+  if (customerProfile?.notes && customerProfile.notes.trim()) {
+    customerNotesSection = `
+═══════════════════════════════════════════════════════════════════════════════
+📝 NOTAS INTERNAS DA EQUIPA SOBRE ESTE CLIENTE (CONSIDERE EM TODAS AS RESPOSTAS)
+═══════════════════════════════════════════════════════════════════════════════
+A equipa de atendimento registou as seguintes notas internas sobre este cliente para auxiliar nos atendimentos e follow-ups:
+"""
+${customerProfile.notes.trim()}
+"""
+⚠️ INSTRUÇÃO OBRIGATÓRIA DA IA SOBRE AS NOTAS:
+- Leia e aplique estas anotações para personalizar o atendimento, lembrar preferências, orçamentos combinados ou pendências.
+- NUNCA mencione frases como "conforme as notas da equipa" ou "está anotado no sistema"; use as informações com total fluidez, cordialidade e empatia natural.
+═══════════════════════════════════════════════════════════════════════════════
+`;
+  }
+
   const attendanceAndNoShowRule = `
-- CONFIRMAÇÃO DE ATENDIMENTO REALIZADO: Se o cliente confirmar que já esteve no atendimento/consultoria presencial ou online (ex: "já fui atendido", "estive aí hoje", "já fiz a consultoria", "fui atendido"), inclua no início da sua resposta o token [ATENDIMENTO:CONFIRMADO].
-- REMARCAÇÃO POR FALTA DE COMPARÊNCIA (NO-SHOW): Se o cliente informar que faltou, não conseguiu comparecer ao agendamento anterior ou deseja remarcar por falta (ex: "não pude ir", "faltei à reunião", "não consegui comparecer e quero remarcar"), acolha-o cordialmente, auxilie a agendar uma nova data e inclua no início da sua resposta o token [REMARCACAO:FALTA].`;
+- CONFIRMAÇÃO DE ATENDIMENTO REALIZADO: Se o cliente confirmar que compareceu ou já esteve na consulta/atendimento (ex: "sim, compareci", "estive aí hoje", "já fui atendido", "correu tudo bem"), inclua no início da resposta o token [ATENDIMENTO:CONFIRMADO]. Agradeça calorosamente pela presença, solicite uma avaliação sincera de como foi o atendimento ("Como foi a sua experiência na consulta?") e conduza ativamente para fechar a venda / próximos passos da proposta ou contratação do serviço.
+- FALTA DE COMPARÊNCIA (NO-SHOW) E REMARCAÇÃO: Se o cliente informar que faltou ou não conseguiu comparecer ao agendamento (ex: "não compareci", "não consegui ir", "tive um imprevisto e faltei"), acolha-o com extrema empatia ("Compreendemos perfeitamente, imprevistos acontecem!"), pergunte com gentileza o motivo da falta, conduza imediatamente à remarcação da consulta numa nova data e hora e inclua no início da sua resposta o token [REMARCACAO:FALTA].`;
 
   // ── Construir buttonRule com regras específicas e prioritárias de contexto ──
   let buttonRule = '';
@@ -521,10 +541,49 @@ INSTRUÇÕES CRÍTICAS PARA ATENDIMENTO DE LEADS DE ANÚNCIOS:
       : '';
 
     const btnLower = buttonContext.buttonTitle.toLowerCase();
-    const isNumberOrStockIntent = /(n[uú]mero|tamanho|stock|estoque|lista|dispon[ií]ve|quais\s+tem|modelos?|cores?)/i.test(btnLower);
-    const isInterestIntent = /(interesse|quero|sim|gostaria|saber mais|avançar|quero ver)/i.test(btnLower);
+    const isAttendance = buttonContext.isAttendanceFollowup ||
+      buttonContext.buttonId === 'attendance_yes' ||
+      buttonContext.buttonId === 'attendance_no' ||
+      buttonContext.attendanceStatus !== undefined ||
+      /compareci/i.test(btnLower);
 
-    buttonRule = `
+    if (isAttendance) {
+      const attendedYes = buttonContext.attendanceStatus === 'yes' ||
+        buttonContext.buttonId === 'attendance_yes' ||
+        /sim|compareci|estive|fui/i.test(btnLower);
+
+      if (attendedYes) {
+        buttonRule = `
+═══════════════════════════════════════════════════════════════════════════════
+🎉 CLIENTE CONFIRMOU QUE COMPARECEU À CONSULTA (FOLLOW-UP PÓS-AGENDAMENTO)
+═══════════════════════════════════════════════════════════════════════════════
+O cliente clicou ou respondeu SIM ao follow-up pós-consulta!
+⚠️ AÇÕES OBRIGATÓRIAS E INEGOCIÁVEIS NESTA RESPOSTA:
+1. AGRADECER calorosamente a presença na consulta.
+2. SOLICITAR UMA AVALIAÇÃO de como foi o atendimento (ex: "Gostaríamos muito de saber: como foi a sua consulta? O atendimento correspondeu às suas expectativas e esclareceu as suas dúvidas?").
+3. DIRECIONAR ESTRATEGICAMENTE PARA FECHAR A VENDA / PRÓXIMOS PASSOS (ex: convidar a avançar com a contratação, fecho do contrato ou implementação do plano acordado).
+4. OBRIGATÓRIO: Inclua no início da resposta o token [ATENDIMENTO:CONFIRMADO].
+═══════════════════════════════════════════════════════════════════════════════
+`;
+      } else {
+        buttonRule = `
+═══════════════════════════════════════════════════════════════════════════════
+⚠️ CLIENTE INFORMOU QUE NÃO COMPARECEU À CONSULTA (NO-SHOW / FALTA)
+═══════════════════════════════════════════════════════════════════════════════
+O cliente clicou ou respondeu NÃO ao follow-up pós-consulta!
+⚠️ AÇÕES OBRIGATÓRIAS E INEGOCIÁVEIS NESTA RESPOSTA:
+1. EMPATIA E ACOLHIMENTO: Seja super compreensivo ("Compreendemos perfeitamente, imprevistos acontecem a todos nós!").
+2. QUESTIONAR O MOTIVO com simpatia e tato ("Sentimos a sua falta! Houve algum contratempo ou imprevisto de última hora?").
+3. CONDUZIR IMEDIATAMENTE À REMARCAÇÃO: Convide o cliente a agendar uma nova data e hora conveniente para si ("Queremos muito ajudá-lo(a). Qual seria o melhor dia e horário para reagendarmos a sua consulta?").
+4. OBRIGATÓRIO: Inclua no início da resposta o token [REMARCACAO:FALTA].
+═══════════════════════════════════════════════════════════════════════════════
+`;
+      }
+    } else {
+      const isNumberOrStockIntent = /(n[uú]mero|tamanho|stock|estoque|lista|dispon[ií]ve|quais\s+tem|modelos?|cores?)/i.test(btnLower);
+      const isInterestIntent = /(interesse|quero|sim|gostaria|saber mais|avançar|quero ver)/i.test(btnLower);
+
+      buttonRule = `
 ═══════════════════════════════════════════════════════════════════════════════
 🚨 CONTEXTO CRÍTICO DE ALTA PRIORIDADE: INTERAÇÃO VIA BOTÃO DE CAMPANHA
 ═══════════════════════════════════════════════════════════════════════════════
@@ -551,12 +610,14 @@ ${buttonOptsSection}
    - Quando o cliente clica num botão de campanha, qualquer fase de "diagnóstico profundo / escuta prolongada" fica TEMPORARIAMENTE SUSPENSA. Primeiro entregue exatamente o que o botão promete (lista, números, opções, valores ou agendamento), e só depois prossiga com o atendimento consultivo.
 ═══════════════════════════════════════════════════════════════════════════════
 `;
+    }
   }
 
   return `Você é ${botName}, assistente virtual oficial da empresa "${companyName}".
 ${buttonRule}
 ${temporal.promptContext}
 ${customerMemorySection}
+${customerNotesSection}
 ${companyContactInfo}
 ${businessHoursSection}
 ${sector ? `Sector de actividade: ${sector}.` : ''}
@@ -1460,7 +1521,26 @@ export class AIService {
     }
 
 
-    // 2. Construir System Prompt
+    // 2. Carregar notas internas da equipa se disponíveis e ainda não injetadas
+    let effectiveCustomerProfile = customerProfile;
+    if (!effectiveCustomerProfile?.notes && effectiveCustomerProfile?.phone && orgId) {
+      try {
+        const { data: cRow } = await supabaseAdmin
+          .from('contacts')
+          .select('notes')
+          .eq('org_id', orgId)
+          .eq('phone', effectiveCustomerProfile.phone)
+          .maybeSingle();
+        if (cRow?.notes) {
+          effectiveCustomerProfile = {
+            ...(effectiveCustomerProfile || {}),
+            notes: cRow.notes,
+          };
+        }
+      } catch (_) {}
+    }
+
+    // Construir System Prompt
     const fullKnowledge = `${org?.product_description || ''}\n\n${externalKnowledge}\n\n${availableAssets}`.trim();
 
     const systemPrompt = buildSystemPrompt(
@@ -1470,7 +1550,7 @@ export class AIService {
       referral,
       timeSinceLastMessageHours,
       urlSystemContext,
-      customerProfile,
+      effectiveCustomerProfile,
       businessHoursText,
       buttonContext
     );

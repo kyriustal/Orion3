@@ -223,6 +223,18 @@ router.get('/chats', auth_1.requireAuth, async (req, res) => {
             .order('created_at', { ascending: false });
         if (allErr)
             throw allErr;
+        // ── Buscar dados de contactos (nome e notas internas) para enriquecer os chats ──
+        const { data: contactsList } = await supabase_1.supabaseAdmin
+            .from('contacts')
+            .select('phone, name, notes')
+            .eq('org_id', orgId);
+        const contactMap = new Map();
+        if (contactsList) {
+            for (const c of contactsList) {
+                if (c.phone)
+                    contactMap.set(c.phone, { name: c.name, notes: c.notes });
+            }
+        }
         // Construir mapa de última mensagem por phone (primeira ocorrência = mais recente)
         const lastMsgMap = new Map();
         // Construir mapa de status por phone (iterar todos os registos em ordem decrescente)
@@ -269,11 +281,17 @@ router.get('/chats', auth_1.requireAuth, async (req, res) => {
         // ── 2. Montar o array de chats a partir do mapa de última mensagem ─────────
         const chats = Array.from(lastMsgMap.entries()).map(([phone, item]) => {
             const platform = item.metadata?.platform || 'whatsapp';
+            const contactInfo = contactMap.get(phone);
             let nameDisplay = `WhatsApp (${phone})`;
-            if (platform === 'instagram')
+            if (contactInfo?.name && contactInfo.name.trim() && !contactInfo.name.startsWith('+') && !/^\d+$/.test(contactInfo.name)) {
+                nameDisplay = `${contactInfo.name.trim()} (${phone})`;
+            }
+            else if (platform === 'instagram') {
                 nameDisplay = `Instagram (@${phone})`;
-            else if (platform === 'facebook')
+            }
+            else if (platform === 'facebook') {
                 nameDisplay = `Messenger (${phone.slice(-6)})`;
+            }
             const st = phoneStatusMap.get(phone) || {
                 needs_confirm: false,
                 has_exclamation: false,
@@ -285,6 +303,8 @@ router.get('/chats', auth_1.requireAuth, async (req, res) => {
                 id: phone,
                 phone,
                 name: nameDisplay,
+                customerName: contactInfo?.name || undefined,
+                notes: contactInfo?.notes || '',
                 lastMessage: item.text,
                 time: new Date(item.created_at).toLocaleTimeString('pt-PT', { timeZone: 'Africa/Luanda', hour: '2-digit', minute: '2-digit' }),
                 timestamp: item.created_at,
@@ -329,6 +349,62 @@ router.post('/mark-attended', auth_1.requireAuth, async (req, res) => {
         }
         catch (_) { }
         res.json({ success: true, message: 'Atendimento marcado como concluído!' });
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+// ─── GET /api/whatsapp/notes/:phone — Obter notas internas do cliente ─────────
+router.get('/notes/:phone', auth_1.requireAuth, async (req, res) => {
+    try {
+        const orgId = req.user?.orgId;
+        const { phone } = req.params;
+        if (!phone)
+            return res.status(400).json({ error: 'Telefone obrigatório.' });
+        const { data: contact } = await supabase_1.supabaseAdmin
+            .from('contacts')
+            .select('notes, name')
+            .eq('org_id', orgId)
+            .eq('phone', phone)
+            .maybeSingle();
+        res.json({
+            phone,
+            notes: contact?.notes || '',
+            name: contact?.name || '',
+        });
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+// ─── PUT /api/whatsapp/notes/:phone — Salvar notas internas do cliente ─────────
+router.put('/notes/:phone', auth_1.requireAuth, async (req, res) => {
+    try {
+        const orgId = req.user?.orgId;
+        const { phone } = req.params;
+        const { notes } = req.body;
+        if (!phone)
+            return res.status(400).json({ error: 'Telefone obrigatório.' });
+        const cleanNotes = typeof notes === 'string' ? notes.trim() : '';
+        const { error } = await supabase_1.supabaseAdmin
+            .from('contacts')
+            .upsert({
+            org_id: orgId,
+            phone,
+            notes: cleanNotes,
+            updated_at: new Date().toISOString(),
+        }, { onConflict: 'org_id,phone' });
+        if (error)
+            throw error;
+        // Notificar os atendentes conectados em tempo real via Socket.IO
+        try {
+            (0, socket_1.getIo)().to(`org:${orgId}`).emit('contact_notes_updated', {
+                phone,
+                notes: cleanNotes,
+            });
+        }
+        catch (_) { }
+        res.json({ success: true, phone, notes: cleanNotes });
     }
     catch (err) {
         res.status(500).json({ error: err.message });

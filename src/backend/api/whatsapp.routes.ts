@@ -267,6 +267,19 @@ router.get('/chats', requireAuth, async (req: AuthRequest, res) => {
 
     if (allErr) throw allErr;
 
+    // ── Buscar dados de contactos (nome e notas internas) para enriquecer os chats ──
+    const { data: contactsList } = await supabaseAdmin
+      .from('contacts')
+      .select('phone, name, notes')
+      .eq('org_id', orgId);
+
+    const contactMap = new Map<string, { name?: string; notes?: string }>();
+    if (contactsList) {
+      for (const c of contactsList) {
+        if (c.phone) contactMap.set(c.phone, { name: c.name, notes: c.notes });
+      }
+    }
+
     // Construir mapa de última mensagem por phone (primeira ocorrência = mais recente)
     const lastMsgMap = new Map<string, typeof allRows[0]>();
     // Construir mapa de status por phone (iterar todos os registos em ordem decrescente)
@@ -322,9 +335,16 @@ router.get('/chats', requireAuth, async (req: AuthRequest, res) => {
     // ── 2. Montar o array de chats a partir do mapa de última mensagem ─────────
     const chats = Array.from(lastMsgMap.entries()).map(([phone, item]) => {
       const platform = item.metadata?.platform || 'whatsapp';
+      const contactInfo = contactMap.get(phone);
+
       let nameDisplay = `WhatsApp (${phone})`;
-      if (platform === 'instagram') nameDisplay = `Instagram (@${phone})`;
-      else if (platform === 'facebook') nameDisplay = `Messenger (${phone.slice(-6)})`;
+      if (contactInfo?.name && contactInfo.name.trim() && !contactInfo.name.startsWith('+') && !/^\d+$/.test(contactInfo.name)) {
+        nameDisplay = `${contactInfo.name.trim()} (${phone})`;
+      } else if (platform === 'instagram') {
+        nameDisplay = `Instagram (@${phone})`;
+      } else if (platform === 'facebook') {
+        nameDisplay = `Messenger (${phone.slice(-6)})`;
+      }
 
       const st = phoneStatusMap.get(phone) || {
         needs_confirm: false,
@@ -338,6 +358,8 @@ router.get('/chats', requireAuth, async (req: AuthRequest, res) => {
         id: phone,
         phone,
         name: nameDisplay,
+        customerName: contactInfo?.name || undefined,
+        notes: contactInfo?.notes || '',
         lastMessage: item.text,
         time: new Date(item.created_at).toLocaleTimeString('pt-PT', { timeZone: 'Africa/Luanda', hour: '2-digit', minute: '2-digit' }),
         timestamp: item.created_at,
@@ -386,6 +408,66 @@ router.post('/mark-attended', requireAuth, async (req: AuthRequest, res) => {
     } catch (_) {}
 
     res.json({ success: true, message: 'Atendimento marcado como concluído!' });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── GET /api/whatsapp/notes/:phone — Obter notas internas do cliente ─────────
+router.get('/notes/:phone', requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const orgId = req.user?.orgId;
+    const { phone } = req.params;
+    if (!phone) return res.status(400).json({ error: 'Telefone obrigatório.' });
+
+    const { data: contact } = await supabaseAdmin
+      .from('contacts')
+      .select('notes, name')
+      .eq('org_id', orgId)
+      .eq('phone', phone)
+      .maybeSingle();
+
+    res.json({
+      phone,
+      notes: contact?.notes || '',
+      name: contact?.name || '',
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── PUT /api/whatsapp/notes/:phone — Salvar notas internas do cliente ─────────
+router.put('/notes/:phone', requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const orgId = req.user?.orgId;
+    const { phone } = req.params;
+    const { notes } = req.body;
+
+    if (!phone) return res.status(400).json({ error: 'Telefone obrigatório.' });
+
+    const cleanNotes = typeof notes === 'string' ? notes.trim() : '';
+
+    const { error } = await supabaseAdmin
+      .from('contacts')
+      .upsert({
+        org_id: orgId,
+        phone,
+        notes: cleanNotes,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'org_id,phone' });
+
+    if (error) throw error;
+
+    // Notificar os atendentes conectados em tempo real via Socket.IO
+    try {
+      getIo().to(`org:${orgId}`).emit('contact_notes_updated', {
+        phone,
+        notes: cleanNotes,
+      });
+    } catch (_) {}
+
+    res.json({ success: true, phone, notes: cleanNotes });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

@@ -13,7 +13,7 @@ import { io, Socket } from "socket.io-client";
 import { toast } from "sonner";
 
 type Message = { id: number; sender: "user" | "bot" | "human" | "system"; text: string; time: string; timestamp?: string; botName?: string; agentName?: string; metadata?: any; };
-type Chat = { id: string; phone: string; name: string; lastMessage: string; time: string; timestamp: string; platform?: string; unread?: number; needs_confirm?: boolean; has_exclamation?: boolean; has_error?: boolean; attended?: boolean; concluded?: boolean; };
+type Chat = { id: string; phone: string; name: string; lastMessage: string; time: string; timestamp: string; platform?: string; unread?: number; needs_confirm?: boolean; has_exclamation?: boolean; has_error?: boolean; attended?: boolean; concluded?: boolean; notes?: string; };
 
 const ANGOLA_TZ = 'Africa/Luanda';
 
@@ -176,6 +176,12 @@ export default function LiveChat() {
   const [searchResultIndex, setSearchResultIndex] = useState(0);
   const messageRefs = useRef<{ [key: string | number]: HTMLDivElement | null }>({});
   const pendingClientIds = useRef<Set<string>>(new Set());
+
+  // Estados para Notas do Cliente (lidas pela IA para follow-up)
+  const [isNotesOpen, setIsNotesOpen] = useState(false);
+  const [customerNotes, setCustomerNotes] = useState("");
+  const [isSavingNotes, setIsSavingNotes] = useState(false);
+  const [isLoadingNotes, setIsLoadingNotes] = useState(false);
 
   // ─── Nova Conversa (modal com estrutura completa) ───────────────────────────
   const [isNewChatOpen,       setIsNewChatOpen]       = useState(false);
@@ -724,6 +730,17 @@ export default function LiveChat() {
       } : c));
     });
 
+    // Atualização em tempo real das notas do contacto
+    sock.on("contact_notes_updated", (data: { phone: string; notes: string }) => {
+      setChats(prev => prev.map(c => (c.phone === data.phone || c.id === data.phone) ? { ...c, notes: data.notes } : c));
+      setActiveChatId(currentActive => {
+        if (currentActive === data.phone) {
+          setCustomerNotes(data.notes);
+        }
+        return currentActive;
+      });
+    });
+
     return () => { sock.disconnect(); };
   }, []);
 
@@ -776,6 +793,54 @@ export default function LiveChat() {
   const activeChat = chats.find(c => c.id === activeChatId) || chats.find(c => c.phone === activeChatId) || chats[0];
   const activePhone = activeChatId || activeChat?.phone || activeChat?.id || "";
   const isSending = isSendingMessage || isSendingFile;
+
+  // Carregar notas internas do cliente ativo
+  useEffect(() => {
+    if (!activePhone) {
+      setCustomerNotes("");
+      return;
+    }
+    const current = chats.find(c => c.phone === activePhone || c.id === activePhone);
+    if (current && typeof current.notes === 'string') {
+      setCustomerNotes(current.notes);
+    }
+    setIsLoadingNotes(true);
+    fetch(`/api/whatsapp/notes/${activePhone}`, {
+      headers: { Authorization: `Bearer ${token()}` }
+    })
+      .then(res => res.json())
+      .then(data => {
+        if (data && typeof data.notes === 'string') {
+          setCustomerNotes(data.notes);
+          setChats(prev => prev.map(c => (c.phone === activePhone || c.id === activePhone) ? { ...c, notes: data.notes } : c));
+        }
+      })
+      .catch(() => {})
+      .finally(() => setIsLoadingNotes(false));
+  }, [activePhone]);
+
+  const handleSaveNotes = async () => {
+    if (!activePhone) return;
+    setIsSavingNotes(true);
+    try {
+      const res = await fetch(`/api/whatsapp/notes/${activePhone}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token()}`,
+        },
+        body: JSON.stringify({ notes: customerNotes }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Erro ao salvar notas");
+      setChats(prev => prev.map(c => (c.phone === activePhone || c.id === activePhone) ? { ...c, notes: customerNotes } : c));
+      toast.success("Notas guardadas! A IA usará estas notas nos próximos atendimentos e follow-ups.");
+    } catch (err: any) {
+      toast.error(err.message || "Erro ao salvar notas");
+    } finally {
+      setIsSavingNotes(false);
+    }
+  };
 
   // ── Copilot de IA: sugerir resposta para o atendente humano ──
   const [isSuggesting, setIsSuggesting] = useState(false);
@@ -1179,6 +1244,11 @@ export default function LiveChat() {
                         Concluído
                       </span>
                     ) : null}
+                    {chat.notes && (
+                      <span title="Cliente com anotações internas (lidas pela IA)" className="text-amber-600 shrink-0">
+                        <FileText className="w-3 h-3" />
+                      </span>
+                    )}
                   </div>
                   <div className="flex items-center gap-1 shrink-0 ml-1">
                     <span className={`text-[10px] font-medium ${
@@ -1254,6 +1324,25 @@ export default function LiveChat() {
                 </button>
               )}
 
+              {/* Botão de Notas do Cliente (lidas pela IA) */}
+              <button 
+                onClick={() => setIsNotesOpen(!isNotesOpen)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs font-semibold shrink-0 transition-all ${
+                  isNotesOpen 
+                    ? "bg-amber-600 border-amber-600 text-white shadow-sm" 
+                    : customerNotes?.trim() 
+                      ? "bg-amber-50 border-amber-300 text-amber-800 hover:bg-amber-100" 
+                      : "hover:bg-zinc-100 border-zinc-200 text-zinc-600"
+                }`}
+                title="Anotações internas do cliente (lidas pela IA para follow-up)"
+              >
+                <FileText className="w-3.5 h-3.5" />
+                <span>Notas</span>
+                {customerNotes?.trim() && (
+                  <span className={`w-2 h-2 rounded-full ${isNotesOpen ? "bg-white" : "bg-amber-500 animate-pulse"}`} />
+                )}
+              </button>
+
               {/* Botão para ativar pesquisa na conversa */}
               <button 
                 onClick={() => {
@@ -1311,6 +1400,73 @@ export default function LiveChat() {
               >
                 <X className="w-4 h-4" />
               </button>
+            </div>
+          )}
+
+          {/* Painel Expansível de Notas do Cliente (lidas pela IA e úteis para follow-up) */}
+          {isNotesOpen && (
+            <div className="px-4 py-3 bg-gradient-to-r from-amber-50/90 to-orange-50/70 border-b border-amber-200/80 animate-in slide-in-from-top-2 duration-200 shrink-0">
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <div className="flex items-center gap-2">
+                  <span className="flex items-center justify-center w-6 h-6 rounded-full bg-amber-500 text-white text-xs shadow-sm">
+                    <FileText className="w-3.5 h-3.5" />
+                  </span>
+                  <div>
+                    <h4 className="text-xs font-bold text-amber-950 flex items-center gap-1.5">
+                      Notas Internas & Follow-up
+                      <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-200/90 text-amber-900 border border-amber-300">
+                        ✨ A IA lê estas notas
+                      </span>
+                    </h4>
+                    <p className="text-[11px] text-amber-900/75">
+                      Registe preferências, acordos ou histórico de atendimento. A IA utiliza estas notas para personalizar respostas e follow-ups.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setIsNotesOpen(false)}
+                  className="p-1 rounded-md text-amber-800 hover:bg-amber-200/60 transition-colors"
+                  title="Fechar painel de notas"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="space-y-2">
+                <textarea
+                  value={customerNotes}
+                  onChange={e => setCustomerNotes(e.target.value)}
+                  placeholder="Ex: Cliente tem interesse no serviço premium. Prefere contacto à tarde. Prometeu enviar documentação até sexta-feira..."
+                  rows={3}
+                  className="w-full text-xs p-2.5 rounded-lg border border-amber-300 bg-white/95 text-zinc-800 placeholder-amber-900/40 focus:outline-none focus:ring-2 focus:ring-amber-500/50 shadow-inner resize-y transition-all"
+                />
+
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[10px] text-amber-900/70 font-medium">
+                    {isLoadingNotes ? "A carregar notas..." : `${customerNotes.length} caracteres`}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      onClick={handleSaveNotes}
+                      disabled={isSavingNotes || isLoadingNotes}
+                      className="h-7 px-3 text-xs bg-amber-600 hover:bg-amber-700 text-white font-semibold rounded-md shadow-sm transition-all"
+                    >
+                      {isSavingNotes ? (
+                        <>
+                          <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                          A guardar...
+                        </>
+                      ) : (
+                        <>
+                          <Check className="w-3 h-3 mr-1" />
+                          Guardar Notas
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                </div>
+              </div>
             </div>
           )}
 

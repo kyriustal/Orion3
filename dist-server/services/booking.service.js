@@ -4,7 +4,6 @@ exports.BookingService = void 0;
 const supabase_1 = require("../config/supabase");
 const calendar_service_1 = require("./calendar.service");
 const email_service_1 = require("./email.service");
-const telcosms_service_1 = require("./telcosms.service");
 const google_sheets_service_1 = require("./google_sheets.service");
 const followup_service_1 = require("./followup.service");
 class BookingService {
@@ -358,28 +357,9 @@ class BookingService {
                 console.error('[BookingService] Erro no e-mail instantâneo:', eErr.message);
             }
         }
-        // Alerta Instantâneo por SMS
-        if (phone) {
-            try {
-                console.log(`[BookingService] 📱 Disparando SMS de confirmação instantâneo para ${phone}...`);
-                let smsMsg = `Olá ${name}, a sua marcação para ${subject} com ${companyName} no dia ${date} às ${time} foi confirmada com sucesso!`;
-                if (mapsLink) {
-                    smsMsg += ` Localizar no Google Maps: ${mapsLink}`;
-                }
-                smsMsg += ` Obrigado, ${companyName}.`;
-                const smsRes = await telcosms_service_1.TelcoSMSService.sendSMS({
-                    orgId,
-                    to: phone,
-                    message: smsMsg,
-                    apiKey: orgData?.telcosms_api_key,
-                    senderId: orgData?.telcosms_sender_id,
-                });
-                instantSmsSent = smsRes.success;
-            }
-            catch (sErr) {
-                console.error('[BookingService] Erro no SMS instantâneo:', sErr.message);
-            }
-        }
+        // Alerta Instantâneo por SMS desativado a pedido: SMS apenas para lembretes de agendamento
+        // (O envio de e-mail instantâneo acima é mantido)
+        instantSmsSent = false;
         // Alerta Instantâneo por E-mail à Empresa Registrada
         try {
             console.log(`[BookingService] 🏢 Disparando e-mail de alerta de agendamento à empresa (${companyName})...`);
@@ -701,25 +681,8 @@ class BookingService {
                 console.error('[BookingService] Erro no email de remarcação ao cliente:', eErr.message);
             }
         }
-        if (phone) {
-            try {
-                let smsMsg = `Olá ${name}, a sua remarcação para ${subject} com ${companyName} foi confirmada para ${date} às ${time}.`;
-                if (mapsLink)
-                    smsMsg += ` Localizar no Maps: ${mapsLink}`;
-                smsMsg += ` Obrigado, ${companyName}.`;
-                const smsRes = await telcosms_service_1.TelcoSMSService.sendSMS({
-                    orgId,
-                    to: phone,
-                    message: smsMsg,
-                    apiKey: orgData?.telcosms_api_key,
-                    senderId: orgData?.telcosms_sender_id,
-                });
-                instantSmsSent = smsRes.success;
-            }
-            catch (sErr) {
-                console.error('[BookingService] Erro no SMS de remarcação:', sErr.message);
-            }
-        }
+        // Alerta Instantâneo por SMS de remarcação desativado a pedido: SMS apenas para lembretes de agendamento
+        instantSmsSent = false;
         // Alerta à Empresa Registrada
         try {
             email_service_1.EmailService.sendBookingNotificationToCompany({
@@ -760,6 +723,40 @@ class BookingService {
         sameDay.setHours(7, 0, 0, 0);
         if (sameDay.getTime() > now.getTime()) {
             remindersToSchedule.push({ reminder_stage: 'same_day_morning', scheduled_at: sameDay.toISOString() });
+        }
+        // Follow-up pós-atendimento para a nova data remarcada
+        const postReviewDate = new Date(appointmentDateObj);
+        postReviewDate.setHours(postReviewDate.getHours() + 2);
+        if (postReviewDate.getHours() >= 19 || postReviewDate.getHours() < 9) {
+            if (postReviewDate.getHours() >= 19)
+                postReviewDate.setDate(postReviewDate.getDate() + 1);
+            postReviewDate.setHours(9, 30, 0, 0);
+        }
+        if (phone && postReviewDate.getTime() > now.getTime()) {
+            try {
+                await followup_service_1.FollowupService.cancelPendingForPhone(orgId, phone);
+                await supabase_1.supabaseAdmin
+                    .from('followup_schedules')
+                    .insert({
+                    org_id: orgId,
+                    customer_phone: phone,
+                    platform: 'whatsapp',
+                    scheduled_at: postReviewDate.toISOString(),
+                    status: 'pending',
+                    followup_step: 100,
+                    customer_name: name,
+                    context_snapshot: JSON.stringify({
+                        type: 'post_appointment_attendance_check',
+                        subject,
+                        appointmentDate: date,
+                        appointmentTime: time,
+                    }),
+                });
+                console.log(`[BookingService] ⭐ Avaliação/Follow-up pós-remarcação programado para ${phone} em ${postReviewDate.toISOString()}`);
+            }
+            catch (fErr) {
+                console.warn('[BookingService] Aviso ao agendar avaliação pós-remarcação:', fErr.message);
+            }
         }
         for (const rem of remindersToSchedule) {
             try {

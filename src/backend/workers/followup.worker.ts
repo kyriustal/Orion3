@@ -120,17 +120,27 @@ async function buildFollowupMessage(item: any, settings: any): Promise<string> {
   const { service, benefit } = inferServiceAndBenefit(history, orgData);
   const context = { service, benefit, orgName };
 
-  // Step 100: avaliação pós-atendimento (mantido inalterado)
+  // Step 100: follow-up de comparência pós-atendimento com botões Sim / Não
   if (step === 100) {
     let subject = service;
+    let appointmentDate = '';
+    let appointmentTime = '';
     try {
       if (item.context_snapshot) {
         const parsed = JSON.parse(item.context_snapshot);
         if (parsed.subject) subject = parsed.subject;
+        if (parsed.appointmentDate) appointmentDate = parsed.appointmentDate;
+        if (parsed.appointmentTime) appointmentTime = parsed.appointmentTime;
       }
     } catch {}
     const greeting = formatGreeting(name);
-    return `${greeting} Esperamos que tenha corrido tudo bem com a sua consultoria na ${orgName} (${subject}). 😊\n\nGostaríamos muito de saber: como foi o atendimento? A sua avaliação e feedback são muito importantes para nós! ⭐`;
+    let timeInfo = '';
+    if (appointmentDate && appointmentTime) {
+      timeInfo = ` marcado para ${appointmentDate} às ${appointmentTime}`;
+    } else if (appointmentTime) {
+      timeInfo = ` marcado às ${appointmentTime}`;
+    }
+    return `${greeting} O seu agendamento para ${subject} com a ${orgName}${timeInfo} já passou. Conseguiu comparecer à consulta?`;
   }
 
   // Step 1: verificar se está ativo e se existe mensagem personalizada
@@ -462,13 +472,40 @@ async function runFollowups() {
         // ── 4. Enviar mensagem pelo canal correto ─────────────────────────
         let sent = false;
         if (item.platform === 'whatsapp' || !item.platform) {
-          const sentId = await WhatsAppService.sendTextMessage(
-            phoneNumberId,
-            item.customer_phone,
-            message,
-            accessToken
-          );
-          sent = !!sentId;
+          if (currentStep === 100) {
+            const buttons = [
+              { id: 'attendance_yes', title: 'Sim, compareci' },
+              { id: 'attendance_no', title: 'Não compareci' }
+            ];
+            const btnSentId = await WhatsAppService.sendInteractiveButtons(
+              phoneNumberId,
+              item.customer_phone,
+              message,
+              buttons,
+              accessToken
+            );
+            if (btnSentId) {
+              sent = true;
+            } else {
+              // Fallback para texto normal se envio de botões interativos falhar
+              const fallbackMsg = `${message}\n\n👉 Por favor, responda com:\n1️⃣ *Sim, compareci*\n2️⃣ *Não compareci*`;
+              const textSentId = await WhatsAppService.sendTextMessage(
+                phoneNumberId,
+                item.customer_phone,
+                fallbackMsg,
+                accessToken
+              );
+              sent = !!textSentId;
+            }
+          } else {
+            const sentId = await WhatsAppService.sendTextMessage(
+              phoneNumberId,
+              item.customer_phone,
+              message,
+              accessToken
+            );
+            sent = !!sentId;
+          }
         } else if (item.platform === 'facebook' || item.platform === 'instagram') {
           await FacebookService.sendMessage(
             pageId,
@@ -486,12 +523,26 @@ async function runFollowups() {
         }
 
         // ── 5. Persistir mensagem no histórico ────────────────────────────
+        const msgMetadata: any = {
+          platform: item.platform || 'whatsapp',
+          followup_id: item.id,
+          followup_step: currentStep,
+          type: 'followup',
+        };
+        if (currentStep === 100) {
+          msgMetadata.post_appointment_attendance_check = true;
+          msgMetadata.buttons = [
+            { id: 'attendance_yes', title: 'Sim, compareci' },
+            { id: 'attendance_no', title: 'Não compareci' }
+          ];
+        }
+
         await supabaseAdmin.from('conversation_history').insert({
           org_id:         item.org_id,
           customer_phone: item.customer_phone,
           sender:         'bot',
           text:           message,
-          metadata:       { platform: item.platform || 'whatsapp', followup_id: item.id, followup_step: currentStep, type: 'followup' },
+          metadata:       msgMetadata,
         });
 
         // ── 6. Marcar como enviado ────────────────────────────────────────

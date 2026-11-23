@@ -229,7 +229,7 @@ export async function triggerAIResponse(params: {
     try {
       const { data: existingContact } = await supabaseAdmin
         .from('contacts')
-        .select('name, email, phone')
+        .select('name, email, phone, notes')
         .eq('org_id', orgId)
         .eq('phone', fromNumber)
         .maybeSingle();
@@ -301,6 +301,7 @@ export async function triggerAIResponse(params: {
         email:       existingContact?.email || undefined,
         phone:       fromNumber,
         isReturning,
+        notes:       existingContact?.notes || undefined,
       };
     } catch (memErr: any) {
       console.warn('[MEMÓRIA] Erro ao carregar perfil do cliente (não crítico):', memErr.message);
@@ -1240,33 +1241,73 @@ export async function processWhatsAppWebhook(body: any, recorder: WebhookEventRe
                          incomingMsg.button?.payload ||
                          'btn_click';
 
+        const isAttendanceBtn = Boolean(
+          buttonId === 'attendance_yes' ||
+          buttonId === 'attendance_no' ||
+          /compareci/i.test(buttonTitle) ||
+          (campaignMessageText && campaignMessageText.includes('Conseguiu comparecer à consulta?'))
+        );
+
+        let attendanceStatus: 'yes' | 'no' | undefined = undefined;
+        if (buttonId === 'attendance_yes' || /\b(sim|compareci|estive|fui)\b/i.test(buttonTitle)) {
+          attendanceStatus = 'yes';
+        } else if (buttonId === 'attendance_no' || /\b(n[aã]o|faltei|n[aã]o compareci|n[aã]o consegui)\b/i.test(buttonTitle)) {
+          attendanceStatus = 'no';
+        }
+
         buttonContext = {
           buttonTitle,
           buttonId,
-          campaignName,
+          campaignName: isAttendanceBtn ? 'Follow-up de Presença na Consulta' : campaignName,
           campaignMessageText,
           buttonOptions,
+          isAttendanceFollowup: isAttendanceBtn,
+          attendanceStatus,
         };
       } else if (incomingMsg.type === 'text' && (campaignName || campaignMessageText)) {
-        // Verificar se o texto do cliente é uma resposta direta à campanha ou corresponde aos botões
         const lowerUser = userText.trim().toLowerCase();
-        const matchedBtn = buttonOptions.find(opt => {
-          const lOpt = opt.toLowerCase();
-          return lowerUser.includes(lOpt) || lOpt.includes(lowerUser);
-        });
+        const isAttendanceFollowupText = Boolean(
+          campaignMessageText && (
+            campaignMessageText.includes('Conseguiu comparecer à consulta?') ||
+            campaignMessageText.includes('comparecer à consulta')
+          )
+        );
 
-        const intentRegex = /\b(interess|interesse|quero|sim|saber mais|informaç|valores|preço|agendar|comprar|como funciona|tenho|gostaria|obrigad)\b/i;
-        const isCampaignReply = !!matchedBtn || intentRegex.test(lowerUser) || !!contextMsgId;
+        if (isAttendanceFollowupText) {
+          const isYes = /\b(sim|compareci|estive|fui|consegui|claro)\b/i.test(lowerUser);
+          const isNo = /\b(n[aã]o|faltei|impossivel|impossível|remarcar)\b/i.test(lowerUser);
+          const attendanceStatus: 'yes' | 'no' | undefined = isYes ? 'yes' : (isNo ? 'no' : undefined);
 
-        if (isCampaignReply) {
-          console.log(`[WEBHOOK-CAMPAIGN-REPLY] 🎯 Cliente ${fromNumber} respondeu à campanha "${campaignName || 'Campanha'}": "${userText}"`);
           buttonContext = {
-            buttonTitle: matchedBtn || userText,
-            buttonId: 'text_campaign_reply',
-            campaignName,
+            buttonTitle: isYes ? 'Sim, compareci' : (isNo ? 'Não compareci' : userText),
+            buttonId: isYes ? 'attendance_yes' : (isNo ? 'attendance_no' : 'text_attendance_reply'),
+            campaignName: 'Follow-up de Presença na Consulta',
             campaignMessageText,
-            buttonOptions,
+            buttonOptions: ['Sim, compareci', 'Não compareci'],
+            isAttendanceFollowup: true,
+            attendanceStatus,
           };
+          console.log(`[WEBHOOK-ATTENDANCE-REPLY] 🎯 Cliente ${fromNumber} respondeu ao follow-up pós-consulta: "${userText}" (Presença: ${attendanceStatus || 'indefinida'})`);
+        } else {
+          // Verificar se o texto do cliente é uma resposta direta à campanha ou corresponde aos botões
+          const matchedBtn = buttonOptions.find(opt => {
+            const lOpt = opt.toLowerCase();
+            return lowerUser.includes(lOpt) || lOpt.includes(lowerUser);
+          });
+
+          const intentRegex = /\b(interess|interesse|quero|sim|saber mais|informaç|valores|preço|agendar|comprar|como funciona|tenho|gostaria|obrigad)\b/i;
+          const isCampaignReply = !!matchedBtn || intentRegex.test(lowerUser) || !!contextMsgId;
+
+          if (isCampaignReply) {
+            console.log(`[WEBHOOK-CAMPAIGN-REPLY] 🎯 Cliente ${fromNumber} respondeu à campanha "${campaignName || 'Campanha'}": "${userText}"`);
+            buttonContext = {
+              buttonTitle: matchedBtn || userText,
+              buttonId: 'text_campaign_reply',
+              campaignName,
+              campaignMessageText,
+              buttonOptions,
+            };
+          }
         }
       } else if (incomingMsg.type === 'location') {
         const lat = incomingMsg.location?.latitude;
