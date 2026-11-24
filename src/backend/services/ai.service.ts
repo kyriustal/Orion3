@@ -1636,8 +1636,7 @@ export class AIService {
           const transfer     = cleanedText.includes('[TRANSFERIR_HUMANO]');
           const booking      = cleanedText.includes('[AGENDAR]') || cleanedText.includes('[BOOKING_CONFIRMED:');
           const proposal     = cleanedText.includes('[PROPOSTA]');
-          const attended     = cleanedText.includes('[ATENDIMENTO:CONFIRMADO]') || 
-            /(?:já fui atendido|fui atendido|já estive no escritório|estive na consulta|já realizei o atendimento|atendimento foi realizado)/i.test(enrichedMessage);
+          const attended     = cleanedText.includes('[ATENDIMENTO:CONFIRMADO]'); // token explícito da IA — não usar regex na msg do cliente
           const noShowReschedule = cleanedText.includes('[REMARCACAO:FALTA]') || 
             /(?:não pude comparecer|não consegui comparecer|faltei|não pude ir|não fui|remarcar por falta|remarcação por falta)/i.test(enrichedMessage);
 
@@ -1720,8 +1719,7 @@ export class AIService {
             const transfer     = cleanText.includes('[TRANSFERIR_HUMANO]');
             const booking      = cleanText.includes('[AGENDAR]') || cleanText.includes('[BOOKING_CONFIRMED:');
             const proposal     = cleanText.includes('[PROPOSTA]');
-            const attended     = cleanText.includes('[ATENDIMENTO:CONFIRMADO]') || 
-              /(?:já fui atendido|fui atendido|já estive no escritório|estive na consulta|já realizei o atendimento|atendimento foi realizado)/i.test(enrichedMessage);
+            const attended     = cleanText.includes('[ATENDIMENTO:CONFIRMADO]'); // token explícito da IA — não usar regex na msg do cliente
             const noShowReschedule = cleanText.includes('[REMARCACAO:FALTA]') || 
               /(?:não pude comparecer|não consegui comparecer|faltei|não pude ir|não fui|remarcar por falta|remarcação por falta)/i.test(enrichedMessage);
 

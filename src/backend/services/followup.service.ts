@@ -1068,21 +1068,23 @@ export class FollowupService {
    * Passar silent = false apenas se se quiser inserir uma nota interna visível no chat.
    */
   static async concludeConversation(params: {
-    orgId:         string;
-    phone:         string;
-    platform?:     string;
-    customerName?: string;
-    reason?:       string;
-    silent?:       boolean;
+    orgId:                  string;
+    phone:                  string;
+    platform?:              string;
+    customerName?:          string;
+    reason?:                string;
+    silent?:                boolean;
+    isAttendanceConfirmed?: boolean; // true apenas quando follow-up de presença confirmou SIM
   }): Promise<void> {
     try {
       const {
         orgId,
         phone,
-        platform     = 'whatsapp',
-        customerName = '',
-        reason       = 'followup_concluded',
-        silent       = true,
+        platform              = 'whatsapp',
+        customerName          = '',
+        reason                = 'followup_concluded',
+        silent                = true,
+        isAttendanceConfirmed = false,
       } = params;
 
       // 1. Cancelar todos os follow-ups pendentes deste cliente
@@ -1104,7 +1106,7 @@ export class FollowupService {
           sender:         'system',
           text:           noteText,
           metadata: {
-            attended:      true,
+            attended:      isAttendanceConfirmed, // só true quando follow-up de presença confirmou SIM
             concluded:     true,
             internal_note: true,
             reason,
@@ -1117,7 +1119,7 @@ export class FollowupService {
           const { getIo } = await import('../socket');
           getIo().to(`org:${orgId}`).emit('chat_status_updated', {
             phone,
-            attended:        true,
+            attended:        isAttendanceConfirmed,
             concluded:       true,
             needs_confirm:   false,
             has_exclamation: false,
@@ -1131,7 +1133,7 @@ export class FollowupService {
             timestamp: new Date().toISOString(),
             platform,
             metadata: {
-              attended:      true,
+              attended:      isAttendanceConfirmed,
               concluded:     true,
               internal_note: true,
               reason,
@@ -1146,7 +1148,7 @@ export class FollowupService {
           const { getIo } = await import('../socket');
           getIo().to(`org:${orgId}`).emit('chat_status_updated', {
             phone,
-            attended:        true,
+            attended:        isAttendanceConfirmed,
             concluded:       true,
             needs_confirm:   false,
             has_exclamation: false,

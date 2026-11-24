@@ -987,7 +987,7 @@ class FollowupService {
      */
     static async concludeConversation(params) {
         try {
-            const { orgId, phone, platform = 'whatsapp', customerName = '', reason = 'followup_concluded', silent = true, } = params;
+            const { orgId, phone, platform = 'whatsapp', customerName = '', reason = 'followup_concluded', silent = true, isAttendanceConfirmed = false, } = params;
             // 1. Cancelar todos os follow-ups pendentes deste cliente
             await this.cancelPendingForPhone(orgId, phone);
             const noteText = reason.includes('objection')
@@ -1005,7 +1005,7 @@ class FollowupService {
                     sender: 'system',
                     text: noteText,
                     metadata: {
-                        attended: true,
+                        attended: isAttendanceConfirmed, // só true quando follow-up de presença confirmou SIM
                         concluded: true,
                         internal_note: true,
                         reason,
@@ -1017,7 +1017,7 @@ class FollowupService {
                     const { getIo } = await Promise.resolve().then(() => __importStar(require('../socket')));
                     getIo().to(`org:${orgId}`).emit('chat_status_updated', {
                         phone,
-                        attended: true,
+                        attended: isAttendanceConfirmed,
                         concluded: true,
                         needs_confirm: false,
                         has_exclamation: false,
@@ -1030,7 +1030,7 @@ class FollowupService {
                         timestamp: new Date().toISOString(),
                         platform,
                         metadata: {
-                            attended: true,
+                            attended: isAttendanceConfirmed,
                             concluded: true,
                             internal_note: true,
                             reason,
@@ -1047,7 +1047,7 @@ class FollowupService {
                     const { getIo } = await Promise.resolve().then(() => __importStar(require('../socket')));
                     getIo().to(`org:${orgId}`).emit('chat_status_updated', {
                         phone,
-                        attended: true,
+                        attended: isAttendanceConfirmed,
                         concluded: true,
                         needs_confirm: false,
                         has_exclamation: false,
