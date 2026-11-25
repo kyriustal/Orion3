@@ -147,6 +147,16 @@ export default function LiveChat() {
   const [isSendingMessage, setIsSendingMessage] = useState(false);
   const [isSendingFile, setIsSendingFile] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const messageTextareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    const el = messageTextareaRef.current;
+    if (!el) return;
+    el.style.height = '40px';
+    if (message) {
+      el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
+    }
+  }, [message]);
 
   // Estados de Gravação de Áudio (Microfone)
   const [isRecordingAudio, setIsRecordingAudio] = useState(false);
@@ -1550,7 +1560,7 @@ export default function LiveChat() {
           </CardContent>
 
           {/* Barra de Envio e Anexos */}
-          <div className="p-4 border-t border-zinc-100 bg-white shrink-0">
+          <div className="p-2.5 sm:p-4 border-t border-zinc-100 bg-white shrink-0">
             {/* Pré-visualização do Ficheiro Selecionado / Gravado */}
             {selectedFile && (
               <div className="mb-3 p-2.5 bg-zinc-50 border border-zinc-200 rounded-xl flex items-center justify-between gap-3 animate-in slide-in-from-bottom-2 duration-200">
@@ -1617,7 +1627,7 @@ export default function LiveChat() {
               </div>
             ) : (
               /* Interface Normal de Entrada de Texto e Ações */
-              <div className="flex gap-2 items-center">
+              <div className="flex flex-col sm:flex-row gap-2 sm:items-end">
                 <input 
                   type="file" 
                   ref={fileInputRef} 
@@ -1626,78 +1636,84 @@ export default function LiveChat() {
                   accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt" 
                 />
                 
-                {/* Botão Anexo */}
-                <Button 
-                  type="button" 
-                  onClick={() => fileInputRef.current?.click()} 
-                  variant="outline" 
-                  title="Anexar documento, imagem ou vídeo"
-                  className="shrink-0 p-2.5 h-10 w-10 border border-zinc-200 text-zinc-600 hover:bg-zinc-50 hover:text-zinc-950 transition-colors rounded-lg"
-                >
-                  <Paperclip className="w-5 h-5" />
-                </Button>
+                {/* Botões de Ação (Anexo, Áudio, Câmara, Copilot IA) */}
+                <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 order-2 sm:order-1">
+                  {/* Botão Anexo */}
+                  <Button 
+                    type="button" 
+                    onClick={() => fileInputRef.current?.click()} 
+                    variant="outline" 
+                    title="Anexar documento, imagem ou vídeo"
+                    className="shrink-0 p-2 sm:p-2.5 h-9 w-9 sm:h-10 sm:w-10 border border-zinc-200 text-zinc-600 hover:bg-zinc-50 hover:text-zinc-950 transition-colors rounded-lg"
+                  >
+                    <Paperclip className="w-4 h-4 sm:w-5 sm:h-5" />
+                  </Button>
 
-                {/* Botão Gravador de Voz (Microfone) */}
-                <Button 
-                  type="button" 
-                  onClick={startAudioRecording} 
-                  variant="outline" 
-                  title="Gravar áudio com o microfone"
-                  className="shrink-0 p-2.5 h-10 w-10 border border-zinc-200 text-zinc-600 hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-colors rounded-lg"
-                >
-                  <Mic className="w-5 h-5" />
-                </Button>
+                  {/* Botão Gravador de Voz (Microfone) */}
+                  <Button 
+                    type="button" 
+                    onClick={startAudioRecording} 
+                    variant="outline" 
+                    title="Gravar áudio com o microfone"
+                    className="shrink-0 p-2 sm:p-2.5 h-9 w-9 sm:h-10 sm:w-10 border border-zinc-200 text-zinc-600 hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-colors rounded-lg"
+                  >
+                    <Mic className="w-4 h-4 sm:w-5 sm:h-5" />
+                  </Button>
 
-                {/* Botão Gravador de Vídeo (Webcam) */}
-                <Button 
-                  type="button" 
-                  onClick={openVideoModal} 
-                  variant="outline" 
-                  title="Gravar vídeo com a câmara"
-                  className="shrink-0 p-2.5 h-10 w-10 border border-zinc-200 text-zinc-600 hover:bg-emerald-50 hover:text-emerald-600 hover:border-emerald-200 transition-colors rounded-lg"
-                >
-                  <Camera className="w-5 h-5" />
-                </Button>
+                  {/* Botão Gravador de Vídeo (Webcam) */}
+                  <Button 
+                    type="button" 
+                    onClick={openVideoModal} 
+                    variant="outline" 
+                    title="Gravar vídeo com a câmara"
+                    className="shrink-0 p-2 sm:p-2.5 h-9 w-9 sm:h-10 sm:w-10 border border-zinc-200 text-zinc-600 hover:bg-emerald-50 hover:text-emerald-600 hover:border-emerald-200 transition-colors rounded-lg"
+                  >
+                    <Camera className="w-4 h-4 sm:w-5 sm:h-5" />
+                  </Button>
 
-                <Button
-                  type="button"
-                  onClick={handleCopilotSuggest}
-                  disabled={isSuggesting || !activePhone}
-                  variant="outline"
-                  title="Copilot IA: sugere a próxima resposta com base na conversa"
-                  className="shrink-0 p-2.5 h-10 w-10 border border-violet-200 text-violet-600 hover:bg-violet-50 hover:text-violet-700 hover:border-violet-300 transition-colors rounded-lg"
-                >
-                  {isSuggesting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Sparkles className="w-5 h-5" />}
-                </Button>
+                  <Button
+                    type="button"
+                    onClick={handleCopilotSuggest}
+                    disabled={isSuggesting || !activePhone}
+                    variant="outline"
+                    title="Copilot IA: sugere a próxima resposta com base na conversa"
+                    className="shrink-0 p-2 sm:p-2.5 h-9 w-9 sm:h-10 sm:w-10 border border-violet-200 text-violet-600 hover:bg-violet-50 hover:text-violet-700 hover:border-violet-300 transition-colors rounded-lg"
+                  >
+                    {isSuggesting ? <Loader2 className="w-4 h-4 sm:w-5 sm:h-5 animate-spin" /> : <Sparkles className="w-4 h-4 sm:w-5 sm:h-5" />}
+                  </Button>
+                </div>
 
-                <textarea
-                  value={message}
-                  onChange={e => setMessage(e.target.value)}
-                  onKeyDown={e => {
-                    // Enter envia; Shift+Enter ou Ctrl+Enter cria parágrafo (nova linha)
-                    if (e.key === "Enter") {
-                      if (e.shiftKey || e.ctrlKey) {
-                        return; // Permite a quebra de linha nativa
+                {/* Campo de Texto + Botão Enviar */}
+                <div className="flex items-end gap-2 w-full sm:flex-1 sm:min-w-0 order-1 sm:order-2">
+                  <textarea
+                    ref={messageTextareaRef}
+                    value={message}
+                    onChange={e => setMessage(e.target.value)}
+                    onKeyDown={e => {
+                      // Enter envia; Shift+Enter ou Ctrl+Enter cria parágrafo (nova linha)
+                      if (e.key === "Enter") {
+                        if (e.shiftKey || e.ctrlKey) {
+                          return; // Permite a quebra de linha nativa
+                        }
+                        e.preventDefault();
+                        if (!isSending) handleSend();
                       }
-                      e.preventDefault();
-                      if (!isSending) handleSend();
-                    }
-                  }}
-                  placeholder={selectedFile ? "Adicione uma legenda ao ficheiro..." : "Escreva como agente humano... (Enter = enviar | Shift+Enter ou Ctrl+Enter = parágrafo)"}
-                  rows={1}
-                  className="flex-1 resize-none min-h-[40px] max-h-[120px] overflow-y-auto rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 leading-relaxed"
-                  style={{ fieldSizing: 'content' } as React.CSSProperties}
-                />
+                    }}
+                    placeholder={selectedFile ? "Adicione uma legenda..." : "Escreva como agente humano..."}
+                    rows={1}
+                    className="flex-1 min-w-0 resize-none h-[40px] min-h-[40px] max-h-[120px] overflow-y-auto rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 leading-relaxed"
+                  />
 
-                <Button
-                  type="button"
-                  onClick={handleSend}
-                  disabled={isSending || (!message.trim() && !selectedFile)}
-                  className="shrink-0 bg-emerald-600 hover:bg-emerald-700 gap-2 self-end"
-                >
-                  {isSending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-                  {isSending ? "A enviar..." : "Enviar"}
-                </Button>
+                  <Button
+                    type="button"
+                    onClick={handleSend}
+                    disabled={isSending || (!message.trim() && !selectedFile)}
+                    className="shrink-0 h-10 bg-emerald-600 hover:bg-emerald-700 gap-2 self-end"
+                  >
+                    {isSending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                    {isSending ? "A enviar..." : "Enviar"}
+                  </Button>
+                </div>
               </div>
             )}
 
