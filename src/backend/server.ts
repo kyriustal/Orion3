@@ -103,8 +103,19 @@ app.use('/api',                  coreRoutes);
 
 // Frontend em Produção
 const frontendPath = path.join(__dirname, '..', 'dist');
-app.use(express.static(frontendPath));
+app.use(express.static(frontendPath, {
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('index.html') || filePath.endsWith('sw.js')) {
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+    }
+  },
+}));
 app.get('*', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
   res.sendFile(path.join(frontendPath, 'index.html'));
 });
 

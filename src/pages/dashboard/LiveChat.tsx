@@ -152,9 +152,9 @@ export default function LiveChat() {
   useEffect(() => {
     const el = messageTextareaRef.current;
     if (!el) return;
-    el.style.height = '40px';
+    el.style.height = '24px';
     if (message) {
-      el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
+      el.style.height = `${Math.min(el.scrollHeight, 100)}px`;
     }
   }, [message]);
 
@@ -1282,7 +1282,7 @@ export default function LiveChat() {
 
       {/* Janela Ativa do Chat */}
       {activeChat ? (
-        <Card className={`flex-1 flex flex-col overflow-hidden w-full ${showMobileList ? "hidden lg:flex" : "flex"}`}>
+        <Card className={`flex-1 min-h-0 flex flex-col overflow-hidden w-full ${showMobileList ? "hidden lg:flex" : "flex"}`}>
           <CardHeader className="p-4 border-b border-zinc-100 flex flex-row items-center justify-between space-y-0 shrink-0 gap-2">
             <div className="flex items-center gap-2 min-w-0">
               <button onClick={() => setShowMobileList(true)} className="lg:hidden p-1.5 rounded-lg hover:bg-zinc-100 text-zinc-600 shrink-0">
@@ -1480,7 +1480,7 @@ export default function LiveChat() {
             </div>
           )}
 
-          <CardContent className="flex-1 overflow-y-auto p-4 space-y-4 bg-zinc-50/30">
+          <CardContent className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-4 space-y-4 bg-zinc-50/30">
             {!isAiActive && (
               <div className="flex items-center gap-2 text-xs text-amber-700 bg-amber-50 px-3 py-2 rounded-xl border border-amber-200">
                 <AlertCircle className="w-4 h-4" /> IA pausada — você está no controlo.
@@ -1559,8 +1559,8 @@ export default function LiveChat() {
             <div ref={messagesEndRef} />
           </CardContent>
 
-          {/* Barra de Envio e Anexos */}
-          <div className="p-2.5 sm:p-4 border-t border-zinc-100 bg-white shrink-0">
+          {/* Barra de Envio Estilo WhatsApp */}
+          <div className="px-2 py-2 sm:px-3 sm:py-2.5 border-t border-zinc-100 bg-zinc-50/80 shrink-0">
             {/* Pré-visualização do Ficheiro Selecionado / Gravado */}
             {selectedFile && (
               <div className="mb-3 p-2.5 bg-zinc-50 border border-zinc-200 rounded-xl flex items-center justify-between gap-3 animate-in slide-in-from-bottom-2 duration-200">
@@ -1626,8 +1626,8 @@ export default function LiveChat() {
                 </Button>
               </div>
             ) : (
-              /* Interface Normal de Entrada de Texto e Ações */
-              <div className="flex flex-col sm:flex-row gap-2 sm:items-end">
+              /* Interface Estilo WhatsApp Oficial */
+              <div className="flex items-end gap-1.5 sm:gap-2">
                 <input 
                   type="file" 
                   ref={fileInputRef} 
@@ -1636,88 +1636,82 @@ export default function LiveChat() {
                   accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt" 
                 />
                 
-                {/* Botões de Ação (Anexo, Áudio, Câmara, Copilot IA) */}
-                <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 order-2 sm:order-1">
-                  {/* Botão Anexo */}
-                  <Button 
-                    type="button" 
-                    onClick={() => fileInputRef.current?.click()} 
-                    variant="outline" 
-                    title="Anexar documento, imagem ou vídeo"
-                    className="shrink-0 p-2 sm:p-2.5 h-9 w-9 sm:h-10 sm:w-10 border border-zinc-200 text-zinc-600 hover:bg-zinc-50 hover:text-zinc-950 transition-colors rounded-lg"
-                  >
-                    <Paperclip className="w-4 h-4 sm:w-5 sm:h-5" />
-                  </Button>
+                {/* Botão + (Anexar ficheiro) */}
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  title="Anexar documento, imagem ou vídeo"
+                  className="shrink-0 h-10 w-10 rounded-full flex items-center justify-center text-zinc-600 hover:bg-zinc-200/70 active:bg-zinc-200 transition-colors"
+                >
+                  <Plus className="w-6 h-6" />
+                </button>
 
-                  {/* Botão Gravador de Voz (Microfone) */}
-                  <Button 
-                    type="button" 
-                    onClick={startAudioRecording} 
-                    variant="outline" 
-                    title="Gravar áudio com o microfone"
-                    className="shrink-0 p-2 sm:p-2.5 h-9 w-9 sm:h-10 sm:w-10 border border-zinc-200 text-zinc-600 hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-colors rounded-lg"
-                  >
-                    <Mic className="w-4 h-4 sm:w-5 sm:h-5" />
-                  </Button>
-
-                  {/* Botão Gravador de Vídeo (Webcam) */}
-                  <Button 
-                    type="button" 
-                    onClick={openVideoModal} 
-                    variant="outline" 
-                    title="Gravar vídeo com a câmara"
-                    className="shrink-0 p-2 sm:p-2.5 h-9 w-9 sm:h-10 sm:w-10 border border-zinc-200 text-zinc-600 hover:bg-emerald-50 hover:text-emerald-600 hover:border-emerald-200 transition-colors rounded-lg"
-                  >
-                    <Camera className="w-4 h-4 sm:w-5 sm:h-5" />
-                  </Button>
-
-                  <Button
-                    type="button"
-                    onClick={handleCopilotSuggest}
-                    disabled={isSuggesting || !activePhone}
-                    variant="outline"
-                    title="Copilot IA: sugere a próxima resposta com base na conversa"
-                    className="shrink-0 p-2 sm:p-2.5 h-9 w-9 sm:h-10 sm:w-10 border border-violet-200 text-violet-600 hover:bg-violet-50 hover:text-violet-700 hover:border-violet-300 transition-colors rounded-lg"
-                  >
-                    {isSuggesting ? <Loader2 className="w-4 h-4 sm:w-5 sm:h-5 animate-spin" /> : <Sparkles className="w-4 h-4 sm:w-5 sm:h-5" />}
-                  </Button>
-                </div>
-
-                {/* Campo de Texto + Botão Enviar */}
-                <div className="flex items-end gap-2 w-full sm:flex-1 sm:min-w-0 order-1 sm:order-2">
+                {/* Caixa Pílula Estilo WhatsApp (Texto + Copilot IA) */}
+                <div className="flex-1 min-w-0 flex items-end bg-white border border-zinc-200 rounded-3xl pl-3.5 pr-1.5 py-1.5 shadow-sm focus-within:ring-2 focus-within:ring-emerald-500/30 focus-within:border-emerald-400">
                   <textarea
                     ref={messageTextareaRef}
                     value={message}
                     onChange={e => setMessage(e.target.value)}
                     onKeyDown={e => {
-                      // Enter envia; Shift+Enter ou Ctrl+Enter cria parágrafo (nova linha)
                       if (e.key === "Enter") {
                         if (e.shiftKey || e.ctrlKey) {
-                          return; // Permite a quebra de linha nativa
+                          return;
                         }
                         e.preventDefault();
                         if (!isSending) handleSend();
                       }
                     }}
-                    placeholder={selectedFile ? "Adicione uma legenda..." : "Escreva como agente humano..."}
+                    placeholder={selectedFile ? "Legenda..." : "Mensagem"}
                     rows={1}
-                    className="flex-1 min-w-0 resize-none h-[40px] min-h-[40px] max-h-[120px] overflow-y-auto rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 leading-relaxed"
+                    className="flex-1 min-w-0 bg-transparent border-0 outline-none resize-none h-[24px] min-h-[24px] max-h-[100px] overflow-y-auto text-sm leading-6 py-0 placeholder:text-zinc-400"
                   />
 
-                  <Button
+                  <button
+                    type="button"
+                    onClick={handleCopilotSuggest}
+                    disabled={isSuggesting || !activePhone}
+                    title="Copilot IA: sugerir resposta"
+                    className="shrink-0 h-7 w-7 rounded-full flex items-center justify-center text-violet-600 hover:bg-violet-50 disabled:opacity-40 transition-colors ml-1"
+                  >
+                    {isSuggesting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                  </button>
+                </div>
+
+                {/* Botão Câmara */}
+                <button
+                  type="button"
+                  onClick={openVideoModal}
+                  title="Gravar vídeo com a câmara"
+                  className="shrink-0 h-10 w-10 rounded-full flex items-center justify-center text-zinc-600 hover:bg-zinc-200/70 active:bg-zinc-200 transition-colors"
+                >
+                  <Camera className="w-5 h-5" />
+                </button>
+
+                {/* Botão Circular Verde WhatsApp: Enviar (quando há texto/ficheiro) ou Microfone (quando vazio) */}
+                {message.trim() || selectedFile ? (
+                  <button
                     type="button"
                     onClick={handleSend}
-                    disabled={isSending || (!message.trim() && !selectedFile)}
-                    className="shrink-0 h-10 bg-emerald-600 hover:bg-emerald-700 gap-2 self-end"
+                    disabled={isSending}
+                    title="Enviar mensagem"
+                    className="shrink-0 h-10 w-10 rounded-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white flex items-center justify-center shadow-sm transition-colors"
                   >
-                    {isSending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-                    {isSending ? "A enviar..." : "Enviar"}
-                  </Button>
-                </div>
+                    {isSending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-4 h-4" />}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={startAudioRecording}
+                    title="Gravar áudio com o microfone"
+                    className="shrink-0 h-10 w-10 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white flex items-center justify-center shadow-sm transition-colors"
+                  >
+                    <Mic className="w-5 h-5" />
+                  </button>
+                )}
               </div>
             )}
 
-            <p className="text-[10px] text-zinc-400 mt-2 text-center">Enviar como humano pausa a IA por 5 min automaticamente.</p>
+            <p className="hidden sm:block text-[10px] text-zinc-400 mt-1.5 text-center">Enviar como humano pausa a IA por 5 min automaticamente.</p>
           </div>
         </Card>
       ) : (
