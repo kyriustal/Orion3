@@ -4,6 +4,7 @@ exports.BookingService = void 0;
 const supabase_1 = require("../config/supabase");
 const calendar_service_1 = require("./calendar.service");
 const email_service_1 = require("./email.service");
+const telcosms_service_1 = require("./telcosms.service");
 const google_sheets_service_1 = require("./google_sheets.service");
 const followup_service_1 = require("./followup.service");
 class BookingService {
@@ -378,6 +379,50 @@ class BookingService {
         }
         catch (teamMailErr) {
             console.error('[BookingService] Erro ao disparar email de alerta à empresa:', teamMailErr.message);
+        }
+        // ── 3b. URGÊNCIA: Agendamento para AGORA MESMO ────────────────────────────
+        try {
+            const [yApp, mApp, dApp] = date.split('-').map(Number);
+            const [hApp, minApp] = time.split(':').map(Number);
+            const appointmentNow = new Date(yApp, mApp - 1, dApp, hApp, minApp, 0);
+            const nowCheck = new Date();
+            const diffMinutes = (appointmentNow.getTime() - nowCheck.getTime()) / 60000;
+            const isImmediate = diffMinutes <= 15; // agora mesmo ou nos próximos 15 min
+            if (isImmediate) {
+                console.log(`[BookingService] 🚨 URGÊNCIA: Agendamento IMEDIATO detectado para ${name}!`);
+                // SMS para o número da empresa
+                const companyPhoneForSms = (orgData?.phone?.trim() || orgData?.whatsapp?.trim() || '');
+                if (companyPhoneForSms) {
+                    telcosms_service_1.TelcoSMSService.sendSMS({
+                        orgId,
+                        to: companyPhoneForSms,
+                        message: `🚨 URGENTE: ${name} agendou atendimento para AGORA MESMO!\nAssunto: ${subject}\nTelefone cliente: ${phone || 'N/D'}\nAtenda imediatamente.`,
+                    }).then((res) => {
+                        if (res.success) {
+                            console.log(`[BookingService] 🚨 SMS de urgência enviado para a empresa (${companyPhoneForSms})`);
+                        }
+                        else {
+                            console.warn(`[BookingService] ⚠️ Falha no SMS de urgência: ${res.error}`);
+                        }
+                    }).catch((e) => console.error('[BookingService] Erro SMS urgência:', e.message));
+                }
+                else {
+                    console.warn('[BookingService] ⚠️ Sem número de telefone da empresa para SMS de urgência.');
+                }
+                // E-mail de urgência para a equipa
+                email_service_1.EmailService.sendUrgentBookingAlertToCompany({
+                    orgId,
+                    customerName: name,
+                    customerPhone: phone,
+                    customerEmail: email,
+                    subject,
+                    companyName,
+                    channelOrigin: options?.channelOrigin,
+                }).catch((e) => console.error('[BookingService] Erro email urgência:', e.message));
+            }
+        }
+        catch (urgErr) {
+            console.error('[BookingService] Erro no bloco de urgência:', urgErr.message);
         }
         // ── 4. Programação dos 3 Estágios de Lembretes Futuros ─────────────────────
         let alertsScheduled = 0;

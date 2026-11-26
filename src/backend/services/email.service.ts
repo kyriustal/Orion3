@@ -1,4 +1,4 @@
-import nodemailer from 'nodemailer';
+﻿import nodemailer from 'nodemailer';
 import { supabaseAdmin } from '../config/supabase';
 
 export interface SendTeamInvitationParams {
@@ -939,6 +939,115 @@ export class EmailService {
       return true;
     } catch (err: any) {
       console.error('[EmailService] ❌ Erro ao enviar email de notificação à empresa:', err.message);
+      return false;
+    }
+  }
+  // ── ALERTA DE URGÊNCIA: Agendamento para AGORA MESMO ────────────────────────
+  static async sendUrgentBookingAlertToCompany(params: {
+    orgId: string;
+    customerName: string;
+    customerPhone?: string;
+    customerEmail?: string;
+    subject: string;
+    companyName?: string;
+    channelOrigin?: string;
+  }): Promise<boolean> {
+    const { orgId, customerName, customerPhone, customerEmail, subject, companyName, channelOrigin } = params;
+
+    try {
+      const { emails: allRecipients, orgName: resolvedOrgNameFromDb } = await EmailService.resolveCompanyRecipients(orgId);
+      const resolvedOrgName = companyName || resolvedOrgNameFromDb || 'sua organização';
+
+      if (allRecipients.length === 0) {
+        console.warn(`[EmailService] ⚠️ Nenhum destinatário para email de urgência na org ${orgId}`);
+        return false;
+      }
+
+      const host = process.env.SMTP_HOST;
+      const port = parseInt(process.env.SMTP_PORT || '587', 10);
+      const user = process.env.SMTP_USER;
+      const pass = process.env.SMTP_PASS;
+      const from = `${resolvedOrgName} <${user || 'no-reply@orion.com'}>`;
+
+      if (!user || !pass) {
+        console.warn(`[EmailService] ⚠️ SMTP não configurado. Simulação de email de urgência para ${allRecipients.join(', ')}.`);
+        return true;
+      }
+
+      const transporter = nodemailer.createTransport({
+        host,
+        port,
+        secure: port === 465,
+        auth: { user, pass },
+      });
+
+      const liveChatUrl = `${process.env.VITE_APP_URL || 'http://localhost:3000'}/dashboard/live-chat`;
+      const nowDate = new Date();
+      const timeStr = nowDate.toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' });
+
+      const htmlContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <style>
+          body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #fff1f2; margin: 0; padding: 0; }
+          .container { max-width: 600px; margin: 40px auto; background: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(220,38,38,0.15); border: 2px solid #ef4444; }
+          .header { background: linear-gradient(135deg, #dc2626 0%, #7f1d1d 100%); padding: 32px 20px; text-align: center; color: #ffffff; }
+          .badge { display: inline-block; background-color: rgba(255,255,255,0.25); padding: 6px 16px; border-radius: 9999px; font-size: 13px; font-weight: 800; letter-spacing: 1px; margin-bottom: 10px; border: 1px solid rgba(255,255,255,0.4); }
+          .header h1 { margin: 8px 0 0 0; font-size: 24px; font-weight: 900; }
+          .urgency-bar { background-color: #fef2f2; border-left: 5px solid #dc2626; padding: 14px 20px; margin: 20px 0; font-size: 15px; color: #991b1b; font-weight: 700; }
+          .content { padding: 30px; color: #1e293b; line-height: 1.6; }
+          .card { background-color: #fff1f2; border: 1px solid #fecaca; border-radius: 10px; padding: 20px; margin: 20px 0; }
+          .row { margin-bottom: 12px; font-size: 15px; }
+          .label { font-weight: 700; color: #991b1b; }
+          .value { font-weight: 600; color: #0f172a; }
+          .btn { background-color: #dc2626; color: #ffffff !important; padding: 14px 28px; text-decoration: none; border-radius: 8px; font-weight: 800; display: inline-block; margin-top: 15px; text-align: center; font-size: 16px; }
+          .footer { background-color: #fff1f2; padding: 20px; text-align: center; font-size: 13px; color: #94a3b8; border-top: 1px solid #fecaca; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <span class="badge">🚨 ATENDIMENTO IMEDIATO</span>
+            <h1>⚡ AGENDAMENTO URGENTE</h1>
+            <p style="margin: 6px 0 0 0; opacity: 0.95;">Organização: ${resolvedOrgName}</p>
+          </div>
+          <div class="content">
+            <div class="urgency-bar">⚠️ O cliente está à espera de atendimento presencial AGORA MESMO. Acção imediata necessária!</div>
+            <p>Olá equipa <strong>${resolvedOrgName}</strong>,</p>
+            <p>Foi efectuado um agendamento para <strong>AGORA MESMO</strong> (${timeStr}) via <strong>${channelOrigin || 'Chatbot IA'}</strong>. O cliente aguarda atendimento imediato.</p>
+            <div class="card">
+              <div class="row"><span class="label">👤 Cliente:</span> <span class="value">${customerName}</span></div>
+              <div class="row"><span class="label">📋 Assunto / Serviço:</span> <span class="value">${subject}</span></div>
+              ${customerPhone ? `<div class="row"><span class="label">📞 Telefone / WhatsApp:</span> <span class="value">${customerPhone}</span></div>` : ''}
+              ${customerEmail ? `<div class="row"><span class="label">✉️ E-mail:</span> <span class="value">${customerEmail}</span></div>` : ''}
+              <div class="row"><span class="label">🌐 Canal de Origem:</span> <span class="value">${channelOrigin || 'Chatbot Orion'}</span></div>
+              <div class="row"><span class="label">🕐 Hora do Alerta:</span> <span class="value">${timeStr}</span></div>
+            </div>
+            <div style="text-align: center;">
+              <a href="${liveChatUrl}" class="btn">🔴 Abrir Live Chat Agora</a>
+            </div>
+          </div>
+          <div class="footer">
+            <p>&copy; ${nowDate.getFullYear()} Orion AI Platform. Alerta automático de urgência.</p>
+          </div>
+        </div>
+      </body>
+      </html>
+      `;
+
+      await transporter.sendMail({
+        from,
+        to: allRecipients,
+        subject: `🚨 URGENTE — Atendimento Imediato: ${customerName} está à espera AGORA (${resolvedOrgName})`,
+        html: htmlContent,
+      });
+
+      console.log(`[EmailService] 🚨 Email de urgência enviado para (${allRecipients.join(', ')})`);
+      return true;
+    } catch (err: any) {
+      console.error('[EmailService] ❌ Erro ao enviar email de urgência:', err.message);
       return false;
     }
   }
