@@ -286,6 +286,14 @@ class BookingService {
             console.warn('[BookingService] Aviso ao persistir na tabela bookings (não bloqueante):', dbErr.message);
         }
         // ── 1b. Sincronização em Tempo Real com a Folha Google Sheets ─────────────
+        let isImmediateForSheets = false;
+        try {
+            const [yS, mS, dS] = date.split('-').map(Number);
+            const [hS, minS] = time.split(':').map(Number);
+            const appDt = new Date(yS, mS - 1, dS, hS, minS, 0);
+            isImmediateForSheets = ((appDt.getTime() - Date.now()) / 60000) <= 15;
+        }
+        catch (_) { }
         google_sheets_service_1.GoogleSheetsService.syncBooking({
             orgId,
             name,
@@ -295,6 +303,8 @@ class BookingService {
             date,
             time,
             channel: options?.channelOrigin || 'Chatbot',
+            status: isImmediateForSheets ? '🚨 URGENTE (Agora)' : 'Confirmado',
+            isUrgent: isImmediateForSheets,
         }).catch(e => console.warn('[BookingService] Aviso ao sincronizar com Google Sheets:', e.message));
         // ── 2. Sincronização Segura com a Agenda (Google Calendar ou Microsoft Outlook/365) ──
         let calendarResult = null;

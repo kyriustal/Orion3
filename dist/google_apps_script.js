@@ -177,10 +177,10 @@ function doPost(e) {
     }
 
     var data = JSON.parse(raw);
-    var type = data.type || 'message'; // 'message' | 'booking' | 'contact' | 'batch_sync'
+    var type = data.type || 'message'; // 'message' | 'quote' | 'booking' | 'contact' | 'batch_sync'
     var ss = SpreadsheetApp.getActiveSpreadsheet();
 
-    if (type === 'message' || type === 'contact') {
+    if (type === 'message' || type === 'contact' || type === 'quote') {
       handleIncomingMessage(ss, data);
     } else if (type === 'booking') {
       handleIncomingBooking(ss, data);
@@ -210,6 +210,12 @@ function handleIncomingMessage(ss, data) {
   var email = data.email || '';
   var subjectOrText = (data.text || data.message || data.subject || '').substring(0, 500);
   var status = data.status || 'Ativo';
+  var isQuote = (data.type === 'quote' || data.isQuote === true || String(status).indexOf('Cotação') !== -1);
+  var isUrgent = (data.isUrgent === true || String(status).indexOf('URGENTE') !== -1 || String(status).indexOf('Humano') !== -1);
+
+  if (isQuote && status === 'Ativo') {
+    status = '💰 Pedido de Cotação';
+  }
 
   // 1. Inserir em Mensagens & Leads
   sheetMsgs.appendRow([
@@ -223,6 +229,22 @@ function handleIncomingMessage(ss, data) {
     status
   ]);
 
+  // Destaque visual para Pedidos de Cotação ou Alertas Urgentes
+  try {
+    var lastRow = sheetMsgs.getLastRow();
+    if (isQuote) {
+      sheetMsgs.getRange(lastRow, 1, 1, 8)
+        .setBackground('#f5f3ff')
+        .setFontColor('#6d28d9')
+        .setFontWeight('bold');
+    } else if (isUrgent) {
+      sheetMsgs.getRange(lastRow, 1, 1, 8)
+        .setBackground('#fef2f2')
+        .setFontColor('#dc2626')
+        .setFontWeight('bold');
+    }
+  } catch (styleErr) {}
+
   // 2. Se tiver número de telefone ou canal for WhatsApp, consolidar na aba Disparos WhatsApp
   if (cleanPhone || channel === 'WHATSAPP') {
     upsertBroadcastContact(sheetBroadcast, {
@@ -233,9 +255,61 @@ function handleIncomingMessage(ss, data) {
       subject: subjectOrText,
       nowWat: nowWat,
       isoDate: new Date().toISOString(),
-      status: 'Apto para Disparo'
+      status: isQuote ? '💰 Pedido de Cotação' : 'Apto para Disparo'
     });
   }
+
+  // 3. Alerta imediato por email para pedidos de cotação
+  if (isQuote) {
+    try {
+      sendQuoteAlertEmail(ss, {
+        name: name,
+        identifier: identifier,
+        channel: channel,
+        email: email,
+        message: subjectOrText,
+        nowWat: nowWat
+      });
+    } catch (mailErr) {}
+  }
+}
+
+/**
+ * Envia email de alerta imediato quando entra um pedido de cotação na planilha
+ */
+function sendQuoteAlertEmail(ss, info) {
+  var recipients = CONFIG.REPORT_EMAILS ? CONFIG.REPORT_EMAILS.trim() : '';
+  if (!recipients) {
+    try {
+      recipients = Session.getActiveUser().getEmail() || (ss.getOwner() ? ss.getOwner().getEmail() : '');
+    } catch (e) {}
+  }
+  if (!recipients) return;
+
+  var subject = '💰 URGENTE: Pedido de Cotação - ' + info.name + ' (' + info.identifier + ')';
+  var htmlBody = '<div style="font-family: Segoe UI, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #ddd6fe; border-radius: 10px; overflow: hidden;">' +
+    '<div style="background: linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%); color: #ffffff; padding: 20px; text-align: center;">' +
+      '<h2 style="margin: 0;">💰 Pedido de Cotação — Resposta Urgente</h2>' +
+    '</div>' +
+    '<div style="padding: 20px; color: #1e293b;">' +
+      '<p>Um cliente solicitou uma cotação que depende de confirmação imediata da equipa:</p>' +
+      '<div style="background: #f5f3ff; border-left: 4px solid #7c3aed; padding: 14px; border-radius: 6px; margin: 16px 0;">' +
+        '<p style="margin: 4px 0;"><strong>Cliente:</strong> ' + info.name + '</p>' +
+        '<p style="margin: 4px 0;"><strong>Telefone / ID:</strong> ' + info.identifier + '</p>' +
+        '<p style="margin: 4px 0;"><strong>Canal:</strong> ' + info.channel + '</p>' +
+        (info.email ? '<p style="margin: 4px 0;"><strong>Email:</strong> ' + info.email + '</p>' : '') +
+        '<p style="margin: 4px 0;"><strong>Data/Hora (WAT):</strong> ' + info.nowWat + '</p>' +
+        '<p style="margin: 8px 0 0 0;"><strong>Mensagem:</strong><br/>' + info.message + '</p>' +
+      '</div>' +
+      '<p style="font-size: 12px; color: #64748b;">Registado automaticamente na aba "💬 Mensagens & Leads" da sua planilha Orion.</p>' +
+    '</div>' +
+  '</div>';
+
+  MailApp.sendEmail({
+    to: recipients,
+    subject: subject,
+    htmlBody: htmlBody
+  });
 }
 
 /**
@@ -255,6 +329,7 @@ function handleIncomingBooking(ss, data) {
   var subject = data.subject || data.service || 'Agendamento';
   var channel = (data.channel || 'whatsapp').toUpperCase();
   var status = data.status || 'Confirmado';
+  var isUrgentBooking = (data.isUrgent === true || String(status).indexOf('URGENTE') !== -1);
 
   sheetBookings.appendRow([
     appointmentDate,
@@ -267,6 +342,16 @@ function handleIncomingBooking(ss, data) {
     nowWat,
     status
   ]);
+
+  if (isUrgentBooking) {
+    try {
+      var lastBookingRow = sheetBookings.getLastRow();
+      sheetBookings.getRange(lastBookingRow, 1, 1, 9)
+        .setBackground('#fef2f2')
+        .setFontColor('#dc2626')
+        .setFontWeight('bold');
+    } catch (bStyleErr) {}
+  }
 
   if (cleanPhone) {
     upsertBroadcastContact(sheetBroadcast, {
@@ -531,12 +616,26 @@ function generateAndSendDailyReport(period) {
     var waCount = 0;
     var fbCount = 0;
     var igCount = 0;
+    var quotesList = [];
 
     for (var m = 1; m < msgsData.length; m++) {
       var ch = String(msgsData[m][1] || '').toUpperCase();
       if (ch.indexOf('WHATSAPP') !== -1) waCount++;
       else if (ch.indexOf('FACEBOOK') !== -1) fbCount++;
       else if (ch.indexOf('INSTAGRAM') !== -1) igCount++;
+
+      var msgStatus = String(msgsData[m][7] || '');
+      if (msgStatus.indexOf('Cotação') !== -1) {
+        quotesList.push({
+          dateWat: msgsData[m][0],
+          channel: msgsData[m][1],
+          phone: msgsData[m][2],
+          name: msgsData[m][3],
+          email: msgsData[m][4],
+          message: msgsData[m][5],
+          status: msgStatus
+        });
+      }
     }
 
     var bookingsList = [];
@@ -568,6 +667,8 @@ function generateAndSendDailyReport(period) {
       instagramCount: igCount,
       bookingsCount: bookingsList.length,
       bookingsList: bookingsList,
+      quotesCount: quotesList.length,
+      quotesList: quotesList.slice(-30),
       whatsappNumbersCount: numbersList.length,
       numbersComma: numbersList.slice(0, 50).join(', ') + (numbersList.length > 50 ? ' ... e mais ' + (numbersList.length - 50) + ' números' : ''),
       contactsList: contactsList.slice(0, 30)
@@ -614,18 +715,38 @@ function buildReportHtml(d) {
   if (d.bookingsList && d.bookingsList.length > 0) {
     for (var i = 0; i < d.bookingsList.length; i++) {
       var bk = d.bookingsList[i];
-      bookingsRows += '<tr style="border-bottom: 1px solid #e2e8f0;">' +
+      var isUrgBk = String(bk.status || '').indexOf('URGENTE') !== -1;
+      var badgeStyle = isUrgBk
+        ? 'background: #fef2f2; color: #dc2626;'
+        : 'background: #ecfdf5; color: #059669;';
+      bookingsRows += '<tr style="border-bottom: 1px solid #e2e8f0;' + (isUrgBk ? ' background: #fff1f2;' : '') + '">' +
         '<td style="padding: 10px; font-weight: bold; color: #1e293b;">' + bk.date + ' ' + bk.time + '</td>' +
         '<td style="padding: 10px;">' + bk.name + '</td>' +
         '<td style="padding: 10px; color: #0284c7;">' + bk.phone + '</td>' +
         '<td style="padding: 10px;">' + (bk.email || '---') + '</td>' +
         '<td style="padding: 10px;">' + bk.subject + '</td>' +
         '<td style="padding: 10px; font-size: 11px; color: #64748b;">' + bk.channel + '</td>' +
-        '<td style="padding: 10px;"><span style="background: #ecfdf5; color: #059669; padding: 3px 8px; border-radius: 999px; font-size: 11px; font-weight: bold;">' + bk.status + '</span></td>' +
+        '<td style="padding: 10px;"><span style="' + badgeStyle + ' padding: 3px 8px; border-radius: 999px; font-size: 11px; font-weight: bold;">' + bk.status + '</span></td>' +
       '</tr>';
     }
   } else {
     bookingsRows = '<tr><td colspan="7" style="padding: 20px; text-align: center; color: #94a3b8;">Nenhum agendamento registado no período.</td></tr>';
+  }
+
+  var quotesRows = '';
+  if (d.quotesList && d.quotesList.length > 0) {
+    for (var q = 0; q < d.quotesList.length; q++) {
+      var qt = d.quotesList[q];
+      quotesRows += '<tr style="border-bottom: 1px solid #e2e8f0; background: #faf5ff;">' +
+        '<td style="padding: 10px; font-size: 11px; color: #64748b;">' + qt.dateWat + '</td>' +
+        '<td style="padding: 10px; font-weight: bold;">' + qt.name + '</td>' +
+        '<td style="padding: 10px; color: #6d28d9; font-family: monospace;">' + qt.phone + '</td>' +
+        '<td style="padding: 10px; font-size: 12px;">' + qt.message + '</td>' +
+        '<td style="padding: 10px;"><span style="background: #ede9fe; color: #6d28d9; padding: 3px 8px; border-radius: 999px; font-size: 11px; font-weight: bold;">' + qt.status + '</span></td>' +
+      '</tr>';
+    }
+  } else {
+    quotesRows = '<tr><td colspan="5" style="padding: 16px; text-align: center; color: #94a3b8;">Nenhum pedido de cotação registado no período.</td></tr>';
   }
 
   var contactsRows = '';
@@ -686,6 +807,16 @@ function buildReportHtml(d) {
       '<div style="background: #ffffff; border: 1px solid #86efac; border-radius: 6px; padding: 10px; font-family: monospace; font-size: 12px; color: #166534; word-break: break-all;">' +
         (d.numbersComma || 'Nenhum número identificado no período.') +
       '</div>' +
+    '</div>' +
+
+    '<div style="margin-bottom: 24px;">' +
+      '<h3 style="margin: 0 0 12px 0; font-size: 15px; color: #6d28d9;">💰 Pedidos de Cotação no Período (' + (d.quotesCount || 0) + ')</h3>' +
+      '<table>' +
+        '<thead><tr>' +
+          '<th>Data/Hora</th><th>Cliente</th><th>Telefone</th><th>Solicitação</th><th>Status</th>' +
+        '</tr></thead>' +
+        '<tbody>' + quotesRows + '</tbody>' +
+      '</table>' +
     '</div>' +
 
     '<div style="margin-bottom: 24px;">' +

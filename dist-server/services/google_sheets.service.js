@@ -57,7 +57,7 @@ class GoogleSheetsService {
         if (!webhookUrl)
             return;
         const payload = {
-            type: 'message',
+            type: params.isQuote ? 'quote' : 'message',
             channel: params.channel,
             phone: params.phoneOrId,
             customer_phone: params.phoneOrId,
@@ -66,6 +66,8 @@ class GoogleSheetsService {
             message: params.text || params.subject || '',
             subject: params.subject || '',
             status: params.status || 'Ativo',
+            isQuote: Boolean(params.isQuote),
+            isUrgent: Boolean(params.isUrgent),
             timestamp: new Date().toISOString()
         };
         axios_1.default.post(webhookUrl, payload, { timeout: 8000 })
@@ -95,6 +97,7 @@ class GoogleSheetsService {
             time: params.time,
             channel: params.channel || 'whatsapp',
             status: params.status || 'Confirmado',
+            isUrgent: Boolean(params.isUrgent),
             timestamp: new Date().toISOString()
         };
         axios_1.default.post(webhookUrl, payload, { timeout: 8000 })

@@ -630,6 +630,15 @@ async function triggerAIResponse(params) {
                 console.warn('[MEMÓRIA] Erro ao persistir contacto:', contactErr.message);
             }
         }
+        const interactionStatus = aiResult?.quote
+            ? '💰 Pedido de Cotação'
+            : aiResult?.transfer
+                ? '🚨 Atendimento Humano'
+                : aiResult?.proposal
+                    ? '📎 Proposta Comercial'
+                    : aiResult?.confirm
+                        ? '⚠️ A Confirmar'
+                        : 'Ativo';
         google_sheets_service_1.GoogleSheetsService.syncInteraction({
             orgId,
             channel: 'whatsapp',
@@ -637,8 +646,10 @@ async function triggerAIResponse(params) {
             name: aiResult?.contactData?.name || customerProfile?.name || 'Cliente WhatsApp',
             email: aiResult?.contactData?.email || '',
             text: message || '[media]',
-            subject: aiResult?.bookingData?.subject || '',
-            status: 'Ativo',
+            subject: aiResult?.bookingData?.subject || (aiResult?.quote ? 'Pedido de Cotação' : ''),
+            status: interactionStatus,
+            isQuote: Boolean(aiResult?.quote),
+            isUrgent: Boolean(aiResult?.transfer || aiResult?.quote),
         }).catch(e => console.warn('[WHATSAPP-SHEETS] Aviso Google Sheets:', e.message));
         if (aiResult?.transfer) {
             exports.aiPauses.set(historyKey, Date.now() + 30 * 60 * 1000);

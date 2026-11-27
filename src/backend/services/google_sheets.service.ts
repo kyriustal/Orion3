@@ -10,6 +10,8 @@ export interface SyncInteractionParams {
   email?: string;
   subject?: string;
   status?: string;
+  isQuote?: boolean;
+  isUrgent?: boolean;
 }
 
 export interface SyncBookingParams {
@@ -22,6 +24,7 @@ export interface SyncBookingParams {
   time: string;
   channel?: string;
   status?: string;
+  isUrgent?: boolean;
 }
 
 export class GoogleSheetsService {
@@ -78,7 +81,7 @@ export class GoogleSheetsService {
     if (!webhookUrl) return;
 
     const payload = {
-      type: 'message',
+      type: params.isQuote ? 'quote' : 'message',
       channel: params.channel,
       phone: params.phoneOrId,
       customer_phone: params.phoneOrId,
@@ -87,6 +90,8 @@ export class GoogleSheetsService {
       message: params.text || params.subject || '',
       subject: params.subject || '',
       status: params.status || 'Ativo',
+      isQuote: Boolean(params.isQuote),
+      isUrgent: Boolean(params.isUrgent),
       timestamp: new Date().toISOString()
     };
 
@@ -118,6 +123,7 @@ export class GoogleSheetsService {
       time: params.time,
       channel: params.channel || 'whatsapp',
       status: params.status || 'Confirmado',
+      isUrgent: Boolean(params.isUrgent),
       timestamp: new Date().toISOString()
     };
 
