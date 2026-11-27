@@ -211,23 +211,45 @@ router.get('/chats', auth_1.requireAuth, async (req, res) => {
         // Para garantir que TODAS as conversas aparecem, fazemos duas queries:
         //   a) A última mensagem de cada customer_phone (para preview e timestamp)
         //   b) Todos os registos de status (attended, booking, error) para calcular badges
-        // a) Última mensagem por conversa — busca apenas a linha mais recente de cada phone
-        //    Supabase não suporta DISTINCT ON nativo no SDK, por isso buscamos DESC sem limit
-        //    mas apenas os campos mínimos necessários para o preview (sem texto completo).
-        const { data: allRows, error: allErr } = await supabase_1.supabaseAdmin
-            .from('conversation_history')
-            .select('customer_phone, text, created_at, sender, metadata')
-            .eq('org_id', orgId)
-            .not('customer_phone', 'is', null)
-            .neq('customer_phone', 'null')
-            .order('created_at', { ascending: false });
-        if (allErr)
-            throw allErr;
-        // ── Buscar dados de contactos (nome e notas internas) para enriquecer os chats ──
-        const { data: contactsList } = await supabase_1.supabaseAdmin
-            .from('contacts')
-            .select('phone, name, notes')
-            .eq('org_id', orgId);
+        // a) Buscar todas as mensagens da organização em lotes de 1000 (.range)
+        //    para contornar o limite padrão de 1000 linhas do Supabase/PostgREST.
+        const allRows = [];
+        const PAGE_SIZE = 1000;
+        let offset = 0;
+        while (true) {
+            const { data: pageRows, error: pageErr } = await supabase_1.supabaseAdmin
+                .from('conversation_history')
+                .select('customer_phone, text, created_at, sender, metadata')
+                .eq('org_id', orgId)
+                .not('customer_phone', 'is', null)
+                .neq('customer_phone', 'null')
+                .order('created_at', { ascending: false })
+                .range(offset, offset + PAGE_SIZE - 1);
+            if (pageErr)
+                throw pageErr;
+            if (!pageRows || pageRows.length === 0)
+                break;
+            allRows.push(...pageRows);
+            if (pageRows.length < PAGE_SIZE)
+                break;
+            offset += PAGE_SIZE;
+        }
+        // ── Buscar dados de contactos (nome e notas internas) em lotes de 1000 ──
+        const contactsList = [];
+        let contactOffset = 0;
+        while (true) {
+            const { data: contactPage, error: contactErr } = await supabase_1.supabaseAdmin
+                .from('contacts')
+                .select('phone, name, notes')
+                .eq('org_id', orgId)
+                .range(contactOffset, contactOffset + PAGE_SIZE - 1);
+            if (contactErr || !contactPage || contactPage.length === 0)
+                break;
+            contactsList.push(...contactPage);
+            if (contactPage.length < PAGE_SIZE)
+                break;
+            contactOffset += PAGE_SIZE;
+        }
         const contactMap = new Map();
         if (contactsList) {
             for (const c of contactsList) {
@@ -415,16 +437,27 @@ router.get('/history/:phone', auth_1.requireAuth, async (req, res) => {
     try {
         const orgId = req.user?.orgId;
         const { phone } = req.params;
-        const { data, error } = await supabase_1.supabaseAdmin
-            .from('conversation_history')
-            .select('*')
-            .eq('org_id', orgId)
-            .eq('customer_phone', phone)
-            .order('created_at', { ascending: false })
-            .limit(5000);
-        if (error)
-            throw error;
-        const messages = (data || []).reverse().map(m => ({
+        const allHistory = [];
+        const PAGE_SIZE = 1000;
+        let offset = 0;
+        while (true) {
+            const { data: pageData, error } = await supabase_1.supabaseAdmin
+                .from('conversation_history')
+                .select('*')
+                .eq('org_id', orgId)
+                .eq('customer_phone', phone)
+                .order('created_at', { ascending: false })
+                .range(offset, offset + PAGE_SIZE - 1);
+            if (error)
+                throw error;
+            if (!pageData || pageData.length === 0)
+                break;
+            allHistory.push(...pageData);
+            if (pageData.length < PAGE_SIZE)
+                break;
+            offset += PAGE_SIZE;
+        }
+        const messages = allHistory.reverse().map(m => ({
             id: m.id,
             sender: m.sender,
             text: m.text,
