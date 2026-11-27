@@ -13,6 +13,7 @@ import { GoogleSheetsService } from './google_sheets.service';
 import { InsightsService } from './insights.service';
 import { KnowledgeSuggestionsService } from './knowledge_suggestions.service';
 import { ExternalIntegrationsService } from './external_integrations.service';
+import { TelcoSMSService } from './telcosms.service';
 
 export type WebhookEventRecorder = (event: Record<string, any>) => void;
 
@@ -507,14 +508,16 @@ export async function triggerAIResponse(params: {
       ).catch(() => {});
     }
 
-    // ── Notificações de Booking, Handover, Proposal ou Confirmation ──
-    if (aiResult?.transfer || aiResult?.booking || aiResult?.proposal || aiResult?.confirm) {
+    // ── Notificações de Booking, Handover, Proposal, Quote ou Confirmation ──
+    if (aiResult?.transfer || aiResult?.booking || aiResult?.proposal || aiResult?.quote || aiResult?.confirm) {
       const alertType = aiResult.transfer 
         ? 'handover' 
         : aiResult.booking 
         ? 'booking' 
         : aiResult.proposal 
-        ? 'proposal' 
+        ? 'proposal'
+        : aiResult.quote
+        ? 'quote'
         : 'confirmation';
         
       const alertTitle = aiResult.transfer 
@@ -523,6 +526,8 @@ export async function triggerAIResponse(params: {
         ? '📅 Novo Pedido de Agendamento'
         : aiResult.proposal
         ? '📎 Proposta Comercial Recebida'
+        : aiResult.quote
+        ? '💰 Pedido de Cotação — Resposta Urgente'
         : '⚠️ Dúvida Sem Resposta - Confirmar Informações';
 
       const alertBody  = aiResult.transfer
@@ -531,9 +536,33 @@ export async function triggerAIResponse(params: {
         ? `O cliente ${fromNumber} solicitou um agendamento.`
         : aiResult.proposal
         ? `O cliente ${fromNumber} enviou uma proposta comercial.`
+        : aiResult.quote
+        ? `O cliente ${fromNumber} solicitou uma cotação de preço/disponibilidade. Resposta urgente necessária.`
         : `O cliente ${fromNumber} fez uma pergunta fora da base de dados.`;
       
       EmailService.sendAlertNotification(orgId, alertType, fromNumber, 'Cliente', message).catch(e => console.error('[ALERTA] Erro ao enviar email:', e.message));
+
+      // SMS para a empresa quando é pedido de cotação
+      if (aiResult.quote) {
+        (async () => {
+          try {
+            const { data: orgForSms } = await supabaseAdmin.from('organizations').select('phone, whatsapp').eq('id', orgId).maybeSingle();
+            const companyPhone = orgForSms?.phone?.trim() || orgForSms?.whatsapp?.trim() || '';
+            if (companyPhone) {
+              TelcoSMSService.sendSMS({
+                orgId,
+                to: companyPhone,
+                message: `💰 COTAÇÃO: Cliente ${fromNumber} pediu cotação via WhatsApp.\nMensagem: "${message.substring(0, 120)}"\nResponda com urgência no Live Chat.`,
+              }).then((res: any) => {
+                if (res.success) console.log(`[COTAÇÃO] 📱 SMS de alerta enviado para a empresa (${companyPhone})`);
+                else console.warn(`[COTAÇÃO] ⚠️ Falha no SMS de cotação: ${res.error}`);
+              }).catch((e: any) => console.error('[COTAÇÃO] Erro SMS cotação:', e.message));
+            }
+          } catch (smsErr: any) {
+            console.error('[COTAÇÃO] Erro ao buscar telefone da empresa:', smsErr.message);
+          }
+        })();
+      }
       
       PushService.sendAlertToOrg(orgId, {
         title: alertTitle,
@@ -548,7 +577,9 @@ export async function triggerAIResponse(params: {
           : alertType === 'booking' 
           ? 'booking_alert' 
           : alertType === 'proposal' 
-          ? 'proposal_alert' 
+          ? 'proposal_alert'
+          : alertType === 'quote'
+          ? 'quote_alert'
           : 'confirmation_alert';
         getIo().to(`org:${orgId}`).emit(socketEvent, {
           phone: fromNumber,

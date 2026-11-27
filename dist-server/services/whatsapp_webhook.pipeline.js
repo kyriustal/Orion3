@@ -26,6 +26,7 @@ const google_sheets_service_1 = require("./google_sheets.service");
 const insights_service_1 = require("./insights.service");
 const knowledge_suggestions_service_1 = require("./knowledge_suggestions.service");
 const external_integrations_service_1 = require("./external_integrations.service");
+const telcosms_service_1 = require("./telcosms.service");
 // ─── Controlo de estado em memória ────────────────────────────────────────────
 /** Dedup — IDs de mensagens já processadas (limpa a cada 10 min) */
 exports.processedMessages = new Set();
@@ -434,30 +435,60 @@ async function triggerAIResponse(params) {
                 updated_at: new Date().toISOString(),
             }, { onConflict: 'org_id,phone' })).catch(() => { });
         }
-        // ── Notificações de Booking, Handover, Proposal ou Confirmation ──
-        if (aiResult?.transfer || aiResult?.booking || aiResult?.proposal || aiResult?.confirm) {
+        // ── Notificações de Booking, Handover, Proposal, Quote ou Confirmation ──
+        if (aiResult?.transfer || aiResult?.booking || aiResult?.proposal || aiResult?.quote || aiResult?.confirm) {
             const alertType = aiResult.transfer
                 ? 'handover'
                 : aiResult.booking
                     ? 'booking'
                     : aiResult.proposal
                         ? 'proposal'
-                        : 'confirmation';
+                        : aiResult.quote
+                            ? 'quote'
+                            : 'confirmation';
             const alertTitle = aiResult.transfer
                 ? '🚨 Pedido de Atendimento Humano'
                 : aiResult.booking
                     ? '📅 Novo Pedido de Agendamento'
                     : aiResult.proposal
                         ? '📎 Proposta Comercial Recebida'
-                        : '⚠️ Dúvida Sem Resposta - Confirmar Informações';
+                        : aiResult.quote
+                            ? '💰 Pedido de Cotação — Resposta Urgente'
+                            : '⚠️ Dúvida Sem Resposta - Confirmar Informações';
             const alertBody = aiResult.transfer
                 ? `O cliente ${fromNumber} quer falar com um assistente.`
                 : aiResult.booking
                     ? `O cliente ${fromNumber} solicitou um agendamento.`
                     : aiResult.proposal
                         ? `O cliente ${fromNumber} enviou uma proposta comercial.`
-                        : `O cliente ${fromNumber} fez uma pergunta fora da base de dados.`;
+                        : aiResult.quote
+                            ? `O cliente ${fromNumber} solicitou uma cotação de preço/disponibilidade. Resposta urgente necessária.`
+                            : `O cliente ${fromNumber} fez uma pergunta fora da base de dados.`;
             email_service_1.EmailService.sendAlertNotification(orgId, alertType, fromNumber, 'Cliente', message).catch(e => console.error('[ALERTA] Erro ao enviar email:', e.message));
+            // SMS para a empresa quando é pedido de cotação
+            if (aiResult.quote) {
+                (async () => {
+                    try {
+                        const { data: orgForSms } = await supabase_1.supabaseAdmin.from('organizations').select('phone, whatsapp').eq('id', orgId).maybeSingle();
+                        const companyPhone = orgForSms?.phone?.trim() || orgForSms?.whatsapp?.trim() || '';
+                        if (companyPhone) {
+                            telcosms_service_1.TelcoSMSService.sendSMS({
+                                orgId,
+                                to: companyPhone,
+                                message: `💰 COTAÇÃO: Cliente ${fromNumber} pediu cotação via WhatsApp.\nMensagem: "${message.substring(0, 120)}"\nResponda com urgência no Live Chat.`,
+                            }).then((res) => {
+                                if (res.success)
+                                    console.log(`[COTAÇÃO] 📱 SMS de alerta enviado para a empresa (${companyPhone})`);
+                                else
+                                    console.warn(`[COTAÇÃO] ⚠️ Falha no SMS de cotação: ${res.error}`);
+                            }).catch((e) => console.error('[COTAÇÃO] Erro SMS cotação:', e.message));
+                        }
+                    }
+                    catch (smsErr) {
+                        console.error('[COTAÇÃO] Erro ao buscar telefone da empresa:', smsErr.message);
+                    }
+                })();
+            }
             push_service_1.PushService.sendAlertToOrg(orgId, {
                 title: alertTitle,
                 body: alertBody,
@@ -471,7 +502,9 @@ async function triggerAIResponse(params) {
                         ? 'booking_alert'
                         : alertType === 'proposal'
                             ? 'proposal_alert'
-                            : 'confirmation_alert';
+                            : alertType === 'quote'
+                                ? 'quote_alert'
+                                : 'confirmation_alert';
                 (0, socket_1.getIo)().to(`org:${orgId}`).emit(socketEvent, {
                     phone: fromNumber,
                     message: message,

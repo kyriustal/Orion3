@@ -262,14 +262,18 @@ class EmailService {
                     ? '📅 Novo Pedido de Agendamento'
                     : type === 'proposal'
                         ? '📎 Proposta Comercial Recebida'
-                        : '⚠️ A CONFIRMAR INFORMAÇÃO';
+                        : type === 'quote'
+                            ? '💰 Pedido de Cotação — Resposta Urgente'
+                            : '⚠️ A CONFIRMAR INFORMAÇÃO';
             const description = type === 'handover'
                 ? 'A Inteligência Artificial detetou que um cliente solicitou falar com um assistente humano.'
                 : type === 'booking'
                     ? 'Um cliente demonstrou interesse em agendar um serviço ou consulta.'
                     : type === 'proposal'
                         ? 'A Inteligência Artificial detetou que o cliente enviou uma proposta comercial (serviço, parceria ou produto).'
-                        : 'A Inteligência Artificial detetou uma pergunta sem dados na base de conhecimento e informou que confirmará as informações.';
+                        : type === 'quote'
+                            ? 'Um cliente solicitou uma cotação de preço/disponibilidade para um serviço. É necessária uma resposta humana urgente com os valores actualizados.'
+                            : 'A Inteligência Artificial detetou uma pergunta sem dados na base de conhecimento e informou que confirmará as informações.';
             const htmlContent = `
       <!DOCTYPE html>
       <html>
@@ -278,7 +282,7 @@ class EmailService {
         <style>
           body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f3f4f6; margin: 0; padding: 0; }
           .container { max-width: 600px; margin: 40px auto; background: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
-          .header { background: ${type === 'handover' ? 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)' : type === 'booking' ? 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)' : type === 'proposal' ? 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)' : 'linear-gradient(135deg, #f97316 0%, #ea580c 100%)'}; padding: 30px 20px; text-align: center; color: #ffffff; }
+          .header { background: ${type === 'handover' ? 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)' : type === 'booking' ? 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)' : type === 'proposal' ? 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)' : type === 'quote' ? 'linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%)' : 'linear-gradient(135deg, #f97316 0%, #ea580c 100%)'}; padding: 30px 20px; text-align: center; color: #ffffff; }
           .header h1 { margin: 0; font-size: 24px; }
           .content { padding: 30px; color: #1f2937; }
           .card { background-color: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 20px; margin: 20px 0; }

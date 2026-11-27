@@ -590,6 +590,10 @@ export default function LiveChat() {
       setChats(prev => prev.map(c => c.id === data.phone ? { ...c, needs_confirm: true } : c));
     });
 
+    sock.on("quote_alert", (data: { phone: string }) => {
+      setChats(prev => prev.map(c => c.id === data.phone ? { ...c, needs_confirm: true } : c));
+    });
+
     sock.on("message_status", (data: { phone: string; status: string; messageId?: string }) => {
       setActiveChatId(activeId => {
         if (activeId === data.phone) {
@@ -1530,11 +1534,11 @@ export default function LiveChat() {
                           {msg.sender !== "user" && (
                             <span title={msg.metadata?.status === "read" ? "Lida / Visualizada" : msg.metadata?.status === "delivered" ? "Entregue" : "Enviada"}>
                               {msg.metadata?.status === "read" ? (
-                                <CheckCheck className="w-3.5 h-3.5 text-sky-400 font-bold" />
+                                <CheckCheck className="w-3.5 h-3.5" style={{ color: '#1d9bf0', strokeWidth: 2.5 }} />
                               ) : msg.metadata?.status === "delivered" ? (
-                                <CheckCheck className="w-3.5 h-3.5 opacity-80" />
+                                <CheckCheck className="w-3.5 h-3.5 text-gray-400" style={{ strokeWidth: 2 }} />
                               ) : (
-                                <Check className="w-3.5 h-3.5 opacity-80" />
+                                <Check className="w-3.5 h-3.5 text-gray-400" style={{ strokeWidth: 2 }} />
                               )}
                             </span>
                           )}

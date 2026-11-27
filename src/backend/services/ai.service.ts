@@ -66,6 +66,7 @@ export interface GenerateResult {
   booking?: boolean;
   bookingData?: BookingData;
   proposal?: boolean;
+  quote?: boolean;
   contactData?: { name?: string; email?: string; phone?: string };
   confirm?: boolean;
   attended?: boolean;
@@ -449,6 +450,8 @@ Quando o cliente quiser agendar um compromisso, marcação, reunião, consulta o
 
   const proposalRule = '- PROPOSTAS COMERCIAIS DO CLIENTE: Se o cliente enviar uma proposta comercial (oferta de parceria, prestação de serviços, etc.), responda de forma diplomática e profissional, informe que irá encaminhar para a área competente, e inclua o token [PROPOSTA] no INÍCIO da sua resposta.';
 
+  const quoteRule = `- PEDIDO DE COTAÇÃO: Se o cliente solicitar uma cotação, orçamento, preço ou consulta de disponibilidade/valor para um serviço que depende de variáveis específicas (ex: bilhetes de passagem aérea ou de autocarro, transporte, frete/envio, seguros, serviços personalizados, orçamentos por medida, obras, eventos), responda que irá verificar e confirmar a disponibilidade/preço com a equipa, e inclua o token [COTACAO] no INÍCIO da sua resposta. APENAS use [COTACAO] quando o serviço realmente requer consulta humana para precificação — não para serviços com preço fixo já listado na base de dados.`;
+
   const contactRule = '- Se o cliente partilhar espontaneamente informações de contacto (nome completo, email, número de telefone, morada ou empresa), inclua no INÍCIO da sua resposta o token compacto [CONTATO:{"name":"<nome>","email":"<email>","phone":"<tel>"}] preenchendo APENAS os campos informados. Exemplo: [CONTATO:{"name":"Ana Silva","phone":"+244912345678"}].';
 
   // Construção do contexto rico do anúncio (Meta Ads / Instagram / CTWA)
@@ -711,6 +714,7 @@ REGRAS OBRIGATÓRIAS:
 ${transferRule}
 ${bookingRule}
 ${proposalRule}
+${quoteRule}
 ${contactRule}
 ${attendanceAndNoShowRule}`;
 }
@@ -1636,6 +1640,7 @@ export class AIService {
           const transfer     = cleanedText.includes('[TRANSFERIR_HUMANO]');
           const booking      = cleanedText.includes('[AGENDAR]') || cleanedText.includes('[BOOKING_CONFIRMED:');
           const proposal     = cleanedText.includes('[PROPOSTA]');
+          const quote        = cleanedText.includes('[COTACAO]');
           const attended     = cleanedText.includes('[ATENDIMENTO:CONFIRMADO]'); // token explícito da IA — não usar regex na msg do cliente
           const noShowReschedule = cleanedText.includes('[REMARCACAO:FALTA]') || 
             /(?:não pude comparecer|não consegui comparecer|faltei|não pude ir|não fui|remarcar por falta|remarcação por falta)/i.test(enrichedMessage);
@@ -1649,12 +1654,12 @@ export class AIService {
           const bookingData = parseBookingData(cleanedText, history, enrichedMessage, customerProfile);
 
           const cleanReply = cleanedText
-            .replace(/\[TRANSFERIR_HUMANO\]|\[AGENDAR\]|\[PROPOSTA\]|\[CONFIRMAR_INFORMAÇÃO\]|\[ATENDIMENTO:CONFIRMADO\]|\[REMARCACAO:FALTA\]|\[CONTATO:\{[^}]+\}\]|\[BOOKING_CONFIRMED:\{[\s\S]*?\}\]/g, '')
+            .replace(/\[TRANSFERIR_HUMANO\]|\[AGENDAR\]|\[PROPOSTA\]|\[COTACAO\]|\[CONFIRMAR_INFORMAÇÃO\]|\[ATENDIMENTO:CONFIRMADO\]|\[REMARCACAO:FALTA\]|\[CONTATO:\{[^}]+\}\]|\[BOOKING_CONFIRMED:\{[\s\S]*?\}\]/g, '')
             .trim();
 
           const finalReply = sanitizeGoogleMapsLinks(cleanReply || cleanedText);
-          console.log(`[AIService] ✅ Resposta via DeepSeek [PRINCIPAL] (${finalReply.length} chars). BookingData:`, bookingData ? 'Detectado' : 'Não', `Attended: ${attended}`, `NoShowReschedule: ${noShowReschedule}`);
-          return { reply: finalReply, transfer, booking: booking || !!bookingData, bookingData, proposal, contactData, confirm, attended, noShowReschedule };
+          console.log(`[AIService] ✅ Resposta via DeepSeek [PRINCIPAL] (${finalReply.length} chars). BookingData:`, bookingData ? 'Detectado' : 'Não', `Attended: ${attended}`, `NoShowReschedule: ${noShowReschedule}`, `Quote: ${quote}`);
+          return { reply: finalReply, transfer, booking: booking || !!bookingData, bookingData, proposal, quote, contactData, confirm, attended, noShowReschedule };
 
         } catch (dsErr: any) {
           const httpStatus = dsErr.response?.status ?? 'N/A';
@@ -1719,6 +1724,7 @@ export class AIService {
             const transfer     = cleanText.includes('[TRANSFERIR_HUMANO]');
             const booking      = cleanText.includes('[AGENDAR]') || cleanText.includes('[BOOKING_CONFIRMED:');
             const proposal     = cleanText.includes('[PROPOSTA]');
+            const quote        = cleanText.includes('[COTACAO]');
             const attended     = cleanText.includes('[ATENDIMENTO:CONFIRMADO]'); // token explícito da IA — não usar regex na msg do cliente
             const noShowReschedule = cleanText.includes('[REMARCACAO:FALTA]') || 
               /(?:não pude comparecer|não consegui comparecer|faltei|não pude ir|não fui|remarcar por falta|remarcação por falta)/i.test(enrichedMessage);
@@ -1732,12 +1738,12 @@ export class AIService {
             const bookingData = parseBookingData(cleanText, history, enrichedMessage, customerProfile);
 
             const cleanReply = cleanText
-              .replace(/\[TRANSFERIR_HUMANO\]|\[AGENDAR\]|\[PROPOSTA\]|\[CONFIRMAR_INFORMAÇÃO\]|\[ATENDIMENTO:CONFIRMADO\]|\[REMARCACAO:FALTA\]|\[CONTATO:\{[^}]+\}\]|\[BOOKING_CONFIRMED:\{[\s\S]*?\}\]/g, '')
+              .replace(/\[TRANSFERIR_HUMANO\]|\[AGENDAR\]|\[PROPOSTA\]|\[COTACAO\]|\[CONFIRMAR_INFORMAÇÃO\]|\[ATENDIMENTO:CONFIRMADO\]|\[REMARCACAO:FALTA\]|\[CONTATO:\{[^}]+\}\]|\[BOOKING_CONFIRMED:\{[\s\S]*?\}\]/g, '')
               .trim();
 
             const finalReply = sanitizeGoogleMapsLinks(cleanReply || cleanText);
-            console.log(`[AIService] ✅ Resposta via Gemini [FALLBACK] chave ${keyIdx} [${model}]. BookingData:`, bookingData ? 'Detectado' : 'Não', `Attended: ${attended}`, `NoShowReschedule: ${noShowReschedule}`);
-            return { reply: finalReply, transfer, booking: booking || !!bookingData, bookingData, proposal, contactData, confirm, attended, noShowReschedule };
+            console.log(`[AIService] ✅ Resposta via Gemini [FALLBACK] chave ${keyIdx} [${model}]. BookingData:`, bookingData ? 'Detectado' : 'Não', `Attended: ${attended}`, `NoShowReschedule: ${noShowReschedule}`, `Quote: ${quote}`);
+            return { reply: finalReply, transfer, booking: booking || !!bookingData, bookingData, proposal, quote, contactData, confirm, attended, noShowReschedule };
 
           } catch (err: any) {
             const status = err.response?.status ?? 'N/A';
